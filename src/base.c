@@ -13,6 +13,7 @@
 #include <assert.h>
 #include <intrin.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <windows.h>
 
