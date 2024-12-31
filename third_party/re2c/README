@@ -1,6 +1,10 @@
 https://github.com/skvadrik/re2c
 Rev: 5fa1dbd576
 
-Windows:
+Windows: (much easier since older mingw-only versions!)
 cmake --preset=windows-msvc-release-ootree-fast
 cmake --build --preset=windows-msvc-release-ootree-fast
+
+Mac:
+cmake --preset macos-clang-release-ootree-skeleton-fast
+cmake --build --preset macos-clang-release-ootree-skeleton-fast
