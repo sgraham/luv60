@@ -1,7 +1,5 @@
 #include "base.c"
 
-#include "os.c"
-
 typedef enum TokenKind {
 #define TOKEN(n) TOK_##n,
 #include "tokens.inc"

@@ -1,9 +1,3 @@
-typedef struct ReadFileResult {
-  unsigned char* buffer;
-  size_t file_size;
-  size_t allocated_size;
-} ReadFileResult;
-
 static ReadFileResult read_file(const char* filename) {
   SECURITY_ATTRIBUTES sa = {sizeof(sa), 0, 0};
   HANDLE file = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, &sa,
