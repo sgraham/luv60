@@ -1,0 +1,6 @@
+https://github.com/skvadrik/re2c
+Rev: 5fa1dbd576
+
+Windows:
+cmake --preset=windows-msvc-release-ootree-fast
+cmake --build --preset=windows-msvc-release-ootree-fast
