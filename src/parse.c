@@ -31,8 +31,8 @@ static char* strf(const char* fmt, ...) {
 #endif
 
 static void fatal_error(int tokid, const char* message) {
-  fprintf(stderr, "<file>:%d: error: %s\n", token_offsets_[tokid], message);
-  exit(1);
+  base_writef_stderr("<file>:%d: error: %s\n", token_offsets_[tokid], message);
+  base_exit(1);
 }
 
 static void advance(void) {

@@ -1,4 +1,4 @@
-static ReadFileResult read_file(const char* filename) {
+static ReadFileResult base_read_file(const char* filename) {
   SECURITY_ATTRIBUTES sa = {sizeof(sa), 0, 0};
   HANDLE file = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, &sa,
                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
@@ -26,4 +26,8 @@ static ReadFileResult read_file(const char* filename) {
   CloseHandle(file);
 
   return (ReadFileResult){read_buf, size.QuadPart, to_alloc};
+}
+
+static void base_exit(int rc) {
+  ExitProcess(rc);
 }

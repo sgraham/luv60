@@ -11,9 +11,10 @@ typedef enum TokenKind {
 #include "parse.c"
 
 int main() {
-  ReadFileResult file = read_file("a.luv");
+  const char* filename = "a.luv";
+  ReadFileResult file = base_read_file(filename);
   if (!file.buffer) {
-    fprintf(stderr, "Couldn't read file.\n");
+    base_writef_stderr("Couldn't read '%s'\n", filename);
     return 1;
   }
 

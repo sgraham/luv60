@@ -224,7 +224,7 @@ static __forceinline void find_delimiters(uint64_t quotes,
 
   while (starts) {
     const uint64_t start = -starts & starts;
-    assert(start);
+    ASSERT(start);
 
     const uint64_t quote = quotes & start;
 

@@ -1,13 +1,15 @@
 #pragma once
 
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #if COMPILER_MSVC
-#  define FORCE_INLINE __forceinline
+#  define FORCEINLINE __forceinline
 #elif COMPILER_CLANG || COMPILER_GCC
-#  define FORCE_INLINE __attribute__((always_inline))
+#  define FORCEINLINE __attribute__((always_inline))
 #endif
 
 #if COMPILER_CLANG
@@ -36,6 +38,27 @@
 #  define TRAP() __debugbreak()
 #elif COMPILER_CLANG || COMPILER_GCC
 #  define TRAP() __builtin_trap()
+#else
+#  error port
+#endif
+
+#define CHECK(x) \
+  do {           \
+    if (!(x)) {  \
+      TRAP();    \
+    }            \
+  } while (0)
+
+#if BUILD_DEBUG
+#  define ASSERT(x) CHECK(x)
+#else
+#  define ASSERT(x) (void)(x)
+#endif
+
+#if COMPILER_MSVC
+#  define NORETURN __declspec(noreturn)
+#elif COMPILER_CLANG || COMPILER_GCC
+#  define NORETURN __attribute__((noreturn))
 #else
 #  error port
 #endif
