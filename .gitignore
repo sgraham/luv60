@@ -1,6 +1,7 @@
 scratch/
 out/
 a.luv
+code.raw
 dumbbench.luv
 snip/*.ll
 snip/*.c
