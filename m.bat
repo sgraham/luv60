@@ -26,8 +26,8 @@ set cl_debug=      call cl /Od /Ob1 /DBUILD_DEBUG=1 %cl_common% %auto_compile_fl
 set cl_release=    call cl /O2 /DBUILD_DEBUG=0 %cl_common% %auto_compile_flags%
 set clang_debug=   call "C:\Program Files\LLVM\bin\clang.exe" -g -O0 -DBUILD_DEBUG=1 %clang_common% %auto_compile_flags%
 set clang_release= call "C:\Program Files\LLVM\bin\clang.exe" -g -O3 -DBUILD_DEBUG=0 %clang_common% %auto_compile_flags%
-set cl_link=       /link /INCREMENTAL:NO /noexp
-set clang_link=    -fuse-ld=lld
+set cl_link=       /link /INCREMENTAL:NO /noexp /link /dynamicbase:no
+set clang_link=    -fuse-ld=lld -Wl,/dynamicbase:no
 set cl_out=        /out:
 set clang_out=     -o
 

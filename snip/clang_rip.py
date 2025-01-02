@@ -215,10 +215,11 @@ def munge_ll_file(infile, outfile, do_asm_hack, look_for_const, int_reg):
             "r9d",
             "r15d",
         ]
-        repl_reg = ghccc_order[int_reg+1]  # offset by one for $stack
+        repl_reg = ghccc_order[int_reg + 1]  # offset by one for $stack
         contents = contents.replace(
             f'asm "movl $$${look_for_const}, %eax", "={{ax}},',
-            f'asm "movl $$${look_for_const}, %{repl_reg}", "={{{repl_reg}}},')
+            f'asm "movl $$${look_for_const}, %{repl_reg}", "={{{repl_reg}}},',
+        )
     elif do_asm_hack == "64":
         ghccc_order = [
             "r13",
@@ -232,10 +233,11 @@ def munge_ll_file(infile, outfile, do_asm_hack, look_for_const, int_reg):
             "r9",
             "r15",
         ]
-        repl_reg = ghccc_order[int_reg+1]  # offset by one for $stack
+        repl_reg = ghccc_order[int_reg + 1]  # offset by one for $stack
         contents = contents.replace(
             f'asm "movq $$${look_for_const}, %rax", "={{ax}},',
-            f'asm "movq $$${look_for_const}, %{repl_reg}", "={{{repl_reg}}},')
+            f'asm "movq $$${look_for_const}, %{repl_reg}", "={{{repl_reg}}},',
+        )
     with open(outfile, "w", newline="\n") as f:
         f.write(contents)
 
@@ -289,7 +291,7 @@ extern uintptr_t $CONT2;
                 first_ll_file,
             ]
         )
-        munge_ll_file(first_ll_file, munged_ll_file, do_asm_hack, '$X0', i)
+        munge_ll_file(first_ll_file, munged_ll_file, do_asm_hack, "$X0", i)
 
         # Previously -mcmodel=medium was used here to attempt to encourage
         # longer relocations. In practice, this doesn't work with ASLR, so
@@ -417,14 +419,43 @@ def main():
             c.emit("}")
         """
 
-        with CToObj("const_i32", sf) as c:
-            c.build_decl([])
-            c.emit('{ int v; asm ("movl $')
+        """
+        with CToObj("store_local_i32", sf) as c:
+            c.build_decl(["int x"])
+            c.emit('{ uint32_t k0; asm ("movl $')
             c.build_const(0)
-            c.emit(', %%eax": "=a"(v));')
-            c.build_continuation(0, ["v"])
+            c.emit(', %%eax": "=a"(k0));')
+            c.emit("*(int*)($stack + k0")
+            c.emit(') = x;')
+            c.build_continuation(0, [])
             c.emit("}")
             c.asm_hack_32()
+
+        with CToObj("const_i32", sf) as c:
+            c.build_decl([])
+            c.emit('{ int k0; asm ("movl $')
+            c.build_const(0)
+            c.emit(', %%eax": "=a"(k0));')
+            c.build_continuation(0, ["k0"])
+            c.emit("}")
+            c.asm_hack_32()
+        """
+
+        with CToObj("store_local_i32", sf) as c:
+            c.build_decl(["int x"])
+            c.emit("{ *(int*)($stack + ")
+            c.build_const(0)
+            c.emit(") = x;")
+            c.build_continuation(0, [])
+            c.emit("}")
+
+        with CToObj("const_i32", sf) as c:
+            c.build_decl([])
+            c.emit("{ int k0 = ")
+            c.build_const(0)
+            c.emit(";")
+            c.build_continuation(0, ["k0"])
+            c.emit("}")
 
         """
         with CToObj("add", sf) as c:
@@ -456,13 +487,13 @@ def main():
         """
 
         # large model required because 'exit' might be far away from generated code.
-        with CToObj("sysexit", sf, model='large') as c:
+        with CToObj("sysexit", sf, model="large") as c:
             c.build_decl(["int rc"])
-            c.emit("{ exit(rc); }");
+            c.emit("{ exit(rc); }")
 
         with CToObj("return", sf) as c:
             c.build_decl(["int rc"], ret_type="int")
-            c.emit("{ return rc; }");
+            c.emit("{ return rc; }")
 
 
 if __name__ == "__main__":

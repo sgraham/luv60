@@ -90,6 +90,8 @@ typedef struct Sym {
   Str name;
   Type type;
   Val val;
+  int stack_offset;
+  bool is_local;
 } Sym;
 
 static const char* p_cur_filename;
@@ -107,6 +109,8 @@ typedef struct FuncData {
   Str name;
   FuncParams params;
 
+  int locals_offset;
+  GenFixup locals_fixup;
   Sym locals[P_MAX_LOCALS];
   int num_locals;
 } FuncData;
@@ -278,9 +282,14 @@ static void p_enter_function(Type return_type, Str name, FuncParams params) {
   p_cur_func.return_type = return_type;
   p_cur_func.name = name;
   p_cur_func.params = params;
+  p_cur_func.locals_offset = 0;
+  p_cur_func.locals_fixup = gen_func_entry();
 }
 
 static void p_leave_function(void) {
+  gen_func_exit_and_patch_func_entry(p_cur_func.locals_offset + 32, p_cur_func.locals_fixup);
+  //gen_return(p_cur_func.return_type);
+  p_cur_func.locals_fixup = (GenFixup){0};
   p_cur_func.return_type.i = 0;
   p_cur_func.name.i = 0;
   p_cur_func.params = (FuncParams){0};
@@ -479,7 +488,14 @@ static void p_var(Type type) {
   new->kind = SYM_VAR;
   new->name = name;
   new->type = type;
-  new->val.p = 0; // XXX get init expr if we had one
+  new->is_local = true;
+  // TODO: align, size, etc etc etc
+  new->stack_offset = p_cur_func.locals_offset + 32;
+  p_cur_func.locals_offset += 8;
+  new->val.p = 0;
+  if (have_init) {
+    gen_store_local(new->stack_offset, type);
+  }
 
   p_consume(TOK_NEWLINE, "Expect newline after variable declaration.");
 }

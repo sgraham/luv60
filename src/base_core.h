@@ -45,11 +45,12 @@
 #  error port
 #endif
 
-#define CHECK(x) \
-  do {           \
-    if (!(x)) {  \
-      TRAP();    \
-    }            \
+#define CHECK(x)                                                            \
+  do {                                                                      \
+    if (!(x)) {                                                             \
+      fprintf(stderr, "%s:%d: CHECK failed: " #x "\n", __FILE__, __LINE__); \
+      TRAP();                                                               \
+    }                                                                       \
   } while (0)
 
 #if BUILD_DEBUG
