@@ -1,3 +1,7 @@
 scratch/
 out/
 a.luv
+dumbbench.luv
+snip/*.ll
+snip/*.c
+snip/*.obj

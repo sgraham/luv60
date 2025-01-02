@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #if COMPILER_MSVC
 #  define FORCEINLINE __forceinline
@@ -31,6 +32,8 @@
 #define ALIGN_UP(n, a) ALIGN_DOWN((n) + (a)-1, (a))
 #define ALIGN_DOWN_PTR(p, a) ((void*)ALIGN_DOWN((uintptr_t)(p), (a)))
 #define ALIGN_UP_PTR(p, a) ((void*)ALIGN_UP((uintptr_t)(p), (a)))
+
+#define COUNTOF(a) (sizeof(a)/sizeof(a[0]))
 
 #define PAGE_SIZE 4096
 
