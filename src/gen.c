@@ -1,7 +1,6 @@
 #define GEN_MAX_STACK_SIZE 256
 typedef struct VSVal {
   Type type;
-  int reg;
 } VSVal;
 static VSVal gen_vstack[GEN_MAX_STACK_SIZE];
 static int gen_num_vstack = 0;
@@ -20,7 +19,6 @@ static void gen_error(const char* message) {
 void gen_init(void) {
   gen_code =
       VirtualAlloc(NULL, GEN_CODE_SEG_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-  //ASSERT((uintptr_t)gen_code < UINT32_MAX);  // TODO: snip_const will be wrong otherwise
   gen_p = gen_code;
 }
 
@@ -32,23 +30,25 @@ void gen_finish(void) {
 
   DWORD old_protect;
   VirtualProtect(gen_code, GEN_CODE_SEG_SIZE, PAGE_EXECUTE_READ, &old_protect);
-  ((void (*)())gen_code)();
+  int rv = ((int (*)())gen_code)();
+  printf("returned: %d\n", rv);
 }
 
-void gen_push_number(uint64_t val, TypeKind suffix) {
+void gen_push_number(uint64_t val, Type suffix) {
   gen_p = snip_const_i32_fallthrough(gen_num_vstack, gen_p, val);
+  gen_vstack[gen_num_vstack++] = (VSVal){suffix.i == TYPE_NONE ? (Type){TYPE_I64} : suffix};
 }
 
 // type can be TYPE_VOID for no return.
 void gen_return(Type type) {
-  /*
   if (type.i == TYPE_VOID) {
-    //snip_return_void[gen_num_vstack]();
+    // gen_p = snip_return_void(gen_num_vstack, gen_p);
+    abort();
   } else {
     ASSERT(gen_num_vstack);
     VSVal top = gen_vstack[--gen_num_vstack];
     // convert_or_error(top, type);
-    snip_return(gen_num_vstack);
+    (void)top;
+    snip_return(gen_num_vstack, gen_p);
   }
-  */
 }

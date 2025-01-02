@@ -291,7 +291,7 @@ static void p_leave_function(void) {
 // - allows arbitrary _ as separators
 // - uses StrView rather than nul termination
 // - extracts and returns u8, i16, etc. suffixes
-static uint64_t scan_int(StrView num, TypeKind* suffix) {
+static uint64_t scan_int(StrView num, Type* suffix) {
   static uint8_t char_to_digit[256] = {
       ['0'] = 0,               //
       ['1'] = 1,               //
@@ -350,27 +350,27 @@ static uint64_t scan_int(StrView num, TypeKind* suffix) {
 
   if (digits.size > 0) {
     if (digits.size == 2 && digits.data[0] == 'i' && digits.data[1] == '8') {
-      *suffix = TYPE_I8;
+      *suffix = (Type){TYPE_I8};
     } else if (digits.size == 2 && digits.data[0] == 'u' && digits.data[1] == '8') {
-      *suffix = TYPE_U8;
+      *suffix = (Type){TYPE_U8};
     } else if (digits.size == 3 && digits.data[0] == 'i' && digits.data[1] == '1' &&
                digits.data[2] == '6') {
-      *suffix = TYPE_I16;
+      *suffix = (Type){TYPE_I16};
     } else if (digits.size == 3 && digits.data[0] == 'u' && digits.data[1] == '1' &&
                digits.data[2] == '6') {
-      *suffix = TYPE_U16;
+      *suffix = (Type){TYPE_U16};
     } else if (digits.size == 3 && digits.data[0] == 'i' && digits.data[1] == '3' &&
                digits.data[2] == '2') {
-      *suffix = TYPE_I32;
+      *suffix = (Type){TYPE_I32};
     } else if (digits.size == 3 && digits.data[0] == 'u' && digits.data[1] == '3' &&
                digits.data[2] == '2') {
-      *suffix = TYPE_U32;
+      *suffix = (Type){TYPE_U32};
     } else if (digits.size == 3 && digits.data[0] == 'i' && digits.data[1] == '6' &&
                digits.data[2] == '4') {
-      *suffix = TYPE_I64;
+      *suffix = (Type){TYPE_I64};
     } else if (digits.size == 3 && digits.data[0] == 'u' && digits.data[1] == '6' &&
                digits.data[2] == '4') {
-      *suffix = TYPE_U64;
+      *suffix = (Type){TYPE_U64};
     } else {
       ASSERT(false && "internal error: lexer shouldn't allow unrecognized suffix");
       return 0;
@@ -381,7 +381,7 @@ static uint64_t scan_int(StrView num, TypeKind* suffix) {
 }
 
 static void p_number(bool can_assign) {
-  TypeKind suffix = TYPE_NONE;
+  Type suffix = {0};
   uint64_t val = scan_int(lex_get_strview(p_previous_offset, p_cur_offset), &suffix);
 
   gen_push_number(val, suffix);

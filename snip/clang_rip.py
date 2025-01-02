@@ -34,19 +34,20 @@ def rip_obj_file(obj_file):
     )
     relocs = result.stdout.decode("utf-8").splitlines()
     relocs_no_header = relocs[4:]
-    if not (
-        relocs_no_header[0].startswith("OFFSET")
-        and relocs_no_header[0].endswith("VALUE")
-    ):
-        print("llvm-objdump reloc parsing failed (no OFFSET header?)")
-        sys.exit(1)
-    relocs_body = relocs_no_header[1:]
     all_relocs = {}
-    for line in relocs_body:
-        offset, type, name = line.split()
-        offset = int(offset, 16)
-        all_relocs[offset] = (type, name)
-    # print(all_relocs)
+    if len(relocs_no_header) > 0:
+        if not (
+            relocs_no_header[0].startswith("OFFSET")
+            and relocs_no_header[0].endswith("VALUE")
+        ):
+            print("llvm-objdump reloc parsing failed (no OFFSET header?)")
+            sys.exit(1)
+        relocs_body = relocs_no_header[1:]
+        for line in relocs_body:
+            offset, type, name = line.split()
+            offset = int(offset, 16)
+            all_relocs[offset] = (type, name)
+        # print(all_relocs)
 
     result = subprocess.run(
         [
@@ -152,7 +153,7 @@ def process_obj_files_to_patch_func(
                 r = all_relocs.get(i)
                 if r:
                     if r[0] == "IMAGE_REL_AMD64_ADDR64":
-                        sf.write(f"      *(uintptr_t*)p = {r[1]};\n")
+                        sf.write(f"      *(uintptr_t*)p = (uintptr_t){r[1]};\n")
                         sf.write("      p += 8; /* %s ADDR64 */\n" % r[1])
                         i += 8
                     elif r[0] == "IMAGE_REL_AMD64_REL32":
@@ -162,7 +163,7 @@ def process_obj_files_to_patch_func(
                         sf.write("      p += 4; /* %s REL32 */\n" % r[1])
                         i += 4
                     elif r[0] == "IMAGE_REL_AMD64_ADDR32":
-                        sf.write(f"      *(uintptr_t*)p = {r[1]};\n")
+                        sf.write(f"      *(uint32_t*)p = (uint32_t){r[1]};\n")
                         sf.write("      p += 4; /* %s ADDR32 */\n" % r[1])
                         i += 4
                     else:
@@ -214,7 +215,7 @@ def munge_ll_file(infile, outfile, do_asm_hack, look_for_const, int_reg):
             "r9d",
             "r15d",
         ]
-        repl_reg = ghccc_order[int_reg+1]
+        repl_reg = ghccc_order[int_reg+1]  # offset by one for $stack
         contents = contents.replace(
             f'asm "movl $$${look_for_const}, %eax", "={{ax}},',
             f'asm "movl $$${look_for_const}, %{repl_reg}", "={{{repl_reg}}},')
@@ -231,7 +232,7 @@ def munge_ll_file(infile, outfile, do_asm_hack, look_for_const, int_reg):
             "r9",
             "r15",
         ]
-        repl_reg = ghccc_order[int_reg+1]
+        repl_reg = ghccc_order[int_reg+1]  # offset by one for $stack
         contents = contents.replace(
             f'asm "movq $$${look_for_const}, %rax", "={{ax}},',
             f'asm "movq $$${look_for_const}, %{repl_reg}", "={{{repl_reg}}},')
@@ -346,9 +347,9 @@ class CToObj:
             self.do_asm_hack,
         )
 
-    def build_decl(self, args, cc="__vectorcall"):
+    def build_decl(self, args, cc="__vectorcall", ret_type="void"):
         for int_regs in range(NUM_INT_VERSIONS):
-            result = f"{cc} void {self.base_name}_i{int_regs}(uintptr_t $stack"
+            result = f"{cc} {ret_type} {self.base_name}_i{int_regs}(uintptr_t $stack"
             for i in range(int_regs):
                 result += f", uintptr_t $r{i}"
             for i in args:
@@ -452,15 +453,16 @@ def main():
             c.build_continuation(1, [])
             c.emit("}")
             c.emit("}")
+        """
 
-        with CToObj("sysexit", sf) as c:
+        # large model required because 'exit' might be far away from generated code.
+        with CToObj("sysexit", sf, model='large') as c:
             c.build_decl(["int rc"])
             c.emit("{ exit(rc); }");
 
         with CToObj("return", sf) as c:
-            c.build_decl(["int rc"])
-            c.emit("{ exit(rc); }");
-        """
+            c.build_decl(["int rc"], ret_type="int")
+            c.emit("{ return rc; }");
 
 
 if __name__ == "__main__":
