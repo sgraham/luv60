@@ -18,15 +18,10 @@ def clang_format_for_patch_header(src):
     return pop.communicate(src.encode("utf-8"))[0].decode("utf-8")
 
 
-def process_obj_file_to_patch_func(
-    obj_file, snip_name, snippets_file_handle, src, consts, continuations
-):
+def rip_obj_file(obj_file):
     """
     As a quick first draft, parse the output of llvm-objdump. It wouldn't be very hard
     and probably more reliable to just read the .obj file directly.
-
-    Either way, with the code bits and relocs in hand, write out a C
-    function to the header that will 'assemble' into our target buffer.
     """
     result = subprocess.run(
         [
@@ -78,17 +73,54 @@ def process_obj_file_to_patch_func(
             all_bytes.append(int(b, 16))
     # print(all_bytes)
 
+    return (all_bytes, all_relocs)
+
+
+def process_obj_files_to_patch_func(
+    obj_files,
+    snip_name,
+    snippets_file_handle,
+    representative_src,
+    consts,
+    continuations,
+):
+    bytes_and_relocs = [rip_obj_file(x) for x in obj_files]
+
+    # With the code bits and relocs in hand, write out a C
+    # function to the header that will 'assemble' into our target buffer.
+
     def could_fallthrough():
+        # XXX assuming they're all the same, hopefully ok?
+        all_bytes = bytes_and_relocs[0][0]
+        all_relocs = bytes_and_relocs[0][1]
+        # print(all_bytes)
+        # print(all_relocs)
         if len(continuations) != 1:
             return False
-        if all_bytes[-5] != 0xe9:
-            return False
-        at = len(all_bytes) - 4
-        r = all_relocs.get(at)
-        if not r:
-            return False
-        if r[0] == 'IMAGE_REL_AMD64_REL32' and r[1] == '$CONT0':
-            return True
+
+        # mcmodel=small
+        if all_bytes[-5] == 0xE9:
+            at = len(all_bytes) - 4
+            r = all_relocs.get(at)
+            if not r:
+                return False
+            if r[0] == "IMAGE_REL_AMD64_REL32" and r[1] == "$CONT0":
+                return True
+
+        """ not tested
+        # mcmodel=large
+        # 000000000000000A: 48 B8 00 00 00 00 00 00 00 00  mov         rax,offset $CONT0
+        # 0000000000000014: 48 FF E0           jmp         rax
+        print(all_bytes[-13:])
+        if all_bytes[-13:] == [0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0x48, 0xFF, 0xE0]:
+            at = len(all_bytes) - 11
+            r = all_relocs.get(at)
+            if not r:
+                return False
+            if r[0] == "IMAGE_REL_AMD64_ADDR64" and r[1] == "$CONT0":
+                return True
+        """
+
         return False
 
     args = []
@@ -107,40 +139,56 @@ def process_obj_file_to_patch_func(
         if arg:
             arg = f", {arg}"
         sf.write(
-            f"static inline unsigned char* {snip_name}{ft}(unsigned char* __restrict p{arg}) {{\n"
+            f"static inline unsigned char* snip_{snip_name}{ft}(int num_int_regs_in_use, unsigned char* __restrict p{arg}) {{\n"
         )
-        i = 0
-        while i < len(all_bytes):
-            b = all_bytes[i]
-            r = all_relocs.get(i)
-            if r:
-                if r[0] == "IMAGE_REL_AMD64_ADDR64":
-                    sf.write(f"  *(uintptr_t*)p = {r[1]};\n")
-                    sf.write("  p += 8; /* %s ADDR64 */\n" % r[1])
-                    i += 8
-                elif r[0] == "IMAGE_REL_AMD64_REL32":
-                    sf.write(
-                        f"  *(int32_t*)p = (intptr_t){r[1]} - (intptr_t)p - 4;\n"
-                    )
-                    sf.write("  p += 4; /* %s REL32 */\n" % r[1])
-                    i += 4
-            else:
-                if fallthrough and i == len(all_bytes) - 5:
-                    break
-                sf.write("  *p++ = 0x%02x;\n" % b)
-                i += 1
+        sf.write("  switch(num_int_regs_in_use) {\n")
+        for ir, br in enumerate(bytes_and_relocs):
+            sf.write("    case %d:\n" % ir)
+            all_bytes = br[0]
+            all_relocs = br[1]
+            i = 0
+            while i < len(all_bytes):
+                b = all_bytes[i]
+                r = all_relocs.get(i)
+                if r:
+                    if r[0] == "IMAGE_REL_AMD64_ADDR64":
+                        sf.write(f"      *(uintptr_t*)p = {r[1]};\n")
+                        sf.write("      p += 8; /* %s ADDR64 */\n" % r[1])
+                        i += 8
+                    elif r[0] == "IMAGE_REL_AMD64_REL32":
+                        sf.write(
+                            f"      *(int32_t*)p = (intptr_t){r[1]} - (intptr_t)p - 4;\n"
+                        )
+                        sf.write("      p += 4; /* %s REL32 */\n" % r[1])
+                        i += 4
+                    elif r[0] == "IMAGE_REL_AMD64_ADDR32":
+                        sf.write(f"      *(uintptr_t*)p = {r[1]};\n")
+                        sf.write("      p += 4; /* %s ADDR32 */\n" % r[1])
+                        i += 4
+                    else:
+                        print("unhandled reloc type %s" % r[0])
+                        sys.exit(1)
+                else:
+                    if fallthrough and i == len(all_bytes) - 5:
+                        break
+                    sf.write("      *p++ = 0x%02x;\n" % b)
+                    i += 1
+            sf.write("    break;\n")
+        sf.write("    default:\n")
+        sf.write('      gen_error("internal error: exceeded maximum int registers.");')
+        sf.write("  }\n")
         sf.write("  return p;\n")
         sf.write(f"}}\n\n")
 
     sf.write("#if 0\n\n")
-    sf.write(clang_format_for_patch_header(src))
+    sf.write(clang_format_for_patch_header(representative_src))
     sf.write("\n#endif\n\n")
     gen_snippet(False)
     if could_fallthrough():
         gen_snippet(True)
 
 
-def munge_ll_file(infile, outfile):
+def munge_ll_file(infile, outfile, do_asm_hack, look_for_const, int_reg):
     """
     It doesn't seem to be possible to tell clang to make the calling
     convention of a function the GHC one, so we instead tag both
@@ -153,19 +201,63 @@ def munge_ll_file(infile, outfile):
         contents = f.read()
     contents = contents.replace("tail call x86_vectorcallcc", "musttail call ghccc")
     contents = contents.replace("x86_vectorcallcc", "ghccc")
+    if do_asm_hack == "32":
+        ghccc_order = [
+            "r13d",
+            "ebp",
+            "r12d",
+            "ebx",
+            "r14d",
+            "esi",
+            "edi",
+            "r8d",
+            "r9d",
+            "r15d",
+        ]
+        repl_reg = ghccc_order[int_reg+1]
+        contents = contents.replace(
+            f'asm "movl $$${look_for_const}, %eax", "={{ax}},',
+            f'asm "movl $$${look_for_const}, %{repl_reg}", "={{{repl_reg}}},')
+    elif do_asm_hack == "64":
+        ghccc_order = [
+            "r13",
+            "rbp",
+            "r12",
+            "rbx",
+            "r14",
+            "rsi",
+            "rdi",
+            "r8",
+            "r9",
+            "r15",
+        ]
+        repl_reg = ghccc_order[int_reg+1]
+        contents = contents.replace(
+            f'asm "movq $$${look_for_const}, %rax", "={{ax}},',
+            f'asm "movq $$${look_for_const}, %{repl_reg}", "={{{repl_reg}}},')
     with open(outfile, "w", newline="\n") as f:
         f.write(contents)
 
 
-def toolchain_c_to_obj(base_name, src, consts, continuations, snippets_file_handle, model):
-    c_file = base_name + ".c"
-    first_ll_file = base_name + ".initial.ll"
-    munged_ll_file = base_name + ".ghc.ll"
-    obj_file = base_name + ".obj"
+def toolchain_c_to_objs(
+    base_name,
+    src_per_int_reg,
+    consts,
+    continuations,
+    snippets_file_handle,
+    model,
+    do_asm_hack,
+):
+    obj_files = []
+    for i, src in enumerate(src_per_int_reg):
+        c_file = base_name + ".%d.c" % i
+        first_ll_file = base_name + ".%d.initial.ll" % i
+        munged_ll_file = base_name + ".%d.ghc.ll" % i
+        obj_file = base_name + ".%d.obj" % i
 
-    with open(c_file, "w", newline="\n") as f:
-        f.write(
-            """\
+        with open(c_file, "w", newline="\n") as f:
+            f.write(
+                """\
 #include <stdint.h>
 #include <stdlib.h>
 extern uintptr_t $X0;
@@ -181,75 +273,82 @@ extern uintptr_t $CONT2;
 #define $CONT1 ((uintptr_t)&$CONT1)
 #define $CONT2 ((uintptr_t)&$CONT2)
 """
+            )
+            f.write(src)
+            f.write("\n")
+
+        subprocess.check_call(
+            [
+                CLANG_PATH,
+                "-emit-llvm",
+                c_file,
+                "-O3",
+                "-S",
+                "-o",
+                first_ll_file,
+            ]
         )
-        f.write(src)
-        f.write("\n")
+        munge_ll_file(first_ll_file, munged_ll_file, do_asm_hack, '$X0', i)
 
-    subprocess.check_call(
-        [CLANG_PATH, "-std=c2x", "-emit-llvm", c_file, "-O3", "-S", "-o", first_ll_file]
-    )
-    munge_ll_file(first_ll_file, munged_ll_file)
+        # Previously -mcmodel=medium was used here to attempt to encourage
+        # longer relocations. In practice, this doesn't work with ASLR, so
+        # instead we workaround it for constants with some inline asm hacks.
+        # TODO: post with details explained
+        subprocess.check_call(
+            [
+                CLANG_PATH,
+                munged_ll_file,
+                f"-mcmodel={model}",
+                "-O3",
+                "-c",
+                "-o",
+                obj_file,
+            ]
+        )
+        # subprocess.check_call(["dumpbin", "/disasm", obj_file])
+        obj_files.append(obj_file)
 
-    # -mcmodel=medium is a useful hack to help with constants in the
-    # snippets. I think medium is supposed to mean that most code and
-    # data are in the low 2G range (so normally rip-relative addressing
-    # would be used) and then "large data" is accessed with movabs full
-    # 8 byte addresses. But, extern'd variables seem to automatically
-    # count as "far away" if they're being used as data (rather than
-    # function pointers). The upshot of this is that our "X" variables
-    # get to write a full 8 bytes in to rax in the snippet bytestream,
-    # so we can load a full size constant, but the CONTs that are used
-    # to jump to the next snippet are more efficient rip-relative REL32
-    # relocations still like they normally would be in the default small
-    # model.
-    subprocess.check_call(
-        [
-            CLANG_PATH,
-            "-std=c2x",
-            munged_ll_file,
-            f"-mcmodel={model}",
-            "-O3",
-            "-c",
-            "-o",
-            obj_file,
-        ]
-    )
-    # subprocess.check_call(["dumpbin", "/disasm", obj_file])
-    process_obj_file_to_patch_func(
-        obj_file, base_name, snippets_file_handle, src, consts, continuations
+    assert len(obj_files) == len(src_per_int_reg)
+    process_obj_files_to_patch_func(
+        obj_files,
+        base_name,
+        snippets_file_handle,
+        src_per_int_reg[0],
+        consts,
+        continuations,
     )
 
 
-NUM_INT_VERSIONS = 4
+NUM_INT_VERSIONS = 9
+
 
 class CToObj:
-    def __init__(self, base_name, snippets_file, model='small'):
+    def __init__(self, base_name, snippets_file, model="small"):
         self.base_name = base_name
-        self.code = [""]*NUM_INT_VERSIONS
+        self.code = [""] * NUM_INT_VERSIONS
         self.consts_used = []
         self.continuations_used = []
         self.snippets_file = snippets_file
         self.model = model
+        self.do_asm_hack = None
 
     def __enter__(self):
         return self
 
     def __exit__(self, type, value, traceback):
-        for int_regs in range(NUM_INT_VERSIONS):
-            toolchain_c_to_obj(
-                f"{self.base_name}_i{int_regs}",
-                self.code[int_regs],
-                self.consts_used,
-                self.continuations_used,
-                self.snippets_file,
-                self.model,
-            )
+        toolchain_c_to_objs(
+            self.base_name,
+            self.code,
+            self.consts_used,
+            self.continuations_used,
+            self.snippets_file,
+            self.model,
+            self.do_asm_hack,
+        )
 
     def build_decl(self, args, cc="__vectorcall"):
         for int_regs in range(NUM_INT_VERSIONS):
-            result = (
-                f"{cc} void {self.base_name}_i{int_regs}(uintptr_t $stack"
-            )
+            result = f"{cc} void {self.base_name}_i{int_regs}(uintptr_t $stack"
             for i in range(int_regs):
                 result += f", uintptr_t $r{i}"
             for i in args:
@@ -280,6 +379,12 @@ class CToObj:
             self.emit_specific(int_regs, result)
         self.continuations_used.append(cont_index)
 
+    def asm_hack_32(self):
+        self.do_asm_hack = "32"
+
+    def asm_hack_64(self):
+        self.do_asm_hack = "64"
+
     def emit_specific(self, int_regs, text):
         self.code[int_regs] += text
 
@@ -289,10 +394,11 @@ class CToObj:
 
 
 def main():
-    with open("snippets.c", "w", newline="\n") as sf:
+    with open("..\\out\\snippets.c", "w", newline="\n") as sf:
         sf.write("#include <stdint.h>\n")
         sf.write("#include <stdlib.h>\n\n")
 
+        """
         with CToObj("load_addr", sf) as c:
             c.build_decl([])
             c.emit("{ uintptr_t v = (")
@@ -308,15 +414,18 @@ def main():
             c.emit(");")
             c.build_continuation(0, ["v"])
             c.emit("}")
+        """
 
-        with CToObj("const", sf, model='medium') as c:
+        with CToObj("const_i32", sf) as c:
             c.build_decl([])
-            c.emit("{ int v = (")
+            c.emit('{ int v; asm ("movl $')
             c.build_const(0)
-            c.emit(");")
+            c.emit(', %%eax": "=a"(v));')
             c.build_continuation(0, ["v"])
             c.emit("}")
+            c.asm_hack_32()
 
+        """
         with CToObj("add", sf) as c:
             c.build_decl(["int a", "int b"])
             c.emit("{ int v = a + b;")
@@ -351,6 +460,7 @@ def main():
         with CToObj("return", sf) as c:
             c.build_decl(["int rc"])
             c.emit("{ exit(rc); }");
+        """
 
 
 if __name__ == "__main__":

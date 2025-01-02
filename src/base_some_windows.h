@@ -1,7 +1,7 @@
 // Windows.h is too slow and we only need a few things so just define/extern
 // them here.
 
-typedef unsigned long DWORD, *LPDWORD;
+typedef unsigned long DWORD, *LPDWORD, *PDWORD;
 typedef long BOOL;
 typedef void VOID, *PVOID, *LPVOID;
 typedef void* HANDLE;
@@ -107,6 +107,11 @@ LPVOID WINAPI VirtualAlloc(LPVOID lpAddress,
                            SIZE_T dwSize,
                            DWORD flAllocationType,
                            DWORD flProtect);
+
+BOOL WINAPI VirtualProtect(LPVOID lpAddress,
+                           SIZE_T dwSize,
+                           DWORD flNewProtect,
+                           PDWORD lpflOldProtect);
 
 BOOL WINAPI VirtualFree(LPVOID lpAddress, SIZE_T dwSize, DWORD dwFreeType);
 

@@ -50,6 +50,8 @@ typedef enum TypeKind {
 
 extern void parse(const char* filename, ReadFileResult file);
 
+void gen_init(void);
+void gen_finish(void);
 void gen_push_number(uint64_t val, TypeKind suffix);
 extern void gen_return(Type type);
 

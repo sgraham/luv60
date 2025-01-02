@@ -20,8 +20,8 @@ set auto_compile_flags=
 if "%asan%"=="1"      set auto_compile_flags=%auto_compile_flags% -fsanitize=address && echo [asan enabled]
 
 :: --- Compile/Link Line Definitions ------------------------------------------
-set cl_common=     /I..\src /I. /nologo /Zi /W4 /WX /arch:AVX2
-set clang_common=  -I..\src -I. -fdiagnostics-absolute-paths -Wall -Werror -mavx2 -mpclmul
+set cl_common=     /I..\src /I. /nologo /Zi /W4 /WX /arch:AVX2 /D_CRT_SECURE_NO_WARNINGS
+set clang_common=  -I..\src -I. -fdiagnostics-absolute-paths -Wall -Werror -mavx2 -mpclmul -D_CRT_SECURE_NO_WARNINGS
 set cl_debug=      call cl /Od /Ob1 /DBUILD_DEBUG=1 %cl_common% %auto_compile_flags%
 set cl_release=    call cl /O2 /DBUILD_DEBUG=0 %cl_common% %auto_compile_flags%
 set clang_debug=   call "C:\Program Files\LLVM\bin\clang.exe" -g -O0 -DBUILD_DEBUG=1 %clang_common% %auto_compile_flags%
@@ -46,9 +46,19 @@ if "%release%"=="1"   set compile=%compile_release%
 :: --- Prep Directories -------------------------------------------------------
 if not exist out mkdir out
 
-pushd out
-..\third_party\re2c\win\re2c.exe -W -b -g -i --no-generation-date -o categorizer.c ..\src\categorizer.in.c
-popd
+if "%no_re2c%"=="1" echo [skipping re2c]
+if not "%no_re2c%"=="1" (
+  pushd out
+  ..\third_party\re2c\win\re2c.exe -W -b -g -i --no-generation-date -o categorizer.c ..\src\categorizer.in.c
+  popd
+)
+
+if "%no_snip%"=="1" echo [skipping snippets]
+if not "%no_snip%"=="1" (
+  pushd snip
+  python clang_rip.py
+  popd
+)
 
 pushd out
 if "%luvc%"=="1"                     set didbuild=1 && %compile% ..\src\luvc_main.c                %compile_link% %out%luvc.exe || exit /b 1

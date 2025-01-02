@@ -535,6 +535,8 @@ static void init_types(void) {
 void parse(const char* filename, ReadFileResult file) {
   init_types();
 
+  gen_init();
+
   p_cur_filename = filename;
   p_cur_token_index = 0;
   lex_start(file.buffer, file.allocated_size);
@@ -543,4 +545,6 @@ void parse(const char* filename, ReadFileResult file) {
   while (p_cur_kind != TOK_EOF) {
     p_statement(/*toplevel=*/true);
   }
+
+  gen_finish();
 }
