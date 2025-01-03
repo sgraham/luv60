@@ -415,13 +415,6 @@ static uint64_t scan_int(StrView num, Type* suffix) {
   return val;
 }
 
-static void parse_number(bool can_assign, ContFixup* cont) {
-  Type suffix = {0};
-  uint64_t val = scan_int(lex_get_strview(previous_offset, cur_offset), &suffix);
-
-  gen_push_number(val, suffix, cont);
-}
-
 typedef enum Precedence {
   PREC_NONE,
   PREC_LOWEST,
@@ -450,7 +443,7 @@ static bool match_assignment(void) {
   return true;
 }
 
-static void parse_variable(bool can_assign, ContFixup* cont) {
+static void parse_variable(bool can_assign) {
   Str target = str_from_previous();
   if (can_assign && match_assignment()) {
     abort();
@@ -466,20 +459,197 @@ static void parse_variable(bool can_assign, ContFixup* cont) {
       error(strf("Undefined variable '%s'.", cstr(target)));
     }
     ASSERT(sym->is_local);
-    gen_load_local(sym->stack_offset, sym->type, cont);
+    // XXX cont
+    gen_load_local(sym->stack_offset, sym->type, NULL);
   }
+}
+
+static void parse_number(bool can_assign) {
+  Type suffix = {0};
+  uint64_t val = scan_int(lex_get_strview(previous_offset, cur_offset), &suffix);
+
+  // XXX cont
+  gen_push_number(val, suffix, NULL);
+}
+
+static void parse_alignof(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_and(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_binary(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_bool_literal(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_call(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_compound_literal(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_dict_literal(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_dot(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_grouping(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_in_or_not_in(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_len(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_list_literal_or_compr(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_null_literal(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_offsetof(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_or(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_range(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_sizeof(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_string(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_string_interpolate(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_subscript(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_typeid(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_unary(bool can_assign) { ASSERT(false && "not implemented"); }
+
+typedef void (*PrefixFn)(bool can_assign);
+typedef void (*InfixFn)(bool can_assign);
+
+typedef struct Rule {
+  PrefixFn prefix;
+  InfixFn infix;
+  Precedence prec_for_infix;
+} Rule;
+
+static Rule* get_rule(TokenKind tok_kind);
+
+// Has to match the order in tokens.inc.
+static Rule rules[NUM_TOKEN_KINDS] = {
+    {NULL, NULL, PREC_NONE},  // TOK_INVALID
+    {NULL, NULL, PREC_NONE},  // TOK_EOF
+    {NULL, NULL, PREC_NONE},  // TOK_INDENT
+    {NULL, NULL, PREC_NONE},  // TOK_DEDENT
+    {NULL, NULL, PREC_NONE},  // TOK_NEWLINE
+    {NULL, NULL, PREC_NONE},  // TOK_NL
+
+    {parse_unary, parse_binary, PREC_BITS},                     // TOK_AMPERSAND
+    {NULL, NULL, PREC_ASSIGNMENT},                              // TOK_AMPERSANDEQ
+    {parse_alignof, NULL, PREC_NONE},                           // TOK_ALIGNOF
+    {parse_unary, NULL, PREC_NONE},                             // TOK_ALLOC
+    {NULL, parse_and, PREC_AND},                                // TOK_AND
+    {NULL, NULL, PREC_NONE},                                    // TOK_AS
+    {NULL, parse_binary, PREC_EQUALITY},                        // TOK_BANGEQ
+    {NULL, NULL, PREC_NONE},                                    // TOK_BREAK
+    {NULL, parse_binary, PREC_BITS},                            // TOK_CARET
+    {NULL, NULL, PREC_ASSIGNMENT},                              // TOK_CARETEQ
+    {parse_unary, NULL, PREC_NONE},                             // TOK_CAST
+    {NULL, NULL, PREC_NONE},                                    // TOK_CHECK
+    {NULL, NULL, PREC_NONE},                                    // TOK_COLON
+    {NULL, NULL, PREC_NONE},                                    // TOK_COMMA
+    {NULL, NULL, PREC_NONE},                                    // TOK_COMMENT
+    {NULL, NULL, PREC_NONE},                                    // TOK_CONST
+    {NULL, NULL, PREC_NONE},                                    // TOK_CONTINUE
+    {NULL, NULL, PREC_NONE},                                    // TOK_DEF
+    {NULL, NULL, PREC_NONE},                                    // TOK_DEL
+    {NULL, parse_dot, PREC_CALL},                               // TOK_DOT
+    {NULL, NULL, PREC_NONE},                                    // TOK_ELIF
+    {NULL, NULL, PREC_NONE},                                    // TOK_ELSE
+    {NULL, NULL, PREC_NONE},                                    // TOK_EQ
+    {NULL, parse_binary, PREC_EQUALITY},                        // TOK_EQEQ
+    {NULL, NULL, PREC_NONE},                                    // TOK_ERROR
+    {parse_bool_literal, NULL, PREC_NONE},                      // TOK_FALSE
+    {NULL, NULL, PREC_NONE},                                    // TOK_FOR
+    {NULL, NULL, PREC_NONE},                                    // TOK_FOREIGN
+    {NULL, parse_binary, PREC_COMPARISON},                      // TOK_GEQ
+    {NULL, NULL, PREC_NONE},                                    // TOK_GLOBAL
+    {NULL, parse_binary, PREC_COMPARISON},                      // TOK_GT
+    {NULL, NULL, PREC_NONE},                                    // TOK_HASH
+    {parse_variable, NULL, PREC_NONE},                          // TOK_IDENT_VAR
+    {parse_compound_literal, NULL, PREC_NONE},                  // TOK_IDENT_TYPE
+    {parse_variable, NULL, PREC_NONE},                          // TOK_IDENT_CONST
+    {NULL, NULL, PREC_NONE},                                    // TOK_IDENT_DECORATOR
+    {NULL, NULL, PREC_NONE},                                    // TOK_IF
+    {NULL, NULL, PREC_NONE},                                    // TOK_IMPORT
+    {NULL, parse_in_or_not_in, PREC_COMPARISON},                // TOK_IN
+    {parse_number, NULL, PREC_NONE},                            // TOK_INT_LITERAL
+    {parse_dict_literal, NULL, PREC_NONE},                      // TOK_LBRACE
+    {parse_len, NULL, PREC_NONE},                               // TOK_LEN
+    {NULL, parse_binary, PREC_COMPARISON},                      // TOK_LEQ
+    {parse_grouping, parse_call, PREC_CALL},                    // TOK_LPAREN
+    {NULL, parse_binary, PREC_SHIFT},                           // TOK_LSHIFT
+    {NULL, NULL, PREC_ASSIGNMENT},                              // TOK_LSHIFTEQ
+    {parse_list_literal_or_compr, parse_subscript, PREC_CALL},  // TOK_LSQUARE
+    {NULL, parse_binary, PREC_COMPARISON},                      // TOK_LT
+    {parse_unary, parse_binary, PREC_TERM},                     // TOK_MINUS
+    {NULL, NULL, PREC_NONE},                                    // TOK_MINUSEQ
+    {NULL, NULL, PREC_NONE},                                    // TOK_NONLOCAL
+    {parse_unary, parse_in_or_not_in, PREC_COMPARISON},         // TOK_NOT
+    {parse_null_literal, NULL, PREC_NONE},                      // TOK_NULL
+    {parse_offsetof, NULL, PREC_NONE},                          // TOK_OFFSETOF
+    {NULL, NULL, PREC_NONE},                                    // TOK_ON
+    {NULL, parse_or, PREC_OR},                                  // TOK_OR
+    {NULL, NULL, PREC_NONE},                                    // TOK_PASS
+    {NULL, parse_binary, PREC_FACTOR},                          // TOK_PERCENT
+    {NULL, NULL, PREC_ASSIGNMENT},                              // TOK_PERCENTEQ
+    {NULL, parse_binary, PREC_BITS},                            // TOK_PIPE
+    {NULL, NULL, PREC_ASSIGNMENT},                              // TOK_PIPEEQ
+    {NULL, parse_binary, PREC_TERM},                            // TOK_PLUS
+    {NULL, NULL, PREC_NONE},                                    // TOK_PLUSEQ
+    {NULL, NULL, PREC_NONE},                                    // TOK_PRINT
+    {parse_range, NULL, PREC_NONE},                             // TOK_RANGE
+    {NULL, NULL, PREC_NONE},                                    // TOK_RBRACE
+    {NULL, NULL, PREC_NONE},                                    // TOK_RELOCATE
+    {NULL, NULL, PREC_NONE},                                    // TOK_RETURN
+    {NULL, NULL, PREC_NONE},                                    // TOK_RPAREN
+    {NULL, parse_binary, PREC_SHIFT},                           // TOK_RSHIFT
+    {NULL, NULL, PREC_ASSIGNMENT},                              // TOK_RSHIFTEQ
+    {NULL, NULL, PREC_NONE},                                    // TOK_RSQUARE
+    {parse_sizeof, NULL, PREC_NONE},                            // TOK_SIZEOF
+    {NULL, parse_binary, PREC_FACTOR},                          // TOK_SLASH
+    {NULL, NULL, PREC_NONE},                                    // TOK_SLASHEQ
+    {NULL, parse_binary, PREC_FACTOR},                          // TOK_STAR
+    {NULL, NULL, PREC_NONE},                                    // TOK_STAREQ
+    {parse_string_interpolate, NULL, PREC_NONE},                // TOK_STRING_INTERP
+    {parse_string, NULL, PREC_NONE},                            // TOK_STRING_QUOTED
+    {parse_string, NULL, PREC_NONE},                            // TOK_STRING_RAW
+    {NULL, NULL, PREC_NONE},                                    // TOK_STRUCT
+    {parse_bool_literal, NULL, PREC_NONE},                      // TOK_TRUE
+    {NULL, NULL, PREC_NONE},                                    // TOK_TYPEDEF
+    {parse_typeid, NULL, PREC_NONE},                            // TOK_TYPEID
+    {NULL, NULL, PREC_NONE},                                    // TOK_TYPEOF
+    {NULL, NULL, PREC_NONE},                                    // TOK_WITH
+
+    {NULL, NULL, PREC_NONE},  // TOK_BOOL
+    {NULL, NULL, PREC_NONE},  // TOK_BYTE
+    {NULL, NULL, PREC_NONE},  // TOK_CODEPOINT
+    {NULL, NULL, PREC_NONE},  // TOK_CONST_CHAR
+    {NULL, NULL, PREC_NONE},  // TOK_CONST_OPAQUE
+    {NULL, NULL, PREC_NONE},  // TOK_DOUBLE
+    {NULL, NULL, PREC_NONE},  // TOK_F16
+    {NULL, NULL, PREC_NONE},  // TOK_F32
+    {NULL, NULL, PREC_NONE},  // TOK_F64
+    {NULL, NULL, PREC_NONE},  // TOK_FLOAT
+    {NULL, NULL, PREC_NONE},  // TOK_I16
+    {NULL, NULL, PREC_NONE},  // TOK_I32
+    {NULL, NULL, PREC_NONE},  // TOK_I64
+    {NULL, NULL, PREC_NONE},  // TOK_I8
+    {NULL, NULL, PREC_NONE},  // TOK_INT
+    {NULL, NULL, PREC_NONE},  // TOK_OPAQUE
+    {NULL, NULL, PREC_NONE},  // TOK_SIZE_T
+    {NULL, NULL, PREC_NONE},  // TOK_STR
+    {NULL, NULL, PREC_NONE},  // TOK_U16
+    {NULL, NULL, PREC_NONE},  // TOK_U32
+    {NULL, NULL, PREC_NONE},  // TOK_U64
+    {NULL, NULL, PREC_NONE},  // TOK_U8
+    {NULL, NULL, PREC_NONE},  // TOK_UINT
+};
+
+static Rule* get_rule(TokenKind tok_kind) {
+  ASSERT(tok_kind < NUM_TOKEN_KINDS);
+  return &rules[tok_kind];
 }
 
 static void parse_precedence(Precedence precedence, ContFixup* cont) {
   advance();
-  bool can_assign = precedence <= PREC_ASSIGNMENT;
-
-  // XXX
-  if (previous_kind == TOK_INT_LITERAL) {
-    parse_number(can_assign, cont);
+  PrefixFn prefix_rule = get_rule(previous_kind)->prefix;
+  if (!prefix_rule) {
+    error("Expect expression.");
   }
-  if (previous_kind == TOK_IDENT_VAR) {
-    parse_variable(can_assign, cont);
+
+  bool can_assign = precedence <= PREC_ASSIGNMENT;
+  prefix_rule(can_assign);
+
+  while (precedence <= get_rule(cur_kind)->prec_for_infix) {
+    advance();
+    InfixFn infix_rule = get_rule(previous_kind)->infix;
+    infix_rule(can_assign);
+  }
+
+  if (can_assign && match_assignment()) {
+    error("Invalid assignment target.");
   }
 }
 
