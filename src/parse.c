@@ -122,8 +122,7 @@ typedef struct FuncData {
   FuncParams params;
 
   int locals_offset;
-  FuncPrologFixup locals_fixup;
-  GenLabel func_exit_label;
+  ContFixup func_exit_cont;
   Sym locals[P_MAX_LOCALS];
   int num_locals;
 } FuncData;
@@ -309,16 +308,12 @@ static void p_enter_function(Type return_type, Str name, FuncParams params) {
   p_cur_func.name = name;
   p_cur_func.params = params;
   p_cur_func.locals_offset = 0;
-  p_cur_func.locals_fixup = gen_func_entry();
+  p_cur_func.func_exit_cont = gen_func_entry();
   p_cur_func.return_val = p_alloc_local(str_intern_len("$ret", 4), return_type);
-  p_cur_func.func_exit_label = gen_declare_label();
 }
 
 static void p_leave_function(void) {
-  // TODO: load $ret to rax
-  gen_fixup_label_to_here(p_cur_func.func_exit_label);
-  gen_func_exit_and_patch_func_entry(p_cur_func.locals_offset + 32, p_cur_func.locals_fixup);
-  gen_return((Type){TYPE_VOID});
+  gen_func_exit_and_patch_func_entry(&p_cur_func.func_exit_cont, p_cur_func.return_type);
   memset(&p_cur_func, 0, sizeof(p_cur_func));
 }
 
@@ -416,11 +411,11 @@ static uint64_t scan_int(StrView num, Type* suffix) {
   return val;
 }
 
-static void p_number(bool can_assign) {
+static void p_number(bool can_assign, ContFixup* cont) {
   Type suffix = {0};
   uint64_t val = scan_int(lex_get_strview(p_previous_offset, p_cur_offset), &suffix);
 
-  gen_push_number(val, suffix);
+  gen_push_number(val, suffix, cont);
 }
 
 typedef enum Precedence {
@@ -440,30 +435,26 @@ typedef enum Precedence {
   PREC_CALL,        // . () []
 } Precedence;
 
-static void p_precedence(Precedence precedence) {
+static void p_precedence(Precedence precedence, ContFixup* cont) {
   p_advance();
   bool can_assign = precedence <= PREC_ASSIGNMENT;
 
   // XXX
   if (p_previous_kind == TOK_INT_LITERAL) {
-    p_number(can_assign);
+    p_number(can_assign, cont);
   }
 }
 
-static void p_expression(void) {
-  p_precedence(PREC_LOWEST);
+static void p_expression(ContFixup* cont) {
+  p_precedence(PREC_LOWEST, cont);
 }
 
 static bool p_func_body_only_statement(void) {
   if (p_match(TOK_RETURN)) {
     ASSERT(p_cur_func.return_type.i);
     if (p_cur_func.return_type.i != TYPE_VOID) {
-      p_expression();
-
-      ASSERT(p_cur_func.return_val);
-      gen_store_local(p_cur_func.return_val->stack_offset, p_cur_func.return_type);
+      p_expression(&p_cur_func.func_exit_cont);
     }
-    gen_jump(p_cur_func.func_exit_label);
     return true;
   }
 
@@ -500,6 +491,8 @@ static void p_var(Type type) {
   Str name = p_name("Expect variable or typed variable name.");
   ASSERT(name.i);
 
+  abort();
+#if 0
   bool have_init;
   if (!type.i) {
     p_consume(TOK_EQ, "Expect initializer for variable without type.");
@@ -516,6 +509,7 @@ static void p_var(Type type) {
   if (have_init) {
     gen_store_local(new->stack_offset, type);
   }
+#endif
 
   p_consume(TOK_NEWLINE, "Expect newline after variable declaration.");
 }
@@ -532,7 +526,8 @@ static bool p_anywhere_statement(void) {
     return true;
   }
 
-  p_expression();
+  abort();
+ // p_expression();
   p_consume(TOK_NEWLINE, "Expect newline.");
   return true;
 }

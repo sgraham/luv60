@@ -49,14 +49,14 @@ if not exist out mkdir out
 if "%no_re2c%"=="1" echo [skipping re2c]
 if not "%no_re2c%"=="1" (
   pushd out
-  ..\third_party\re2c\win\re2c.exe -W -b -g -i --no-generation-date -o categorizer.c ..\src\categorizer.in.c
+  ..\third_party\re2c\win\re2c.exe -W -b -g -i --no-generation-date -o categorizer.c ..\src\categorizer.in.c || exit /b 1
   popd
 )
 
 if "%no_snip%"=="1" echo [skipping snippets]
 if not "%no_snip%"=="1" (
   pushd snip
-  python clang_rip.py
+  python clang_rip.py || exit /b 1
   popd
 )
 
