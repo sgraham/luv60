@@ -51,17 +51,24 @@ typedef enum TypeKind {
 extern void parse(const char* filename, ReadFileResult file);
 
 
-typedef struct GenFixup {
+typedef struct FuncPrologFixup {
   unsigned char* addr;
-} GenFixup;
+} FuncPrologFixup;
+
+typedef struct GenLabel {
+  int i;
+} GenLabel;
 
 void gen_init(void);
 void gen_finish(void);
-GenFixup gen_func_entry(void);
-void gen_func_exit_and_patch_func_entry(uint32_t locals_space_required, GenFixup fixup_loc);
+FuncPrologFixup gen_func_entry(void);
+void gen_func_exit_and_patch_func_entry(uint32_t locals_space_required, FuncPrologFixup fixup_loc);
 void gen_push_number(uint64_t val, Type suffix);
 void gen_store_local(uint32_t offset, Type type);
-extern void gen_return(Type type);
+void gen_return(Type type);
+GenLabel gen_declare_label(void);
+void gen_jump(GenLabel label);
+void gen_fixup_label_to_here(GenLabel label);
 
 #include "lex.c"
 #include "parse.c"

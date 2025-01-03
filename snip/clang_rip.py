@@ -140,7 +140,7 @@ def process_obj_files_to_patch_func(
         if arg:
             arg = f", {arg}"
         sf.write(
-            f"static inline unsigned char* snip_{snip_name}{ft}(int num_int_regs_in_use, unsigned char* __restrict p{arg}) {{\n"
+            f"static inline __attribute__((warn_unused_result)) unsigned char* snip_{snip_name}{ft}(int num_int_regs_in_use, unsigned char* __restrict p{arg}) {{\n"
         )
         sf.write("  switch(num_int_regs_in_use) {\n")
         for ir, br in enumerate(bytes_and_relocs):
@@ -494,6 +494,10 @@ def main():
         with CToObj("return", sf) as c:
             c.build_decl(["int rc"], ret_type="int")
             c.emit("{ return rc; }")
+
+        with CToObj("return_void", sf) as c:
+            c.build_decl([])
+            c.emit("{ return; }")
 
 
 if __name__ == "__main__":

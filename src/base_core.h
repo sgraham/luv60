@@ -66,3 +66,10 @@
 #else
 #  error port
 #endif
+
+#if COMPILER_CLANG || COMPILER_GCC
+#  define WARN_UNUSED __attribute((warn_unused_result))
+#elif COMPILER_MSVC
+#  define WARN_UNUSED
+#  error port
+#endif

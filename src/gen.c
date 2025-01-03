@@ -4,6 +4,10 @@ typedef struct VSVal {
 } VSVal;
 static VSVal gen_vstack[GEN_MAX_STACK_SIZE];
 static int gen_num_vstack = 0;
+static unsigned char* gen_current_func_base;
+static int gen_current_func_label;
+#define GEN_MAX_LABELS_PER_FUNCTION 256
+static uint32_t gen_func_label_fixups[GEN_MAX_LABELS_PER_FUNCTION];
 
 #define GEN_CODE_SEG_SIZE (64<<20)
 static unsigned char* gen_code;
@@ -26,13 +30,16 @@ void gen_finish(void) {
   FILE* f = fopen("code.raw", "wb");
   fwrite(gen_code, 1, gen_p - gen_code, f);
   fclose(f);
+  system("ndisasm -b64 code.raw");
   // `ndisasm -b64 code.raw`
 
+#if 0
   DWORD old_protect;
   VirtualProtect(gen_code, GEN_CODE_SEG_SIZE, PAGE_EXECUTE_READ, &old_protect);
   asm("movq %rsp, %r13; subq $8, %r13");
   int rv = ((int (*)())gen_code)();
   printf("returned: %d\n", rv);
+#endif
 }
 
 // In the maximal case, we need this big mess to start a function (when the
@@ -58,8 +65,11 @@ void gen_finish(void) {
 static uint8_t gen_nop8[] = { 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00 };
 static uint8_t gen_nop9[] = { 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
-GenFixup gen_func_entry(void) {
-  GenFixup fixup = {gen_p};
+FuncPrologFixup gen_func_entry(void) {
+  gen_current_func_label = 0;
+  gen_current_func_base = gen_p;
+
+  FuncPrologFixup fixup = {gen_p};
   memcpy(gen_p, gen_nop8, 8);
   memcpy(&gen_p[8], gen_nop9, 9);
   gen_p += 17;
@@ -76,7 +86,7 @@ GenFixup gen_func_entry(void) {
 //
 // Small version:
 // 0000000000000036: 48 83 C4 38        add         rsp,38h
-void gen_func_exit_and_patch_func_entry(uint32_t locals_space_required, GenFixup fixup_loc) {
+void gen_func_exit_and_patch_func_entry(uint32_t locals_space_required, FuncPrologFixup fixup_loc) {
   if (locals_space_required <= 255) {
     fixup_loc.addr[20] = (uint8_t)locals_space_required;
     *gen_p++ = 0x48;
@@ -86,6 +96,7 @@ void gen_func_exit_and_patch_func_entry(uint32_t locals_space_required, GenFixup
   } else {
     ASSERT(false && "todo");
   }
+  gen_current_func_base = NULL;
 }
 
 void gen_push_number(uint64_t val, Type suffix) {
@@ -104,13 +115,41 @@ void gen_store_local(uint32_t offset, Type type) {
 // type can be TYPE_VOID for no return.
 void gen_return(Type type) {
   if (type.i == TYPE_VOID) {
-    // gen_p = snip_return_void(gen_num_vstack, gen_p);
-    abort();
+    gen_p = snip_return_void(gen_num_vstack, gen_p);
   } else {
     ASSERT(gen_num_vstack);
     VSVal top = gen_vstack[--gen_num_vstack];
     // convert_or_error(top, type);
     (void)top;
-    snip_return(gen_num_vstack, gen_p);
+    gen_p = snip_return(gen_num_vstack, gen_p);
+  }
+}
+
+GenLabel gen_declare_label(void) {
+  ASSERT(gen_current_func_label < COUNTOF(gen_func_label_fixups));
+  GenLabel ret = {gen_current_func_label++};
+  gen_func_label_fixups[ret.i] = 0;
+  return ret;
+}
+
+void gen_jump(GenLabel label) {
+  *gen_p++ = 0xe9;  // jmp with 32 bit displacement.
+  if (gen_func_label_fixups[label.i] == 0) {
+    gen_func_label_fixups[label.i] = gen_p - gen_current_func_base;
+    *gen_p++ = 0;
+    *gen_p++ = 0;
+    *gen_p++ = 0;
+    *gen_p++ = 0;
+  } else {
+    // TODO: thread
+    abort();
+  }
+}
+
+void gen_fixup_label_to_here(GenLabel label) {
+  if (gen_func_label_fixups[label.i]) {
+    unsigned char* fixup_at = gen_current_func_base + gen_func_label_fixups[label.i];
+    int32_t fixup_to = gen_p - fixup_at - 4;
+    *(int32_t*)fixup_at = fixup_to;
   }
 }

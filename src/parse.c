@@ -12,6 +12,15 @@ static int p_num_typedata;
 static char p_strings[16<<20];
 static int p_string_insert = 1;
 
+// XXX actually intern!
+Str str_intern_len(const char* str, uint32_t len) {
+  memcpy(&p_strings[p_string_insert], str, len);
+  int ret = p_string_insert;
+  p_string_insert += len;
+  p_strings[p_string_insert++] = '\0';
+  return (Str){ret};
+}
+
 #if 0
 typedef struct TypeDataExtraPtr {
   Type type;
@@ -89,7 +98,9 @@ typedef struct Sym {
   SymKind kind;
   Str name;
   Type type;
-  Val val;
+  // TODO: Not sure how much const propagation to do, and how much can be
+  // resolved in a single pass. Probably only for actual `const`s?
+  // Val val;
   int stack_offset;
   bool is_local;
 } Sym;
@@ -106,11 +117,13 @@ static uint32_t p_previous_offset;
 #define P_MAX_LOCALS 256
 typedef struct FuncData {
   Type return_type;
+  Sym* return_val;
   Str name;
   FuncParams params;
 
   int locals_offset;
-  GenFixup locals_fixup;
+  FuncPrologFixup locals_fixup;
+  GenLabel func_exit_label;
   Sym locals[P_MAX_LOCALS];
   int num_locals;
 } FuncData;
@@ -243,11 +256,10 @@ static Str p_name(const char* err) {
   p_consume(TOK_IDENT_VAR, err);
   StrView view = lex_get_strview(p_previous_offset, p_cur_offset);
   ASSERT(view.size > 0);
-  while (view.data[view.size - 1] == ' ') --view.size;
-  memcpy(&p_strings[p_string_insert], view.data, view.size);
-  int ret = p_string_insert;
-  p_string_insert += view.size;
-  return (Str){ret};
+  while (view.data[view.size - 1] == ' ') {
+    --view.size;
+  }
+  return str_intern_len(view.data, view.size);
 }
 
 static FuncParams p_func_params(void) {
@@ -278,21 +290,36 @@ static FuncParams p_func_params(void) {
 
 static void p_statement(bool toplevel);
 
+static Sym* p_alloc_local(Str name, Type type) {
+  ASSERT(p_cur_func.name.i);
+  ASSERT(p_cur_func.num_locals < COUNTOF(p_cur_func.locals));
+  Sym* new = &p_cur_func.locals[p_cur_func.num_locals++];
+  new->kind = SYM_VAR;
+  new->name = name;
+  new->type = type;
+  new->is_local = true;
+  // TODO: align, size, etc etc etc
+  new->stack_offset = p_cur_func.locals_offset + 32;
+  p_cur_func.locals_offset += 8;
+  return new;
+}
+
 static void p_enter_function(Type return_type, Str name, FuncParams params) {
   p_cur_func.return_type = return_type;
   p_cur_func.name = name;
   p_cur_func.params = params;
   p_cur_func.locals_offset = 0;
   p_cur_func.locals_fixup = gen_func_entry();
+  p_cur_func.return_val = p_alloc_local(str_intern_len("$ret", 4), return_type);
+  p_cur_func.func_exit_label = gen_declare_label();
 }
 
 static void p_leave_function(void) {
+  // TODO: load $ret to rax
+  gen_fixup_label_to_here(p_cur_func.func_exit_label);
   gen_func_exit_and_patch_func_entry(p_cur_func.locals_offset + 32, p_cur_func.locals_fixup);
-  //gen_return(p_cur_func.return_type);
-  p_cur_func.locals_fixup = (GenFixup){0};
-  p_cur_func.return_type.i = 0;
-  p_cur_func.name.i = 0;
-  p_cur_func.params = (FuncParams){0};
+  gen_return((Type){TYPE_VOID});
+  memset(&p_cur_func, 0, sizeof(p_cur_func));
 }
 
 // ~strtoull with slight differences:
@@ -432,8 +459,11 @@ static bool p_func_body_only_statement(void) {
     ASSERT(p_cur_func.return_type.i);
     if (p_cur_func.return_type.i != TYPE_VOID) {
       p_expression();
+
+      ASSERT(p_cur_func.return_val);
+      gen_store_local(p_cur_func.return_val->stack_offset, p_cur_func.return_type);
     }
-    gen_return(p_cur_func.return_type);
+    gen_jump(p_cur_func.func_exit_label);
     return true;
   }
 
@@ -482,17 +512,7 @@ static void p_var(Type type) {
     }
   }
 
-  ASSERT(p_cur_func.name.i);
-  ASSERT(p_cur_func.num_locals < COUNTOF(p_cur_func.locals));
-  Sym* new = &p_cur_func.locals[p_cur_func.num_locals++];
-  new->kind = SYM_VAR;
-  new->name = name;
-  new->type = type;
-  new->is_local = true;
-  // TODO: align, size, etc etc etc
-  new->stack_offset = p_cur_func.locals_offset + 32;
-  p_cur_func.locals_offset += 8;
-  new->val.p = 0;
+  Sym* new = p_alloc_local(name, type);
   if (have_init) {
     gen_store_local(new->stack_offset, type);
   }
