@@ -12,14 +12,14 @@ static int gen_num_vstack = 0;
 // allocates a ContFixup, which is the head of the list starting
 // with a null (0) offset.
 //
-// When the ContFixup is passed into a snip_XXX_fixup function, the four
+// When the ContFixup is passed into a snip_XYZ_fixup function, the four
 // bytes of the REL32 for the CONT stores the current head of the list,
 // and the location where we just wrote becomes the head.
 //
 // So, for the first to-be-fixed, a 0 is written into the REL32 location,
 // and the address/offset of the place we wrote is saved into the
 // ContFixup->offset_of_list_head (e.g. let's say the zero was written at
-// offset 22, so 22 is saved into offset_of_list_head.).
+// offset 22, so 22 is saved into offset_of_list_head).
 //
 // Then, for the second to-be-fixed location (at e.g. 61), 22 is
 // written to *its* REL32 location, and 61 is saved to offset_of_list_head.
@@ -29,7 +29,6 @@ static int gen_num_vstack = 0;
 // saved there, writes the real REL32 fixup to the target, and repeats
 // until it loads a zero in the REL32, which means it walked to the end
 // of the list.
-
 ContFixup snip_make_cont_fixup(unsigned char* function_base) {
     return (ContFixup){function_base, 0};
 }
@@ -41,6 +40,11 @@ void snip_patch_cont_fixup(ContFixup* fixup, unsigned char* target) {
     int32_t next = *(int32_t*)addr;
     int32_t rel = target - addr - 4;
     if (rel == 0 && target == gen_p && gen_p[-5] == 0xe9) {
+      // If the next thing to write is where we're targetting, and the location
+      // that we're patching is a jump that would have a zero offset (i.e.
+      // fallthrough), then adjust our current write position and target
+      // backwards for subsequent fixups and generation to avoid the unnecessary
+      // fallthrough jmp.
       gen_p -= 5;
       target = gen_p;
     } else {
@@ -76,41 +80,12 @@ void gen_finish(void) {
 #endif
 }
 
-// In the maximal case, we need this big mess to start a function (when the
-// amount of stack space required exceeds a page, and when the rip-relative
-// location of __chkstk is a far offset away (>2G). So that we're not always
-// paying for this, but still allowing for simple fixups, we insert a nop sled
-// first that will leave enough size for this version if the function ends up
-// needing a large amount of local stack space. But otherwise, we can just leave
-// it and fix the minimal version. We could also special case a "medium" version
-// if necessary.
-//
-// Maximal:
-//  0000000000000000: B8 38 40 00 00     mov         eax,4038h
-//  0000000000000005: 49 BB 00 00 00 00  mov         r11,offset __chkstk
-//                    00 00 00 00
-//  000000000000000F: 41 FF D3           call        r11
-//  0000000000000012: 48 29 C4           sub         rsp,rax
-//
-// Minimal (same number of bytes with long nops):
-//   0000000000000000: 
-//   0000000000000000: 48 83 EC 38        sub         rsp,38h
-//
-//static uint8_t gen_nop8[] = { 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00 };
-//static uint8_t gen_nop9[] = { 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00 };
-
 ContFixup gen_func_entry(void) {
   ContFixup ret = snip_make_cont_fixup(gen_p);
   snip_func_entry(gen_num_vstack, &gen_p, /*CONT0=*/NULL);
   return ret;
 }
 
-// Big version:
-// 000000000000005D: 48 81 C4 38 40 00  add         rsp,4038h
-//                   00
-//
-// Small version:
-// 0000000000000036: 48 83 C4 38        add         rsp,38h
 void gen_func_exit_and_patch_func_entry(ContFixup* fixup, Type return_type) {
   snip_patch_cont_fixup(fixup, gen_p);
 
@@ -124,11 +99,6 @@ void gen_func_exit_and_patch_func_entry(ContFixup* fixup, Type return_type) {
     snip_return(gen_num_vstack, &gen_p);
   }
 }
-
-#if 0
-void gen_return(Type return_type, ContFixup* fixup) {
-}
-#endif
 
 void gen_push_number(uint64_t val, Type suffix, ContFixup* cont) {
   snip_const_i32(gen_num_vstack, &gen_p, val, cont);

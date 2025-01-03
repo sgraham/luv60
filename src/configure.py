@@ -23,8 +23,8 @@ CONFIGS = {
             'LINK': LLD_LINK + ' /nologo /dynamicbase:no /DEBUG $in /out:$out /pdb:$out.pdb',
         },
         'r': {
-            'COMPILE': CLANG_CL + ' /showIncludes /nologo /FS /O2 /Zi /DNDEBUG /D_CRT_SECURE_NO_DEPRECATE /W4 /WX -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb',
-            'LINK': LLD_LINK + ' /nologo /LTCG /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb',
+            'COMPILE': CLANG_CL + ' /showIncludes /nologo -flto /FS /O2 /Zi /DNDEBUG /D_CRT_SECURE_NO_DEPRECATE /W4 /WX -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb',
+            'LINK': LLD_LINK + ' /nologo /dynamicbase:no /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb',
         },
         '__': {
             'exe_ext': '.exe',

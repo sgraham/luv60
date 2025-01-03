@@ -8,18 +8,18 @@ typedef struct TypeData {
   uint32_t ksa;  // 8 kind, 6 align, 18 size
 } TypeData;
 
-static TypeData p_typedata[16<<20];
-static int p_num_typedata;
+static TypeData typedata[16<<20];
+static int num_typedata;
 
-static char p_strings[16<<20];
-static int p_string_insert = 1;
+static char strings[16<<20];
+static int string_insert = 1;
 
 // XXX actually intern!
-Str str_intern_len(const char* str, uint32_t len) {
-  memcpy(&p_strings[p_string_insert], str, len);
-  int ret = p_string_insert;
-  p_string_insert += len;
-  p_strings[p_string_insert++] = '\0';
+static Str str_intern_len(const char* str, uint32_t len) {
+  memcpy(&strings[string_insert], str, len);
+  int ret = string_insert;
+  string_insert += len;
+  strings[string_insert++] = '\0';
   return (Str){ret};
 }
 
@@ -49,13 +49,13 @@ typedef struct TypeDataExtraFunc {
 } TypeDataExtraFunc;
 #endif
 
-static void p_set_typedata_raw(uint32_t index, uint32_t data) {
-  ASSERT(p_typedata[index].ksa == 0);
-  ASSERT(index < COUNTOF(p_typedata));
-  p_typedata[index].ksa = data;
+static void set_typedata_raw(uint32_t index, uint32_t data) {
+  ASSERT(typedata[index].ksa == 0);
+  ASSERT(index < COUNTOF(typedata));
+  typedata[index].ksa = data;
 }
 
-static uint64_t p_pack_type(TypeKind kind, uint32_t size, uint32_t align) {
+static uint64_t pack_type(TypeKind kind, uint32_t size, uint32_t align) {
   uint32_t ret = 0;
   ASSERT(kind != 0);
   ASSERT(kind < (1<<8));
@@ -107,14 +107,14 @@ typedef struct Sym {
   bool is_local;
 } Sym;
 
-static const char* p_cur_filename;
-static uint8_t p_token_kinds[128] = {0};
-static uint32_t p_token_offsets[128] = {0};
-static int p_cur_token_index = 0;
-static TokenKind p_cur_kind;
-static uint32_t p_cur_offset;
-static TokenKind p_previous_kind;
-static uint32_t p_previous_offset;
+static const char* cur_filename;
+static uint8_t token_kinds[128] = {0};
+static uint32_t token_offsets[128] = {0};
+static int cur_token_index = 0;
+static TokenKind cur_kind;
+static uint32_t cur_offset;
+static TokenKind previous_kind;
+static uint32_t previous_offset;
 
 #define P_MAX_LOCALS 256
 typedef struct FuncData {
@@ -128,7 +128,7 @@ typedef struct FuncData {
   Sym locals[P_MAX_LOCALS];
   uint32_t num_locals;
 } FuncData;
-static FuncData p_cur_func;
+static FuncData cur_func;
 
 #if 0
 static char* strf(const char* fmt, ...) {
@@ -144,8 +144,8 @@ static char* strf(const char* fmt, ...) {
 }
 #endif
 
-static void p_error(const char* message) {
-  base_writef_stderr("%s:<offset %d>: error: %s\n", p_cur_filename, p_cur_offset, message);
+static void error(const char* message) {
+  base_writef_stderr("%s:<offset %d>: error: %s\n", cur_filename, cur_offset, message);
   base_exit(1);
 }
 
@@ -157,42 +157,42 @@ static Type make_type_array(uint32_t offset, uint64_t count, Type subtype) {
   return (Type){0};
 }
 
-static void p_advance(void) {
-  ++p_cur_token_index;
-  while (!p_token_kinds[p_cur_token_index]) {
-    p_cur_token_index = 0;
-    lex_next_block(p_token_kinds, p_token_offsets);
+static void advance(void) {
+  ++cur_token_index;
+  while (!token_kinds[cur_token_index]) {
+    cur_token_index = 0;
+    lex_next_block(token_kinds, token_offsets);
   }
-  p_previous_kind = p_cur_kind;
-  p_previous_offset = p_cur_offset;
-  p_cur_kind = p_token_kinds[p_cur_token_index];
-  p_cur_offset = p_token_offsets[p_cur_token_index];
+  previous_kind = cur_kind;
+  previous_offset = cur_offset;
+  cur_kind = token_kinds[cur_token_index];
+  cur_offset = token_offsets[cur_token_index];
 }
 
-static bool p_match(TokenKind tok_kind) {
-  if (p_cur_kind != tok_kind)
+static bool match(TokenKind tok_kind) {
+  if (cur_kind != tok_kind)
     return false;
-  p_advance();
+  advance();
   return true;
 }
 
-static bool p_check(TokenKind kind) {
-  return p_cur_kind == kind;
+static bool check(TokenKind kind) {
+  return cur_kind == kind;
 }
 
-static void p_consume(TokenKind tok_kind, const char* message) {
-  if (p_cur_kind == tok_kind) {
-    p_advance();
+static void consume(TokenKind tok_kind, const char* message) {
+  if (cur_kind == tok_kind) {
+    advance();
     return;
   }
-  p_error(message);
+  error(message);
 }
 
-static uint64_t p_const_expression(void) {
+static uint64_t const_expression(void) {
   return 0;
 }
 
-static Type p_basic_tok_to_type[NUM_TOKEN_KINDS] = {
+static Type basic_tok_to_type[NUM_TOKEN_KINDS] = {
     [TOK_BOOL] = {TYPE_BOOL},      //
     [TOK_BYTE] = {TYPE_U8},        //
     [TOK_CODEPOINT] = {TYPE_I32},  //
@@ -219,43 +219,43 @@ static Type p_basic_tok_to_type[NUM_TOKEN_KINDS] = {
     //[TOK_SIZE_T] = TYPE_SIZE_T,              //
 };
 
-static Type p_type(void) {
-  if (p_match(TOK_STAR)) {
-    return make_type_ptr(p_cur_offset, p_type());
+static Type parse_type(void) {
+  if (match(TOK_STAR)) {
+    return make_type_ptr(cur_offset, parse_type());
   }
-  if (p_match(TOK_LSQUARE)) {
+  if (match(TOK_LSQUARE)) {
     int count = 0;
-    if (!p_check(TOK_RSQUARE)) {
-      count = p_const_expression();
+    if (!check(TOK_RSQUARE)) {
+      count = const_expression();
     }
-    p_consume(TOK_RSQUARE, "Expect ']' to close array type.");
-    Type elem = p_type();
+    consume(TOK_RSQUARE, "Expect ']' to close array type.");
+    Type elem = parse_type();
     if (!elem.i) {
-      p_error("Expecting type of array or slice.");
+      error("Expecting type of array or slice.");
     }
-    return make_type_array(p_cur_offset, count, elem);
+    return make_type_array(cur_offset, count, elem);
   }
 
-  if (p_match(TOK_LBRACE)) {
+  if (match(TOK_LBRACE)) {
     abort();
   }
 
-  if (p_match(TOK_DEF)) {
+  if (match(TOK_DEF)) {
     abort();
   }
 
-  if (p_cur_kind >= TOK_BOOL && p_cur_kind <= TOK_UINT) {
-    Type t = p_basic_tok_to_type[p_cur_kind];
+  if (cur_kind >= TOK_BOOL && cur_kind <= TOK_UINT) {
+    Type t = basic_tok_to_type[cur_kind];
     ASSERT(t.i != 0);
-    p_advance();
+    advance();
     return t;
   }
   return (Type){0};
 }
 
-static Str p_name(const char* err) {
-  p_consume(TOK_IDENT_VAR, err);
-  StrView view = lex_get_strview(p_previous_offset, p_cur_offset);
+static Str parse_name(const char* err) {
+  consume(TOK_IDENT_VAR, err);
+  StrView view = lex_get_strview(previous_offset, cur_offset);
   ASSERT(view.size > 0);
   while (view.data[view.size - 1] == ' ') {
     --view.size;
@@ -263,60 +263,60 @@ static Str p_name(const char* err) {
   return str_intern_len(view.data, view.size);
 }
 
-static FuncParams p_func_params(void) {
+static FuncParams parse_func_params(void) {
   FuncParams ret = {0};
   bool require_more = false;
-  while (require_more || !p_check(TOK_RPAREN)) {
+  while (require_more || !check(TOK_RPAREN)) {
     require_more = false;
-    Type param_type = p_type();
+    Type param_type = parse_type();
     if (!param_type.i) {
-      p_advance();
-      p_error("Expect function parameter.");
+      advance();
+      error("Expect function parameter.");
     }
-    Str param_name = p_name("Expect parameter name.");
+    Str param_name = parse_name("Expect parameter name.");
     ASSERT(param_name.i);
     ret.types[ret.num_params] = param_type;
     ret.names[ret.num_params] = param_name;
     ++ret.num_params;
 
-    if (p_check(TOK_RPAREN)) {
+    if (check(TOK_RPAREN)) {
       break;
     }
-    p_consume(TOK_COMMA, "Expect ',' between function parameters.");
+    consume(TOK_COMMA, "Expect ',' between function parameters.");
     require_more = true;
   }
-  p_consume(TOK_RPAREN, "Expect ')' after function parameters.");
+  consume(TOK_RPAREN, "Expect ')' after function parameters.");
   return ret;
 }
 
-static void p_statement(bool toplevel);
+static void parse_statement(bool toplevel);
 
-static Sym* p_alloc_local(Str name, Type type) {
-  ASSERT(p_cur_func.name.i);
-  ASSERT(p_cur_func.num_locals < COUNTOF(p_cur_func.locals));
-  Sym* new = &p_cur_func.locals[p_cur_func.num_locals++];
+static Sym* alloc_local(Str name, Type type) {
+  ASSERT(cur_func.name.i);
+  ASSERT(cur_func.num_locals < COUNTOF(cur_func.locals));
+  Sym* new = &cur_func.locals[cur_func.num_locals++];
   new->kind = SYM_VAR;
   new->name = name;
   new->type = type;
   new->is_local = true;
   // TODO: align, size, etc etc etc
-  new->stack_offset = p_cur_func.locals_offset + 32;
-  p_cur_func.locals_offset += 8;
+  new->stack_offset = cur_func.locals_offset + 32;
+  cur_func.locals_offset += 8;
   return new;
 }
 
-static void p_enter_function(Type return_type, Str name, FuncParams params) {
-  p_cur_func.return_type = return_type;
-  p_cur_func.name = name;
-  p_cur_func.params = params;
-  p_cur_func.locals_offset = 0;
-  p_cur_func.func_exit_cont = gen_func_entry();
-  p_cur_func.return_val = p_alloc_local(str_intern_len("$ret", 4), return_type);
+static void enter_function(Type return_type, Str name, FuncParams params) {
+  cur_func.return_type = return_type;
+  cur_func.name = name;
+  cur_func.params = params;
+  cur_func.locals_offset = 0;
+  cur_func.func_exit_cont = gen_func_entry();
+  cur_func.return_val = alloc_local(str_intern_len("$ret", 4), return_type);
 }
 
-static void p_leave_function(void) {
-  gen_func_exit_and_patch_func_entry(&p_cur_func.func_exit_cont, p_cur_func.return_type);
-  memset(&p_cur_func, 0, sizeof(p_cur_func));
+static void leave_function(void) {
+  gen_func_exit_and_patch_func_entry(&cur_func.func_exit_cont, cur_func.return_type);
+  memset(&cur_func, 0, sizeof(cur_func));
 }
 
 // ~strtoull with slight differences:
@@ -374,7 +374,7 @@ static uint64_t scan_int(StrView num, Type* suffix) {
       return 0;
     }
     if (val > (UINT64_MAX - digit) / base) {
-      p_error("Integer literal overflow.");
+      error("Integer literal overflow.");
     }
 
     val = val * base + digit;
@@ -413,9 +413,9 @@ static uint64_t scan_int(StrView num, Type* suffix) {
   return val;
 }
 
-static void p_number(bool can_assign, ContFixup* cont) {
+static void parse_number(bool can_assign, ContFixup* cont) {
   Type suffix = {0};
-  uint64_t val = scan_int(lex_get_strview(p_previous_offset, p_cur_offset), &suffix);
+  uint64_t val = scan_int(lex_get_strview(previous_offset, cur_offset), &suffix);
 
   gen_push_number(val, suffix, cont);
 }
@@ -437,25 +437,25 @@ typedef enum Precedence {
   PREC_CALL,        // . () []
 } Precedence;
 
-static void p_precedence(Precedence precedence, ContFixup* cont) {
-  p_advance();
+static void parse_precedence(Precedence precedence, ContFixup* cont) {
+  advance();
   bool can_assign = precedence <= PREC_ASSIGNMENT;
 
   // XXX
-  if (p_previous_kind == TOK_INT_LITERAL) {
-    p_number(can_assign, cont);
+  if (previous_kind == TOK_INT_LITERAL) {
+    parse_number(can_assign, cont);
   }
 }
 
-static void p_expression(ContFixup* cont) {
-  p_precedence(PREC_LOWEST, cont);
+static void parse_expression(ContFixup* cont) {
+  parse_precedence(PREC_LOWEST, cont);
 }
 
-static bool p_func_body_only_statement(void) {
-  if (p_match(TOK_RETURN)) {
-    ASSERT(p_cur_func.return_type.i);
-    if (p_cur_func.return_type.i != TYPE_VOID) {
-      p_expression(&p_cur_func.func_exit_cont);
+static bool parse_func_body_only_statement(void) {
+  if (match(TOK_RETURN)) {
+    ASSERT(cur_func.return_type.i);
+    if (cur_func.return_type.i != TYPE_VOID) {
+      parse_expression(&cur_func.func_exit_cont);
     }
     return true;
   }
@@ -463,103 +463,103 @@ static bool p_func_body_only_statement(void) {
   return false;
 }
 
-static void p_block(void) {
-  while (!p_check(TOK_DEDENT) && !p_check(TOK_EOF)) {
-    p_statement(/*toplevel=*/false);
-    while (p_match(TOK_NEWLINE)) {
+static void parse_block(void) {
+  while (!check(TOK_DEDENT) && !check(TOK_EOF)) {
+    parse_statement(/*toplevel=*/false);
+    while (match(TOK_NEWLINE)) {
     }
   }
-  p_consume(TOK_DEDENT, "Expect end of block.");
+  consume(TOK_DEDENT, "Expect end of block.");
 }
 
 // TODO: decorators
-static void p_def(void) {
-  Type return_type = p_type();
-  Str name = p_name("Expect function name.");
-  p_consume(TOK_LPAREN, "Expect '(' after function name.");
-  FuncParams params = p_func_params();
-  p_consume(TOK_COLON, "Expect ':' before function body.");
-  p_consume(TOK_NEWLINE, "Expect newline before function body. (TODO: single line)");
-  while (p_match(TOK_NEWLINE)) {
+static void parse_def(void) {
+  Type return_type = parse_type();
+  Str name = parse_name("Expect function name.");
+  consume(TOK_LPAREN, "Expect '(' after function name.");
+  FuncParams params = parse_func_params();
+  consume(TOK_COLON, "Expect ':' before function body.");
+  consume(TOK_NEWLINE, "Expect newline before function body. (TODO: single line)");
+  while (match(TOK_NEWLINE)) {
   }
-  p_consume(TOK_INDENT, "Expect indented function body.");
+  consume(TOK_INDENT, "Expect indented function body.");
 
-  p_enter_function(return_type, name, params);
-  p_block();
-  p_leave_function();
+  enter_function(return_type, name, params);
+  parse_block();
+  leave_function();
 }
 
-static void p_var(Type type) {
-  Str name = p_name("Expect variable or typed variable name.");
+static void parse_variable(Type type) {
+  Str name = parse_name("Expect variable or typed variable name.");
   ASSERT(name.i);
 
   bool have_init;
   if (!type.i) {
     abort();
 #if 0
-    p_consume(TOK_EQ, "Expect initializer for variable without type.");
-    p_expression();
+    consume(TOK_EQ, "Expect initializer for variable without type.");
+    parse_expression();
     have_init = true;
 #endif
   } else {
-    have_init = p_match(TOK_EQ);
+    have_init = match(TOK_EQ);
     if (have_init) {
-      p_expression(NULL);
-      Sym* new = p_alloc_local(name, type);
+      parse_expression(NULL);
+      Sym* new = alloc_local(name, type);
       gen_store_local(new->stack_offset, type);
     }
   }
 
-  p_consume(TOK_NEWLINE, "Expect newline after variable declaration.");
+  consume(TOK_NEWLINE, "Expect newline after variable declaration.");
 }
 
-static bool p_anywhere_statement(void) {
-  if (p_match(TOK_DEF)) {
-    p_def();
+static bool parse_anywhere_statement(void) {
+  if (match(TOK_DEF)) {
+    parse_def();
     return true;
   }
 
-  Type var_type = p_type();
+  Type var_type = parse_type();
   if (var_type.i) {
-    p_var(var_type);
+    parse_variable(var_type);
     return true;
   }
 
   abort();
- // p_expression();
-  p_consume(TOK_NEWLINE, "Expect newline.");
+ // parse_expression();
+  consume(TOK_NEWLINE, "Expect newline.");
   return true;
 }
 
-static void p_statement(bool toplevel) {
-  while (p_match(TOK_NEWLINE)) {
+static void parse_statement(bool toplevel) {
+  while (match(TOK_NEWLINE)) {
   }
 
   if (!toplevel) {
-    if (p_func_body_only_statement()) {
+    if (parse_func_body_only_statement()) {
       return;
     }
   }
 
-  p_anywhere_statement();
+  parse_anywhere_statement();
 }
 
 static void init_types(void) {
-  p_set_typedata_raw(TYPE_VOID, p_pack_type(TYPE_VOID, 0, 0));
-  p_set_typedata_raw(TYPE_BOOL, p_pack_type(TYPE_BOOL, 1, 1));
-  p_set_typedata_raw(TYPE_U8, p_pack_type(TYPE_U8, 1, 1));
-  p_set_typedata_raw(TYPE_I8, p_pack_type(TYPE_I8, 1, 1));
-  p_set_typedata_raw(TYPE_U16, p_pack_type(TYPE_U16, 2, 2));
-  p_set_typedata_raw(TYPE_I16, p_pack_type(TYPE_I16, 2, 2));
-  p_set_typedata_raw(TYPE_U32, p_pack_type(TYPE_U32, 4, 4));
-  p_set_typedata_raw(TYPE_I32, p_pack_type(TYPE_I32, 4, 4));
-  p_set_typedata_raw(TYPE_U64, p_pack_type(TYPE_U64, 8, 8));
-  p_set_typedata_raw(TYPE_I64, p_pack_type(TYPE_I64, 8, 8));
-  p_set_typedata_raw(TYPE_FLOAT, p_pack_type(TYPE_FLOAT, 4, 4));
-  p_set_typedata_raw(TYPE_DOUBLE, p_pack_type(TYPE_DOUBLE, 8, 8));
-  p_set_typedata_raw(TYPE_STR, p_pack_type(TYPE_STR, 16, 8));
-  p_set_typedata_raw(TYPE_RANGE, p_pack_type(TYPE_STR, 24, 8));
-  p_num_typedata = NUM_TYPE_KINDS;
+  set_typedata_raw(TYPE_VOID, pack_type(TYPE_VOID, 0, 0));
+  set_typedata_raw(TYPE_BOOL, pack_type(TYPE_BOOL, 1, 1));
+  set_typedata_raw(TYPE_U8, pack_type(TYPE_U8, 1, 1));
+  set_typedata_raw(TYPE_I8, pack_type(TYPE_I8, 1, 1));
+  set_typedata_raw(TYPE_U16, pack_type(TYPE_U16, 2, 2));
+  set_typedata_raw(TYPE_I16, pack_type(TYPE_I16, 2, 2));
+  set_typedata_raw(TYPE_U32, pack_type(TYPE_U32, 4, 4));
+  set_typedata_raw(TYPE_I32, pack_type(TYPE_I32, 4, 4));
+  set_typedata_raw(TYPE_U64, pack_type(TYPE_U64, 8, 8));
+  set_typedata_raw(TYPE_I64, pack_type(TYPE_I64, 8, 8));
+  set_typedata_raw(TYPE_FLOAT, pack_type(TYPE_FLOAT, 4, 4));
+  set_typedata_raw(TYPE_DOUBLE, pack_type(TYPE_DOUBLE, 8, 8));
+  set_typedata_raw(TYPE_STR, pack_type(TYPE_STR, 16, 8));
+  set_typedata_raw(TYPE_RANGE, pack_type(TYPE_STR, 24, 8));
+  num_typedata = NUM_TYPE_KINDS;
 }
 
 void parse(const char* filename, ReadFileResult file) {
@@ -567,13 +567,13 @@ void parse(const char* filename, ReadFileResult file) {
 
   gen_init();
 
-  p_cur_filename = filename;
-  p_cur_token_index = 0;
+  cur_filename = filename;
+  cur_token_index = 0;
   lex_start(file.buffer, file.allocated_size);
-  p_advance();
+  advance();
 
-  while (p_cur_kind != TOK_EOF) {
-    p_statement(/*toplevel=*/true);
+  while (cur_kind != TOK_EOF) {
+    parse_statement(/*toplevel=*/true);
   }
 
   gen_finish();
