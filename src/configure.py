@@ -42,7 +42,7 @@ def get_tests():
     tests = {}
     for test in glob.glob(os.path.join('test', '*.luv')):
         test = test.replace('\\', '/')
-        run = '-run {self}'
+        run = '{self}'
         ret = '0'
         txt = ''
         disabled = False
