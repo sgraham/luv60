@@ -1,3 +1,5 @@
+#include "luv60.h"
+
 typedef struct Str {
   uint32_t i;
 } Str;
@@ -124,7 +126,7 @@ typedef struct FuncData {
   int locals_offset;
   ContFixup func_exit_cont;
   Sym locals[P_MAX_LOCALS];
-  int num_locals;
+  uint32_t num_locals;
 } FuncData;
 static FuncData p_cur_func;
 
@@ -491,25 +493,22 @@ static void p_var(Type type) {
   Str name = p_name("Expect variable or typed variable name.");
   ASSERT(name.i);
 
-  abort();
-#if 0
   bool have_init;
   if (!type.i) {
+    abort();
+#if 0
     p_consume(TOK_EQ, "Expect initializer for variable without type.");
     p_expression();
     have_init = true;
+#endif
   } else {
     have_init = p_match(TOK_EQ);
     if (have_init) {
-      p_expression();
+      p_expression(NULL);
+      Sym* new = p_alloc_local(name, type);
+      gen_store_local(new->stack_offset, type);
     }
   }
-
-  Sym* new = p_alloc_local(name, type);
-  if (have_init) {
-    gen_store_local(new->stack_offset, type);
-  }
-#endif
 
   p_consume(TOK_NEWLINE, "Expect newline after variable declaration.");
 }

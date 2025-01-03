@@ -1,11 +1,6 @@
-#define DO_PRINTS 0
+#include "luv60.h"
 
-typedef enum TokenKind {
-#define TOKEN(n) TOK_##n,
-#include "tokens.inc"
-#undef TOKEN
-  NUM_TOKEN_KINDS,
-} TokenKind;
+#define DO_PRINTS 0
 
 // This is based on https://arxiv.org/pdf/1902.08318.pdf which is the
 // paper about simdjson.org.

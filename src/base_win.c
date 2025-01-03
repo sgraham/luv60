@@ -1,4 +1,28 @@
-static ReadFileResult base_read_file(const char* filename) {
+#include "luv60.h"
+
+#if !OS_WINDOWS
+#error
+#endif
+
+#include "base_some_windows.h"
+
+void base_writef_stderr(const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  vfprintf(stderr, fmt, args);
+  va_end(args);
+}
+
+unsigned char* base_large_alloc_rwx(size_t size) {
+  return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+}
+
+void base_set_protection_rx(unsigned char* ptr, size_t size) {
+  DWORD old_protect;
+  VirtualProtect(ptr, size, PAGE_EXECUTE_READ, &old_protect);
+}
+
+ReadFileResult base_read_file(const char* filename) {
   SECURITY_ATTRIBUTES sa = {sizeof(sa), 0, 0};
   HANDLE file = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, &sa,
                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
@@ -28,6 +52,6 @@ static ReadFileResult base_read_file(const char* filename) {
   return (ReadFileResult){read_buf, size.QuadPart, to_alloc};
 }
 
-static void base_exit(int rc) {
+void base_exit(int rc) {
   ExitProcess(rc);
 }
