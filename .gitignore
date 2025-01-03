@@ -1,10 +1,7 @@
-scratch/
-out/
-tags
 a.luv
 code.raw
 dumbbench.luv
-snip/*.ll
-snip/*.c
-snip/*.obj
-snip/x.*
+out/
+scratch/
+tags
+x.luv
