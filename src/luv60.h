@@ -21,10 +21,32 @@ typedef struct ReadFileResult {
 } ReadFileResult;
 
 void base_writef_stderr(const char* fmt, ...);
+unsigned char* base_large_alloc_rw(size_t size);
 unsigned char* base_large_alloc_rwx(size_t size);
 void base_set_protection_rx(unsigned char* ptr, size_t size);
 ReadFileResult base_read_file(const char* filename);
 void base_exit(int rc);
+
+
+// str.c
+
+typedef struct Str {
+  uint32_t i;
+} Str;
+
+extern char* str_intern_pool;
+
+void str_intern_pool_init(void);
+
+Str str_intern_len(const char* str, uint32_t len);
+
+static inline FORCEINLINE const char* cstr(Str str) {
+  return &str_intern_pool[str.i];
+}
+
+static inline FORCEINLINE uint32_t str_len(Str str) {
+  return *(uint32_t*)&str_intern_pool[str.i - sizeof(uint32_t)];
+}
 
 
 // lex.c

@@ -13,6 +13,10 @@ void base_writef_stderr(const char* fmt, ...) {
   va_end(args);
 }
 
+unsigned char* base_large_alloc_rw(size_t size) {
+  return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+}
+
 unsigned char* base_large_alloc_rwx(size_t size) {
   return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 }

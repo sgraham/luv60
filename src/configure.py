@@ -9,8 +9,9 @@ FILELIST = [
     "base_win.c",
     "gen.c",
     "lex.c",
-    "parse.c",
     "luvc_main.c",
+    "parse.c",
+    "str.c",
 ]
 
 CLANG_CL = "C:\\Program Files\\LLVM\\bin\\clang-cl.exe"
@@ -19,11 +20,11 @@ LLD_LINK = "C:\\Program Files\\LLVM\\bin\\lld-link.exe"
 CONFIGS = {
     'w': {
         'd': {
-            'COMPILE': CLANG_CL + ' /showIncludes /nologo /TC /FS /Od /Zi /D_DEBUG /D_CRT_SECURE_NO_DEPRECATE /W4 /WX -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo:$out /Fd:$out.pdb',
+            'COMPILE': CLANG_CL + ' /showIncludes -std:c11 /nologo /TC /FS /Od /Zi /D_DEBUG /D_CRT_SECURE_NO_DEPRECATE /W4 /WX -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo:$out /Fd:$out.pdb',
             'LINK': LLD_LINK + ' /nologo /dynamicbase:no /DEBUG $in /out:$out /pdb:$out.pdb',
         },
         'r': {
-            'COMPILE': CLANG_CL + ' /showIncludes /nologo -flto /FS /O2 /Zi /DNDEBUG /D_CRT_SECURE_NO_DEPRECATE /W4 /WX -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb',
+            'COMPILE': CLANG_CL + ' /showIncludes -std:c11 /nologo -flto /FS /O2 /Zi /DNDEBUG /D_CRT_SECURE_NO_DEPRECATE /W4 /WX -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb',
             'LINK': LLD_LINK + ' /nologo /dynamicbase:no /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb',
         },
         '__': {

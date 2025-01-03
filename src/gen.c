@@ -67,14 +67,14 @@ void gen_init(void) {
 #include "snippets.c"
 
 void gen_finish(void) {
-#if 1
+#if 0
   FILE* f = fopen("code.raw", "wb");
   fwrite(gen_code, 1, gen_p - gen_code, f);
   fclose(f);
   system("ndisasm -b64 code.raw");
 #else
   base_set_protection_rx(gen_code, GEN_CODE_SEG_SIZE);
-  asm("movq %rsp, %r13; subq $8, %r13");
+  __asm__("movq %rsp, %r13; subq $8, %r13");
   int rv = ((int (*)())gen_code)();
   printf("returned: %d\n", rv);
 #endif

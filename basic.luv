@@ -1,3 +1,4 @@
 def int main():
-    #int x = 4
-    return 6
+    int x = 4
+    int y = 7
+    return x

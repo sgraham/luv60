@@ -1,9 +1,5 @@
 #include "luv60.h"
 
-typedef struct Str {
-  uint32_t i;
-} Str;
-
 typedef struct TypeData {
   uint32_t ksa;  // 8 kind, 6 align, 18 size
 } TypeData;
@@ -11,17 +7,8 @@ typedef struct TypeData {
 static TypeData typedata[16<<20];
 static int num_typedata;
 
-static char strings[16<<20];
-static int string_insert = 1;
 
 // XXX actually intern!
-static Str str_intern_len(const char* str, uint32_t len) {
-  memcpy(&strings[string_insert], str, len);
-  int ret = string_insert;
-  string_insert += len;
-  strings[string_insert++] = '\0';
-  return (Str){ret};
-}
 
 #if 0
 typedef struct TypeDataExtraPtr {
@@ -119,7 +106,6 @@ static uint32_t previous_offset;
 #define P_MAX_LOCALS 256
 typedef struct FuncData {
   Type return_type;
-  Sym* return_val;
   Str name;
   FuncParams params;
 
@@ -128,9 +114,9 @@ typedef struct FuncData {
   Sym locals[P_MAX_LOCALS];
   uint32_t num_locals;
 } FuncData;
+
 static FuncData cur_func;
 
-#if 0
 static char* strf(const char* fmt, ...) {
   va_list args;
   va_start(args, fmt);
@@ -142,7 +128,6 @@ static char* strf(const char* fmt, ...) {
   va_end(args);
   return str;
 }
-#endif
 
 static void error(const char* message) {
   base_writef_stderr("%s:<offset %d>: error: %s\n", cur_filename, cur_offset, message);
@@ -253,14 +238,18 @@ static Type parse_type(void) {
   return (Type){0};
 }
 
-static Str parse_name(const char* err) {
-  consume(TOK_IDENT_VAR, err);
+static Str str_from_previous(void) {
   StrView view = lex_get_strview(previous_offset, cur_offset);
   ASSERT(view.size > 0);
   while (view.data[view.size - 1] == ' ') {
     --view.size;
   }
   return str_intern_len(view.data, view.size);
+}
+
+static Str parse_name(const char* err) {
+  consume(TOK_IDENT_VAR, err);
+  return str_from_previous();
 }
 
 static FuncParams parse_func_params(void) {
@@ -290,6 +279,7 @@ static FuncParams parse_func_params(void) {
 }
 
 static void parse_statement(bool toplevel);
+static void parse_expression(ContFixup* cont);
 
 static Sym* alloc_local(Str name, Type type) {
   ASSERT(cur_func.name.i);
@@ -305,13 +295,25 @@ static Sym* alloc_local(Str name, Type type) {
   return new;
 }
 
+static Sym* get_local(Str name) {
+  if (cur_func.num_locals == 0) {
+    return NULL;
+  }
+  for (int i = cur_func.num_locals - 1; i >= 0; --i) {
+    Sym* sym = &cur_func.locals[i];
+    if (sym->name.i == name.i) {
+      return sym;
+    }
+  }
+  return NULL;
+}
+
 static void enter_function(Type return_type, Str name, FuncParams params) {
   cur_func.return_type = return_type;
   cur_func.name = name;
   cur_func.params = params;
   cur_func.locals_offset = 0;
   cur_func.func_exit_cont = gen_func_entry();
-  cur_func.return_val = alloc_local(str_intern_len("$ret", 4), return_type);
 }
 
 static void leave_function(void) {
@@ -437,6 +439,37 @@ typedef enum Precedence {
   PREC_CALL,        // . () []
 } Precedence;
 
+static bool match_assignment(void) {
+  const TokenKind tok = cur_kind;
+  if (!(tok == TOK_EQ || tok == TOK_PLUSEQ || tok == TOK_MINUSEQ || tok == TOK_STAREQ ||
+        tok == TOK_SLASHEQ || tok == TOK_PERCENTEQ || tok == TOK_CARETEQ || tok == TOK_PIPEEQ ||
+        tok == TOK_AMPERSANDEQ || tok == TOK_LSHIFTEQ || tok == TOK_RSHIFTEQ)) {
+    return false;
+  }
+  advance();
+  return true;
+}
+
+static void parse_variable(bool can_assign, ContFixup* cont) {
+  Str target = str_from_previous();
+  if (can_assign && match_assignment()) {
+    abort();
+#if 0
+    TokenKind eq = previous_kind;
+    parse_expression(NULL);
+    ASSERT(eq == TOK_EQ);
+    gen_assignment(target);
+#endif
+  } else {
+    Sym* sym = get_local(target);
+    if (!sym) {
+      error(strf("Undefined variable '%s'.", cstr(target)));
+    }
+    ASSERT(sym->is_local);
+    gen_load_local(sym->stack_offset, sym->type, cont);
+  }
+}
+
 static void parse_precedence(Precedence precedence, ContFixup* cont) {
   advance();
   bool can_assign = precedence <= PREC_ASSIGNMENT;
@@ -444,6 +477,9 @@ static void parse_precedence(Precedence precedence, ContFixup* cont) {
   // XXX
   if (previous_kind == TOK_INT_LITERAL) {
     parse_number(can_assign, cont);
+  }
+  if (previous_kind == TOK_IDENT_VAR) {
+    parse_variable(can_assign, cont);
   }
 }
 
@@ -489,7 +525,7 @@ static void parse_def(void) {
   leave_function();
 }
 
-static void parse_variable(Type type) {
+static void parse_variable_declaration(Type type) {
   Str name = parse_name("Expect variable or typed variable name.");
   ASSERT(name.i);
 
@@ -521,7 +557,7 @@ static bool parse_anywhere_statement(void) {
 
   Type var_type = parse_type();
   if (var_type.i) {
-    parse_variable(var_type);
+    parse_variable_declaration(var_type);
     return true;
   }
 

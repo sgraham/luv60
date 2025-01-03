@@ -1,6 +1,8 @@
 #include "luv60.h"
 
 int main() {
+  str_intern_pool_init();
+
   const char* filename = "basic.luv";
   ReadFileResult file = base_read_file(filename);
   if (!file.buffer) {
