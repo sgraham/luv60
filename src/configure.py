@@ -1,3 +1,6 @@
+import base64
+import glob
+import json
 import os
 import sys
 
@@ -35,13 +38,40 @@ CONFIGS = {
 }
 
 
-def generate(platform, config, settings, cmdlines):
+def get_tests():
+    tests = {}
+    for test in glob.glob(os.path.join('test', '*.luv')):
+        test = test.replace('\\', '/')
+        run = '-run {self}'
+        ret = '0'
+        txt = ''
+        disabled = False
+        run_prefix = '# RUN: '
+        ret_prefix = '# RET: '
+        txt_prefix = '# TXT: '
+        disabled_prefix = '# DISABLED'
+        with open(test, 'r', encoding='utf-8') as f:
+            for l in f.readlines():
+                if l.startswith(run_prefix): run = l[len(run_prefix):].rstrip()
+                if l.startswith(ret_prefix): ret = l[len(ret_prefix):].rstrip()
+                if l.startswith(txt_prefix): txt += l[len(txt_prefix):].rstrip() + '\n'
+                if l.startswith(disabled_prefix): disabled = True
+            def sub(t):
+                return t.replace('{self}', test)
+            if not disabled:
+                tests[test] = {'run': sub(run), 'ret': int(ret), 'txt': sub(txt)}
+    return tests
+
+
+def generate(platform, config, settings, cmdlines, tests):
     root_dir = os.path.join('out', platform + config)
     if not os.path.isdir(root_dir):
         os.makedirs(root_dir)
 
     exe_ext = settings['exe_ext']
     obj_ext = settings['obj_ext']
+
+    luvcexe = 'luvc' + exe_ext
 
     with open(os.path.join(root_dir, 'build.ninja'), 'w', newline='\n') as f:
         f.write('src = ../../src\n')
@@ -64,6 +94,11 @@ def generate(platform, config, settings, cmdlines):
         f.write('rule re2c\n')
         f.write('  command = ../../third_party/re2c/%s/re2c%s -W -b -g -i --no-generation-date -o $out $in\n' % (platform, exe_ext))
         f.write('  description = RE2C $out\n')
+        f.write('\n')
+        f.write('rule testrun\n')
+        f.write('  command = %s $src/testrun.py $src/.. %s/%s $data\n' % (
+            sys.executable, root_dir, luvcexe))
+        f.write('  description = TEST $in\n\n')
 
         objs = []
 
@@ -83,8 +118,19 @@ def generate(platform, config, settings, cmdlines):
             extra_deps = ' | categorizer.c' if src == 'lex.c' else extra_deps
             f.write('build %s: cc $src/%s%s\n' % (obj, src, extra_deps))
 
-        luvcexe = 'luvc' + exe_ext
+        alltests = []
+        for testf, cmds in tests.items():
+            f.write('build %s: testrun $src/../%s | %s\n' % (
+                testf, testf, luvcexe))
+            # b64 <- json <- dict to smuggle through to test script w/o dealing
+            # with shell quoting garbage.
+            cmds_to_pass = base64.b64encode(bytes(json.dumps(cmds), encoding='utf-8'))
+            f.write('  data = %s\n' % str(cmds_to_pass, encoding='utf-8'))
+            alltests.append(testf)
+
         f.write('build %s: link %s\n' % (luvcexe, ' '.join(objs)))
+
+        f.write('\nbuild test: phony ' + ' '.join(alltests) + '\n')
 
         f.write('\ndefault luvc%s\n' % exe_ext)
 
@@ -101,13 +147,14 @@ def main():
         return 1
 
     os.chdir(ROOT_DIR)  # Necessary when regenerating manifest from ninja
+    tests = get_tests()
     for platform, pdata in CONFIGS.items():
         if (sys.platform == 'win32' and platform == 'w') or \
                 (sys.platform == 'linux' and platform == 'l'):
             for config, cmdlines in pdata.items():
                 if config == '__':
                     continue
-                generate(platform, config, pdata['__'], cmdlines)
+                generate(platform, config, pdata['__'], cmdlines, tests)
 
 
 if __name__ == '__main__':

@@ -1,0 +1,3 @@
+# RET: 4
+def int main():
+    return 4
