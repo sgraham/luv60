@@ -23,11 +23,11 @@ LLD_LINK = "C:\\Program Files\\LLVM\\bin\\lld-link.exe"
 CONFIGS = {
     'w': {
         'd': {
-            'COMPILE': CLANG_CL + ' /showIncludes -std:c11 /nologo /TC /FS /Od /Zi /D_DEBUG /D_CRT_SECURE_NO_DEPRECATE /W4 /WX -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo:$out /Fd:$out.pdb',
+            'COMPILE': CLANG_CL + ' /showIncludes -std:c11 /nologo /TC /FS /Od /Zi /D_DEBUG /DBUILD_DEBUG=1 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo:$out /Fd:$out.pdb',
             'LINK': LLD_LINK + ' /nologo /dynamicbase:no /DEBUG $in /out:$out /pdb:$out.pdb',
         },
         'r': {
-            'COMPILE': CLANG_CL + ' /showIncludes -std:c11 /nologo -flto /FS /O2 /Zi /DNDEBUG /D_CRT_SECURE_NO_DEPRECATE /W4 /WX -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb',
+            'COMPILE': CLANG_CL + ' /showIncludes -std:c11 /nologo -flto /FS /O2 /Zi /DNDEBUG /DBUILD_DEBUG=0 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb',
             'LINK': LLD_LINK + ' /nologo /dynamicbase:no /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb',
         },
         '__': {
@@ -89,7 +89,7 @@ def generate(platform, config, settings, cmdlines, tests):
         f.write('\n')
         f.write('rule ripsnip\n')
         f.write('  command = %s $src/clang_rip.py\n' % sys.executable)
-        f.write('  description = SNIP $out\n')
+        f.write('  description = SNIPRIP $out\n')
         f.write('\n')
         f.write('rule re2c\n')
         f.write('  command = ../../third_party/re2c/%s/re2c%s -W -b -g -i --no-generation-date -o $out $in\n' % (platform, exe_ext))

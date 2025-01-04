@@ -104,27 +104,44 @@ typedef enum TypeKind {
       NUM_TYPE_KINDS,
 } TypeKind;
 
+extern const char* typekind_names[];
+
 void parse(const char* filename, ReadFileResult file);
 
 
 // gen.c
 
 typedef struct ContFixup {
-    unsigned char* func_base;
-    int32_t offset_of_list_head;
+  unsigned char* func_base;
+  int32_t offset_of_list_head;
+#if BUILD_DEBUG
+  const char* debug_name;
+#endif
 } ContFixup;
 
 void gen_init(void);
 void gen_finish_and_dump(void);
 int gen_finish_and_run(void);
-ContFixup gen_func_entry(void);
-void gen_func_exit_and_patch_func_entry(ContFixup* fixup, Type return_type);
+void gen_error(const char* message);
+
+void gen_func_entry(void);
+void gen_func_return(ContFixup* result, Type return_type);
 void gen_push_number(uint64_t val, Type suffix, ContFixup* cont);
 void gen_add(ContFixup* cont);
 void gen_store_local(uint32_t offset, Type type);
 void gen_load_local(uint32_t offset, Type type, ContFixup* cont);
-void gen_error(const char* message);
-extern unsigned char* gen_p;
+void gen_if(ContFixup* cond, ContFixup* then, ContFixup* els);
+void gen_jump(ContFixup* to);
+
+#if BUILD_DEBUG
+#define gen_make_label(name) gen_make_label_impl(name)
+ContFixup gen_make_label_impl(const char* debug_name);
+#else
+#define gen_make_label(name) gen_make_label_impl()
+ContFixup gen_make_label_impl(void);
+#endif
+
+void gen_resolve_label(ContFixup* cont);
 
 ContFixup snip_make_cont_fixup(unsigned char* function_base);
 void snip_patch_cont_fixup(ContFixup* fixup, unsigned char* target);

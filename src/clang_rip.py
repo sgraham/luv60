@@ -90,40 +90,6 @@ def process_obj_files_to_patch_func(
     # With the code bits and relocs in hand, write out a C
     # function to the header that will 'assemble' into our target buffer.
 
-    def could_fallthrough():
-        # XXX assuming they're all the same, hopefully ok?
-        all_bytes = bytes_and_relocs[0][0]
-        all_relocs = bytes_and_relocs[0][1]
-        # print(all_bytes)
-        # print(all_relocs)
-        if len(continuations) != 1:
-            return False
-
-        # mcmodel=small
-        if all_bytes[-5] == 0xE9:
-            at = len(all_bytes) - 4
-            r = all_relocs.get(at)
-            if not r:
-                return False
-            if r[0] == "IMAGE_REL_AMD64_REL32" and r[1] == "$CONT0":
-                return True
-
-        """ not tested
-        # mcmodel=large
-        # 000000000000000A: 48 B8 00 00 00 00 00 00 00 00  mov         rax,offset $CONT0
-        # 0000000000000014: 48 FF E0           jmp         rax
-        print(all_bytes[-13:])
-        if all_bytes[-13:] == [0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0x48, 0xFF, 0xE0]:
-            at = len(all_bytes) - 11
-            r = all_relocs.get(at)
-            if not r:
-                return False
-            if r[0] == "IMAGE_REL_AMD64_ADDR64" and r[1] == "$CONT0":
-                return True
-        """
-
-        return False
-
     args = []
     for i, c in enumerate(consts):
         args.append(f"uintptr_t $X{i}")
@@ -133,7 +99,7 @@ def process_obj_files_to_patch_func(
 
     sf = snippets_file_handle
 
-    def gen_snippet(fallthrough):
+    def gen_snippet():
         arg = args_str
         if arg:
             arg = f", {arg}"
@@ -152,7 +118,7 @@ def process_obj_files_to_patch_func(
                 next_r = all_relocs.get(i + 1)
                 if (
                     i == len(all_bytes) - 5
-                    and fallthrough
+                    and b == 0xe9
                     and next_r[1].startswith("$CONT")
                 ):
                     sf.write(f"      if ({next_r[1]}) {{\n")
@@ -174,9 +140,13 @@ def process_obj_files_to_patch_func(
                         sf.write("      p += 8; /* %s ADDR64 */\n" % r[1])
                         i += 8
                     elif r[0] == "IMAGE_REL_AMD64_REL32":
-                        sf.write(
-                            f"      *(int32_t*)p = (intptr_t){r[1]} - (intptr_t)p - 4;\n"
-                        )
+                        if r[1].startswith('$CONT'):
+                            sf.write(f"      *(int32_t*)p = {r[1]}->offset_of_list_head;\n")
+                            sf.write(f"      {r[1]}->offset_of_list_head = p - {r[1]}->func_base;\n")
+                        else:
+                            sf.write(
+                                f"      *(int32_t*)p = (intptr_t){r[1]} - (intptr_t)p - 4;\n"
+                            )
                         sf.write("      p += 4; /* %s REL32 */\n" % r[1])
                         i += 4
                     elif r[0] == "IMAGE_REL_AMD64_ADDR32":
@@ -192,7 +162,7 @@ def process_obj_files_to_patch_func(
             sf.write("    break;\n")
         sf.write("    default:\n")
         sf.write(
-            '      CHECK(false&&"internal error: exceeded maximum int registers.");'
+            '      CHECK(false&&"internal error: exceeded maximum int registers.");\n'
         )
         sf.write("  }\n")
         sf.write("  *inout_p = p;\n")
@@ -201,7 +171,7 @@ def process_obj_files_to_patch_func(
     sf.write("#if 0\n\n")
     sf.write(clang_format_for_patch_header(representative_src))
     sf.write("\n#endif\n\n")
-    gen_snippet(could_fallthrough())
+    gen_snippet()
 
 
 def munge_ll_file(infile, outfile, do_asm_hack, look_for_const, int_reg):
@@ -276,8 +246,8 @@ def toolchain_c_to_objs(
         with open(c_file, "w", newline="\n") as f:
             f.write(
                 """\
+#include <stdbool.h>
 #include <stdint.h>
-#include <stdlib.h>
 extern uintptr_t $X0;
 extern uintptr_t $X1;
 extern uintptr_t $X2;
@@ -506,6 +476,7 @@ def main():
             c.emit("{ int v = a * b;")
             c.build_continuation(0, ["v"])
             c.emit("}")
+        """
 
         with CToObj("if_then_else", sf) as c:
             c.build_decl(["bool cond"])
@@ -515,12 +486,19 @@ def main():
             c.build_continuation(1, [])
             c.emit("}")
             c.emit("}")
-        """
 
+        """
         # large model required because 'exit' might be far away from generated code.
         with CToObj("sysexit", sf, model="large") as c:
             c.build_decl(["int rc"])
             c.emit("{ exit(rc); }")
+        """
+
+        with CToObj("jump", sf) as c:
+            c.build_decl([])
+            c.emit('{')
+            c.build_continuation(0, [])
+            c.emit('}')
 
         with CToObj("func_entry", sf) as c:
             c.build_decl([])

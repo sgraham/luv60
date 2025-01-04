@@ -30,5 +30,7 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  return gen_finish_and_run();
+  int rc = gen_finish_and_run();
+  printf("ret: %d\n", rc);
+  return rc;
 }

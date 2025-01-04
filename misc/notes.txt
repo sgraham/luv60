@@ -1,0 +1,58 @@
+Trivial jmp skipping is wrong when:
+
+    0: jz <A>    ; pending continuation A
+  ...: ...
+    5: jmp <B>   ; pending continuation B
+
+  - resolve <A> to next instr at 6: happily patches A to point at 6
+
+  - resolve <B> to 6:
+    realizes 5 is a `jmp rel 0`, rewinds output location to 5 (overwriting
+    useless jmp), but now the jz is pointing past the block.
+
+Could try to hack and slash (re-fix-up, defer fixups another layer, etc.)
+
+But it seems like gen might need to build a graph of snip calls and their
+connections, which seems like it might be pretty much a cps graph, or a post
+order walk bytecode again.
+
+--------------------------------------------------------------------------------
+
+if 2:
+    return 3
+return 123
+
+GEN: "init"
+GEN: "func_entry"
+GEN: "push_number"
+GEN: "if"
+PATCH: patching if_cond to 0xE
+PATCH:  fixup at 0xA
+PATCH: patching if_then to 0x1C
+PATCH:  fixup at 0x18
+GEN: "push_number"
+GEN: "func_return"
+PATCH: patching return_result to 0x26
+PATCH:  fixup at 0x22
+GEN: "jump"
+PATCH: patching if_else to 0x33
+PATCH:  fixup at 0x13
+PATCH: patching if_after to 0x33
+PATCH:  fixup at 0x2F
+GEN: "push_number"
+GEN: "func_return"
+PATCH: patching return_result to 0x3D
+PATCH:  fixup at 0x39
+GEN: "jump"
+PATCH: patching end_of_function to 0x4A
+PATCH:  fixup at 0x46
+GEN: "finish_and_dump"
+
+  2           0 LOAD_GLOBAL              0 (x)
+              2 POP_JUMP_IF_FALSE        8
+
+  3           4 LOAD_CONST               1 (3)
+              6 RETURN_VALUE
+
+  4     >>    8 LOAD_CONST               2 (123)
+             10 RETURN_VALUE

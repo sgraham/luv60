@@ -7,6 +7,11 @@ typedef struct TypeData {
 static TypeData typedata[16<<20];
 static int num_typedata;
 
+const char* typekind_names[] = {
+#define X(x) #x,
+  TYPEKINDS_X
+#undef X
+};
 
 // XXX actually intern!
 
@@ -280,6 +285,7 @@ static FuncParams parse_func_params(void) {
 
 static void parse_statement(bool toplevel);
 static void parse_expression(ContFixup* cont);
+static void parse_block(ContFixup* cont);
 
 static Sym* alloc_local(Str name, Type type) {
   ASSERT(cur_func.name.i);
@@ -313,11 +319,12 @@ static void enter_function(Type return_type, Str name, FuncParams params) {
   cur_func.name = name;
   cur_func.params = params;
   cur_func.locals_offset = 0;
-  cur_func.func_exit_cont = gen_func_entry();
+  gen_func_entry();
 }
 
-static void leave_function(void) {
-  gen_func_exit_and_patch_func_entry(&cur_func.func_exit_cont, cur_func.return_type);
+static void leave_function(ContFixup* done) {
+  gen_resolve_label(done);
+  //gen_func_exit_and_patch_func_entry(&cur_func.func_exit_cont, cur_func.return_type);
   memset(&cur_func, 0, sizeof(cur_func));
 }
 
@@ -443,8 +450,8 @@ static bool match_assignment(void) {
   return true;
 }
 
-typedef void (*PrefixFn)(bool can_assign);
-typedef void (*InfixFn)(bool can_assign);
+typedef void (*PrefixFn)(bool can_assign, ContFixup* cont);
+typedef void (*InfixFn)(bool can_assign, ContFixup* cont);
 
 typedef struct Rule {
   PrefixFn prefix;
@@ -455,10 +462,10 @@ typedef struct Rule {
 static Rule* get_rule(TokenKind tok_kind);
 static void parse_precedence(Precedence precedence, ContFixup* cont);
 
-static void parse_alignof(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_and(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_alignof(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_and(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
 
-static void parse_binary(bool can_assign) {
+static void parse_binary(bool can_assign, ContFixup* cont) {
   // Remember the operator.
   TokenKind op = previous_kind;
 
@@ -471,36 +478,34 @@ static void parse_binary(bool can_assign) {
   }
 }
 
-static void parse_bool_literal(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_call(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_compound_literal(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_dict_literal(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_dot(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_grouping(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_in_or_not_in(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_len(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_list_literal_or_compr(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_null_literal(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_bool_literal(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_call(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_compound_literal(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_dict_literal(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_dot(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_grouping(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_in_or_not_in(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_len(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_list_literal_or_compr(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_null_literal(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
 
-static void parse_number(bool can_assign) {
+static void parse_number(bool can_assign, ContFixup* cont) {
   Type suffix = {0};
   uint64_t val = scan_int(lex_get_strview(previous_offset, cur_offset), &suffix);
-
-  // XXX cont
-  gen_push_number(val, suffix, NULL);
+  gen_push_number(val, suffix, cont);
 }
 
-static void parse_offsetof(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_or(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_range(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_sizeof(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_string(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_string_interpolate(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_subscript(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_typeid(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_unary(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_offsetof(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_or(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_range(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_sizeof(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_string(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_string_interpolate(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_subscript(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_typeid(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static void parse_unary(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
 
-static void parse_variable(bool can_assign) {
+static void parse_variable(bool can_assign, ContFixup* cont) {
   Str target = str_from_previous();
   if (can_assign && match_assignment()) {
     abort();
@@ -516,8 +521,7 @@ static void parse_variable(bool can_assign) {
       error(strf("Undefined variable '%s'.", cstr(target)));
     }
     ASSERT(sym->is_local);
-    // XXX cont
-    gen_load_local(sym->stack_offset, sym->type, NULL);
+    gen_load_local(sym->stack_offset, sym->type, cont);
   }
 }
 
@@ -655,12 +659,12 @@ static void parse_precedence(Precedence precedence, ContFixup* cont) {
   }
 
   bool can_assign = precedence <= PREC_ASSIGNMENT;
-  prefix_rule(can_assign);
+  prefix_rule(can_assign, cont);
 
   while (precedence <= get_rule(cur_kind)->prec_for_infix) {
     advance();
     InfixFn infix_rule = get_rule(previous_kind)->infix;
-    infix_rule(can_assign);
+    infix_rule(can_assign, cont);
   }
 
   if (can_assign && match_assignment()) {
@@ -672,25 +676,61 @@ static void parse_expression(ContFixup* cont) {
   parse_precedence(PREC_LOWEST, cont);
 }
 
+static void if_statement(void) {
+  ContFixup cond = gen_make_label("if_cond");
+
+  parse_expression(&cond);
+
+  consume(TOK_COLON, "Expect ':' to start if.");
+  consume(TOK_NEWLINE, "Expect newline after ':' to start if.");
+  consume(TOK_INDENT, "Expect indent to start block after if.");
+
+  ContFixup then = gen_make_label("if_then");
+  ContFixup els = gen_make_label("if_else");
+  ContFixup after = gen_make_label("if_after");
+
+  gen_if(&cond, &then, &els);
+
+  gen_resolve_label(&then);
+
+  parse_block(&after);
+
+  // while (match(TOK_ELIF)) {}
+
+  gen_resolve_label(&els);
+
+  // if (match(TOK_ELSE)) { }
+
+  gen_resolve_label(&after);
+}
+
 static bool parse_func_body_only_statement(void) {
+  if (match(TOK_IF)) {
+     if_statement();
+     return true;
+  }
+
   if (match(TOK_RETURN)) {
     ASSERT(cur_func.return_type.i);
+    ContFixup result = gen_make_label("return_result");
     if (cur_func.return_type.i != TYPE_VOID) {
-      parse_expression(&cur_func.func_exit_cont);
+      parse_expression(&result);
     }
+    gen_func_return(&result, cur_func.return_type);
     return true;
   }
 
   return false;
 }
 
-static void parse_block(void) {
+static void parse_block(ContFixup* cont) {
   while (!check(TOK_DEDENT) && !check(TOK_EOF)) {
     parse_statement(/*toplevel=*/false);
     while (match(TOK_NEWLINE)) {
     }
   }
   consume(TOK_DEDENT, "Expect end of block.");
+  gen_jump(cont);
 }
 
 // TODO: decorators
@@ -706,11 +746,12 @@ static void parse_def(void) {
   consume(TOK_INDENT, "Expect indented function body.");
 
   enter_function(return_type, name, params);
-  parse_block();
-  leave_function();
+  ContFixup done = gen_make_label("end_of_function");
+  parse_block(&done);
+  leave_function(&done);
 }
 
-static void parse_variable_declaration(Type type) {
+static void parse_variable_statement(Type type) {
   Str name = parse_name("Expect variable or typed variable name.");
   ASSERT(name.i);
 
@@ -742,7 +783,7 @@ static bool parse_anywhere_statement(void) {
 
   Type var_type = parse_type();
   if (var_type.i) {
-    parse_variable_declaration(var_type);
+    parse_variable_statement(var_type);
     return true;
   }
 
