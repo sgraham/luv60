@@ -443,6 +443,63 @@ static bool match_assignment(void) {
   return true;
 }
 
+typedef void (*PrefixFn)(bool can_assign);
+typedef void (*InfixFn)(bool can_assign);
+
+typedef struct Rule {
+  PrefixFn prefix;
+  InfixFn infix;
+  Precedence prec_for_infix;
+} Rule;
+
+static Rule* get_rule(TokenKind tok_kind);
+static void parse_precedence(Precedence precedence, ContFixup* cont);
+
+static void parse_alignof(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_and(bool can_assign) { ASSERT(false && "not implemented"); }
+
+static void parse_binary(bool can_assign) {
+  // Remember the operator.
+  TokenKind op = previous_kind;
+
+  // Compile the right operand.
+  Rule* rule = get_rule(op);
+  parse_precedence(rule->prec_for_infix + 1, NULL);
+
+  if (op == TOK_PLUS) {
+    gen_add(NULL);
+  }
+}
+
+static void parse_bool_literal(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_call(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_compound_literal(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_dict_literal(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_dot(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_grouping(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_in_or_not_in(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_len(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_list_literal_or_compr(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_null_literal(bool can_assign) { ASSERT(false && "not implemented"); }
+
+static void parse_number(bool can_assign) {
+  Type suffix = {0};
+  uint64_t val = scan_int(lex_get_strview(previous_offset, cur_offset), &suffix);
+
+  // XXX cont
+  gen_push_number(val, suffix, NULL);
+}
+
+static void parse_offsetof(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_or(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_range(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_sizeof(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_string(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_string_interpolate(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_subscript(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_typeid(bool can_assign) { ASSERT(false && "not implemented"); }
+static void parse_unary(bool can_assign) { ASSERT(false && "not implemented"); }
+
 static void parse_variable(bool can_assign) {
   Str target = str_from_previous();
   if (can_assign && match_assignment()) {
@@ -463,48 +520,6 @@ static void parse_variable(bool can_assign) {
     gen_load_local(sym->stack_offset, sym->type, NULL);
   }
 }
-
-static void parse_number(bool can_assign) {
-  Type suffix = {0};
-  uint64_t val = scan_int(lex_get_strview(previous_offset, cur_offset), &suffix);
-
-  // XXX cont
-  gen_push_number(val, suffix, NULL);
-}
-
-static void parse_alignof(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_and(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_binary(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_bool_literal(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_call(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_compound_literal(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_dict_literal(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_dot(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_grouping(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_in_or_not_in(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_len(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_list_literal_or_compr(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_null_literal(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_offsetof(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_or(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_range(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_sizeof(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_string(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_string_interpolate(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_subscript(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_typeid(bool can_assign) { ASSERT(false && "not implemented"); }
-static void parse_unary(bool can_assign) { ASSERT(false && "not implemented"); }
-
-typedef void (*PrefixFn)(bool can_assign);
-typedef void (*InfixFn)(bool can_assign);
-
-typedef struct Rule {
-  PrefixFn prefix;
-  InfixFn infix;
-  Precedence prec_for_infix;
-} Rule;
-
-static Rule* get_rule(TokenKind tok_kind);
 
 // Has to match the order in tokens.inc.
 static Rule rules[NUM_TOKEN_KINDS] = {

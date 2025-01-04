@@ -140,7 +140,7 @@ def process_obj_files_to_patch_func(
         sf.write(
             f"static inline void snip_{snip_name}(int num_int_regs_in_use, unsigned char** inout_p{arg}) {{\n"
         )
-        sf.write('  unsigned char* __restrict p = *inout_p;\n')
+        sf.write("  unsigned char* __restrict p = *inout_p;\n")
         sf.write("  switch(num_int_regs_in_use) {\n")
         for ir, br in enumerate(bytes_and_relocs):
             sf.write("    case %d:\n" % ir)
@@ -149,14 +149,22 @@ def process_obj_files_to_patch_func(
             i = 0
             while i < len(all_bytes):
                 b = all_bytes[i]
-                next_r = all_relocs.get(i+1)
-                if i == len(all_bytes) - 5 and fallthrough and next_r[1].startswith('$CONT'):
-                    sf.write(f'      if ({next_r[1]}) {{\n')
-                    sf.write( '        *p++ = 0x%02x;\n' % b)
-                    sf.write(f'        *(int32_t*)p = {next_r[1]}->offset_of_list_head;\n')
-                    sf.write(f'        {next_r[1]}->offset_of_list_head = p - {next_r[1]}->func_base;\n')
-                    sf.write(f'        p += 4; /* {next_r[1]} REL32 */\n')
-                    sf.write(f'      }}\n')
+                next_r = all_relocs.get(i + 1)
+                if (
+                    i == len(all_bytes) - 5
+                    and fallthrough
+                    and next_r[1].startswith("$CONT")
+                ):
+                    sf.write(f"      if ({next_r[1]}) {{\n")
+                    sf.write("        *p++ = 0x%02x;\n" % b)
+                    sf.write(
+                        f"        *(int32_t*)p = {next_r[1]}->offset_of_list_head;\n"
+                    )
+                    sf.write(
+                        f"        {next_r[1]}->offset_of_list_head = p - {next_r[1]}->func_base;\n"
+                    )
+                    sf.write(f"        p += 4; /* {next_r[1]} REL32 */\n")
+                    sf.write(f"      }}\n")
                     break
 
                 r = all_relocs.get(i)
@@ -183,7 +191,9 @@ def process_obj_files_to_patch_func(
                     i += 1
             sf.write("    break;\n")
         sf.write("    default:\n")
-        sf.write('      CHECK(false&&"internal error: exceeded maximum int registers.");')
+        sf.write(
+            '      CHECK(false&&"internal error: exceeded maximum int registers.");'
+        )
         sf.write("  }\n")
         sf.write("  *inout_p = p;\n")
         sf.write(f"}}\n\n")
@@ -430,10 +440,16 @@ def main():
             c.build_const(0)
             c.emit(', %%eax": "=a"(k0));')
             c.emit("*(int*)($stack + k0")
-            c.emit(') = x;')
+            c.emit(") = x;")
             c.build_continuation(0, [])
             c.emit("}")
             c.asm_hack_32()
+
+        with CToObj("add_i32", sf) as c:
+            c.build_decl(["int a", "int b"])
+            c.emit("{ int r = a + b;")
+            c.build_continuation(0, ["r"])
+            c.emit("}")
 
         with CToObj("const_i32", sf) as c:
             c.build_decl([])

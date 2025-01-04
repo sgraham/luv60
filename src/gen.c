@@ -104,6 +104,16 @@ void gen_push_number(uint64_t val, Type suffix, ContFixup* cont) {
   gen_vstack[gen_num_vstack++] = (VSVal){suffix.i == TYPE_NONE ? (Type){TYPE_I64} : suffix};
 }
 
+void gen_add(ContFixup* cont) {
+  VSVal a = gen_vstack[--gen_num_vstack];
+  VSVal b = gen_vstack[--gen_num_vstack];
+  (void)a;
+  (void)b;
+  // TODO: types!
+  snip_add_i32(gen_num_vstack, &gen_p, cont);
+  gen_vstack[gen_num_vstack++] = (VSVal){a.type};
+}
+
 void gen_store_local(uint32_t offset, Type type) {
   // TODO: type!
   VSVal top = gen_vstack[--gen_num_vstack];

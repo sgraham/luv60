@@ -120,6 +120,7 @@ int gen_finish_and_run(void);
 ContFixup gen_func_entry(void);
 void gen_func_exit_and_patch_func_entry(ContFixup* fixup, Type return_type);
 void gen_push_number(uint64_t val, Type suffix, ContFixup* cont);
+void gen_add(ContFixup* cont);
 void gen_store_local(uint32_t offset, Type type);
 void gen_load_local(uint32_t offset, Type type, ContFixup* cont);
 void gen_error(const char* message);
