@@ -26,8 +26,19 @@ def main():
     assert len(input_name) == 1  # TODO: ssa hacks
     ssa_name = os.path.join(out_dir, input_name[0] + ".ssa")
     luvc_cmd = [ccbin] + [input_name[0]] + [ssa_name]
-    luvcres = subprocess.run(luvc_cmd, cwd=root, universal_newlines=True, env=env)
-    if luvcres.returncode != 0:
+    luvcres = subprocess.run(
+        luvc_cmd, cwd=root, universal_newlines=True, env=env, capture_output=True
+    )
+    if cmds["crc"] == 1:
+        out = luvcres.stderr
+        if out != cmds["txt"]:
+            print("got output:\n")
+            print(out)
+            print("but expected:\n")
+            print(cmds["txt"])
+            return 1
+        return 0
+    elif luvcres.returncode != 0:
         return 1
 
     s_name = os.path.join(out_dir, input_name[0] + ".s")
@@ -78,7 +89,7 @@ def main():
             com_name,
         ],
         shell=True,
-        cwd=os.path.join(root, "scratch")
+        cwd=os.path.join(root, "scratch"),
     )
     if objcopyres.returncode != 0:
         return 1

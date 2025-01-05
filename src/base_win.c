@@ -6,11 +6,12 @@
 
 #include "base_some_windows.h"
 
-void base_writef_stderr(const char* fmt, ...) {
+int base_writef_stderr(const char* fmt, ...) {
   va_list args;
   va_start(args, fmt);
-  vfprintf(stderr, fmt, args);
+  int ret = vfprintf(stderr, fmt, args);
   va_end(args);
+  return ret;
 }
 
 unsigned char* base_large_alloc_rw(size_t size) {

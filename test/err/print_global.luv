@@ -1,0 +1,4 @@
+# CRC: 1
+# TXT: {self}:4:6:print
+# TXT:                                    ^ error: Expect expression.
+print

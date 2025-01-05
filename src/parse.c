@@ -182,8 +182,14 @@ static Sym* make_param(Str name, Type type) {
 }
 
 static void error(const char* message) {
-  base_writef_stderr("%s:<offset %d>: error: %s\n", parser.cur_filename, parser.cur_offset,
-                     message);
+  uint32_t loc_line;
+  uint32_t loc_column;
+  StrView line;
+  lex_get_location_and_line_slow(parser.cur_offset, &loc_line, &loc_column, &line);
+  int indent = base_writef_stderr("%s:%d:%d:", parser.cur_filename, loc_line, loc_column);
+  base_writef_stderr("%.*s\n", (int)line.size, line.data);
+  base_writef_stderr("%*s", indent + loc_column - 1, "");
+  base_writef_stderr("^ error: %s\n", message);
   base_exit(1);
 }
 
@@ -245,10 +251,12 @@ static void advance(void) {
     parser.cur_token_index = 0;
     lex_next_block(parser.token_kinds, parser.token_offsets);
   }
-  parser.prev_kind = parser.cur_kind;
-  parser.prev_offset = parser.cur_offset;
-  parser.cur_kind = parser.token_kinds[parser.cur_token_index];
-  parser.cur_offset = parser.token_offsets[parser.cur_token_index];
+  do {
+    parser.prev_kind = parser.cur_kind;
+    parser.prev_offset = parser.cur_offset;
+    parser.cur_kind = parser.token_kinds[parser.cur_token_index];
+    parser.cur_offset = parser.token_offsets[parser.cur_token_index];
+  } while (parser.cur_kind == TOK_COMMENT || parser.cur_kind == TOK_NL);
 }
 
 static bool match(TokenKind tok_kind) {
@@ -874,6 +882,11 @@ static bool parse_func_body_only_statement(void) {
      if_statement();
      return true;
   }
+  if (match(TOK_PRINT)) {
+    //gen_ssa_print(parse_expression());
+    consume(TOK_NEWLINE, "Expect newline after print.");
+    return true;
+  }
 
   if (match(TOK_RETURN)) {
     ASSERT(parser.cur_func->return_type.i);
@@ -950,7 +963,7 @@ static bool parse_anywhere_statement(void) {
     return true;
   }
 
-  //parse_expression();
+  parse_expression();
   consume(TOK_NEWLINE, "Expect newline.");
   return true;
 }
@@ -1000,6 +1013,7 @@ void parse(const char* filename, ReadFileResult file) {
   advance();
 
   while (parser.cur_kind != TOK_EOF) {
+    skip_newlines();
     parse_statement(/*toplevel=*/true);
     skip_newlines();
   }

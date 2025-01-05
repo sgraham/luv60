@@ -438,3 +438,30 @@ void lex_next_block(uint8_t token_kinds[128], uint32_t token_offsets[128]) {
 StrView lex_get_strview(uint32_t from, uint32_t to) {
   return (StrView){(const char*)&buf_[from], to - from};
 }
+
+void lex_get_location_and_line_slow(uint32_t offset,
+                                    uint32_t* loc_line,
+                                    uint32_t* loc_column,
+                                    StrView* contents) {
+  const char* line_start = (const char*)&buf_[0];
+  uint32_t line = 1;
+  uint32_t col = 1;
+  const char* find = (const char*)&buf_[offset];
+  for (const char* p = (const char*)&buf_[0];; ++p) {
+    ASSERT(*p != 0);
+    if (p == find) {
+      const char* line_end = strchr(p, '\n');  // TODO: error on file w/o newline
+      *loc_line = line;
+      *loc_column = col;
+      *contents = (StrView){line_start, line_end - line_start};
+      return;
+    }
+    if (*p == '\n') {
+      line += 1;
+      col = 1;
+      line_start = p + 1;
+    } else {
+      col += 1;
+    }
+  }
+}

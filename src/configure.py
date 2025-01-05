@@ -41,26 +41,29 @@ CONFIGS = {
 
 def get_tests():
     tests = {}
-    for test in glob.glob(os.path.join('test', '*.luv')):
+    for test in glob.glob(os.path.join('test', '**.luv')):
         test = test.replace('\\', '/')
         run = '{self}'
         ret = '0'
+        crc = '0'
         txt = ''
         disabled = False
         run_prefix = '# RUN: '
         ret_prefix = '# RET: '
+        crc_prefix = '# CRC: '
         txt_prefix = '# TXT: '
         disabled_prefix = '# DISABLED'
         with open(test, 'r', encoding='utf-8') as f:
             for l in f.readlines():
                 if l.startswith(run_prefix): run = l[len(run_prefix):].rstrip()
                 if l.startswith(ret_prefix): ret = l[len(ret_prefix):].rstrip()
+                if l.startswith(crc_prefix): crc = l[len(crc_prefix):].rstrip()
                 if l.startswith(txt_prefix): txt += l[len(txt_prefix):].rstrip() + '\n'
                 if l.startswith(disabled_prefix): disabled = True
             def sub(t):
                 return t.replace('{self}', test)
             if not disabled:
-                tests[test] = {'run': sub(run), 'ret': int(ret), 'txt': sub(txt)}
+                tests[test] = {'run': sub(run), 'ret': int(ret), 'crc': int(crc), 'txt': sub(txt)}
     return tests
 
 

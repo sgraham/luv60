@@ -20,7 +20,7 @@ typedef struct ReadFileResult {
   size_t allocated_size;
 } ReadFileResult;
 
-void base_writef_stderr(const char* fmt, ...);
+int base_writef_stderr(const char* fmt, ...);
 unsigned char* base_large_alloc_rw(size_t size);
 unsigned char* base_large_alloc_rwx(size_t size);
 void base_set_protection_rx(unsigned char* ptr, size_t size);
@@ -61,7 +61,10 @@ typedef enum TokenKind {
 void lex_start(const uint8_t* buf, size_t byte_count_rounded_up);
 void lex_next_block(uint8_t token_kinds[128], uint32_t token_offsets[128]);
 StrView lex_get_strview(uint32_t from, uint32_t to);
-
+void lex_get_location_and_line_slow(uint32_t offset,
+                                    uint32_t* loc_line,
+                                    uint32_t* loc_column,
+                                    StrView* contents);
 
 // parse.c
 
