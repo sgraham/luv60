@@ -56,3 +56,19 @@ GEN: "finish_and_dump"
 
   4     >>    8 LOAD_CONST               2 (123)
              10 RETURN_VALUE
+
+
+---
+
+InstrData instrs[1<<20]
+type Instr = u32
+
+BlockData blocks[1<<20]
+type Block = u32
+
+BlockData:
+  Phi phi
+  Instr instr_start
+  int num_instrs
+
+

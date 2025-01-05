@@ -34,6 +34,7 @@
 #define ALIGN_UP_PTR(p, a) ((void*)ALIGN_UP((uintptr_t)(p), (a)))
 
 #define COUNTOF(a) (sizeof(a)/sizeof(a[0]))
+#define COUNTOFI(a) ((int)(sizeof(a)/sizeof(a[0])))
 
 #define PAGE_SIZE 4096
 

@@ -13,8 +13,6 @@ const char* typekind_names[] = {
 #undef X
 };
 
-// XXX actually intern!
-
 #if 0
 typedef struct TypeDataExtraPtr {
   Type type;
@@ -88,35 +86,62 @@ typedef union Val {
   uintptr_t p;
 } Val;
 
+typedef enum SymScopeDecl {
+  SSD_NONE,
+  SSD_ASSUMED_GLOBAL,
+  SSD_DECLARED_GLOBAL,
+  SSD_DECLARED_LOCAL,
+  SSD_DECLARED_NONLOCAL,
+} SymScopeDecl;
+
 typedef struct Sym {
   SymKind kind;
   Str name;
   Type type;
   IRRef irref;
-  bool is_local;
+  SymScopeDecl scope_decl;
 } Sym;
 
-static const char* cur_filename;
-static uint8_t token_kinds[128] = {0};
-static uint32_t token_offsets[128] = {0};
-static int cur_token_index = 0;
-static TokenKind cur_kind;
-static uint32_t cur_offset;
-static TokenKind previous_kind;
-static uint32_t previous_offset;
-
-#define P_MAX_LOCALS 256
 typedef struct FuncData {
-  Type return_type;
   Str name;
-  FuncParams params;
-
+  Type return_type;
   IRFunc ir_func;
-  Sym locals[P_MAX_LOCALS];
-  uint32_t num_locals;
 } FuncData;
 
-static FuncData cur_func;
+#define MAX_VARS_IN_SCOPE 256
+#define MAX_FUNC_NESTING 16
+#define MAX_VARIABLE_SCOPES 32
+
+typedef struct VarScope VarScope;
+struct VarScope {
+  Sym syms[MAX_VARS_IN_SCOPE];
+  int num_syms;
+  bool is_function;
+  bool is_module;
+};
+
+typedef struct Parser {
+  const char* cur_filename;
+
+  uint8_t token_kinds[128];
+  uint32_t token_offsets[128];
+  int cur_token_index;
+
+  TokenKind cur_kind;
+  uint32_t cur_offset;
+  TokenKind prev_kind;
+  uint32_t prev_offset;
+
+  FuncData funcdatas[MAX_FUNC_NESTING];
+  int num_funcdatas;
+  VarScope varscopes[MAX_VARIABLE_SCOPES];
+  int num_varscopes;
+
+  FuncData* cur_func;
+  VarScope* cur_var_scope;
+} Parser;
+
+static Parser parser;
 
 static char* strf(const char* fmt, ...) {
   va_list args;
@@ -131,8 +156,51 @@ static char* strf(const char* fmt, ...) {
 }
 
 static void error(const char* message) {
-  base_writef_stderr("%s:<offset %d>: error: %s\n", cur_filename, cur_offset, message);
+  base_writef_stderr("%s:<offset %d>: error: %s\n", parser.cur_filename, parser.cur_offset,
+                     message);
   base_exit(1);
+}
+
+static void enter_scope(bool is_module, bool is_function) {
+  parser.cur_var_scope = &parser.varscopes[parser.num_varscopes++];
+  parser.cur_var_scope->num_syms = 0;
+  parser.cur_var_scope->is_function = is_function;
+  parser.cur_var_scope->is_module = is_module;
+}
+
+static void leave_scope(void) {
+  --parser.num_varscopes;
+  ASSERT(parser.num_varscopes >= 0);
+  if (parser.num_varscopes == 0) {
+    parser.cur_var_scope = NULL;
+  } else {
+    parser.cur_var_scope = &parser.varscopes[parser.num_varscopes - 1];
+  }
+}
+
+static void enter_function(Type return_type, Str name, FuncParams params) {
+  parser.cur_func = &parser.funcdatas[parser.num_funcdatas++];
+  parser.cur_func->name = name;
+  parser.cur_func->return_type = return_type;
+  parser.cur_func->ir_func =
+      gen_ssa_start_function(name, return_type, params.num_params, params.types, params.names);
+
+  enter_scope(/*is_module=*/false, /*is_function=*/true);
+}
+
+static void leave_function(void) {
+  //gen_resolve_label(done);
+  //gen_func_exit_and_patch_func_entry(&cur_func.func_exit_cont, cur_func.return_type);
+  gen_ssa_end_function();
+
+  --parser.num_funcdatas;
+  ASSERT(parser.num_funcdatas >= 0);
+  if (parser.num_funcdatas == 0) {
+    parser.cur_func = NULL;
+  } else {
+    parser.cur_func = &parser.funcdatas[parser.num_funcdatas - 1];
+  }
+  leave_scope();
 }
 
 static Type make_type_ptr(uint32_t offset, Type subtype) {
@@ -144,30 +212,30 @@ static Type make_type_array(uint32_t offset, uint64_t count, Type subtype) {
 }
 
 static void advance(void) {
-  ++cur_token_index;
-  while (!token_kinds[cur_token_index]) {
-    cur_token_index = 0;
-    lex_next_block(token_kinds, token_offsets);
+  ++parser.cur_token_index;
+  while (!parser.token_kinds[parser.cur_token_index]) {
+    parser.cur_token_index = 0;
+    lex_next_block(parser.token_kinds, parser.token_offsets);
   }
-  previous_kind = cur_kind;
-  previous_offset = cur_offset;
-  cur_kind = token_kinds[cur_token_index];
-  cur_offset = token_offsets[cur_token_index];
+  parser.prev_kind = parser.cur_kind;
+  parser.prev_offset = parser.cur_offset;
+  parser.cur_kind = parser.token_kinds[parser.cur_token_index];
+  parser.cur_offset = parser.token_offsets[parser.cur_token_index];
 }
 
 static bool match(TokenKind tok_kind) {
-  if (cur_kind != tok_kind)
+  if (parser.cur_kind != tok_kind)
     return false;
   advance();
   return true;
 }
 
 static bool check(TokenKind kind) {
-  return cur_kind == kind;
+  return parser.cur_kind == kind;
 }
 
 static void consume(TokenKind tok_kind, const char* message) {
-  if (cur_kind == tok_kind) {
+  if (parser.cur_kind == tok_kind) {
     advance();
     return;
   }
@@ -207,7 +275,7 @@ static Type basic_tok_to_type[NUM_TOKEN_KINDS] = {
 
 static Type parse_type(void) {
   if (match(TOK_STAR)) {
-    return make_type_ptr(cur_offset, parse_type());
+    return make_type_ptr(parser.cur_offset, parse_type());
   }
   if (match(TOK_LSQUARE)) {
     int count = 0;
@@ -219,7 +287,7 @@ static Type parse_type(void) {
     if (!elem.i) {
       error("Expecting type of array or slice.");
     }
-    return make_type_array(cur_offset, count, elem);
+    return make_type_array(parser.cur_offset, count, elem);
   }
 
   if (match(TOK_LBRACE)) {
@@ -230,8 +298,8 @@ static Type parse_type(void) {
     abort();
   }
 
-  if (cur_kind >= TOK_BOOL && cur_kind <= TOK_UINT) {
-    Type t = basic_tok_to_type[cur_kind];
+  if (parser.cur_kind >= TOK_BOOL && parser.cur_kind <= TOK_UINT) {
+    Type t = basic_tok_to_type[parser.cur_kind];
     ASSERT(t.i != 0);
     advance();
     return t;
@@ -240,7 +308,7 @@ static Type parse_type(void) {
 }
 
 static Str str_from_previous(void) {
-  StrView view = lex_get_strview(previous_offset, cur_offset);
+  StrView view = lex_get_strview(parser.prev_offset, parser.cur_offset);
   ASSERT(view.size > 0);
   while (view.data[view.size - 1] == ' ') {
     --view.size;
@@ -284,43 +352,29 @@ static IRRef parse_expression(void);
 static void parse_block(void);
 
 static Sym* alloc_local(Str name, Type type) {
-  ASSERT(cur_func.name.i);
-  ASSERT(cur_func.num_locals < COUNTOF(cur_func.locals));
-  Sym* new = &cur_func.locals[cur_func.num_locals++];
+  ASSERT(parser.cur_func && parser.cur_var_scope);
+  ASSERT(parser.cur_var_scope->num_syms < COUNTOFI(parser.cur_var_scope->syms));
+  Sym* new = &parser.cur_var_scope->syms[parser.cur_var_scope->num_syms++];
   new->kind = SYM_VAR;
   new->name = name;
   new->type = type;
-  new->is_local = true;
+  new->scope_decl = SSD_DECLARED_LOCAL;
   new->irref = gen_ssa_alloc_local(type);
   return new;
 }
 
 static Sym* get_local(Str name) {
-  if (cur_func.num_locals == 0) {
+  ASSERT(parser.cur_var_scope);
+  if (parser.cur_var_scope->num_syms == 0) {
     return NULL;
   }
-  for (int i = cur_func.num_locals - 1; i >= 0; --i) {
-    Sym* sym = &cur_func.locals[i];
+  for (int i = parser.cur_var_scope->num_syms; i >= 0; --i) {
+    Sym* sym = &parser.cur_var_scope->syms[i];
     if (sym->name.i == name.i) {
       return sym;
     }
   }
   return NULL;
-}
-
-static void enter_function(Type return_type, Str name, FuncParams params) {
-  cur_func.return_type = return_type;
-  cur_func.name = name;
-  cur_func.params = params;
-  cur_func.ir_func =
-      gen_ssa_start_function(name, return_type, params.num_params, params.types, params.names);
-}
-
-static void leave_function() {
-  //gen_resolve_label(done);
-  //gen_func_exit_and_patch_func_entry(&cur_func.func_exit_cont, cur_func.return_type);
-  gen_ssa_end_function();
-  memset(&cur_func, 0, sizeof(cur_func));
 }
 
 // ~strtoull with slight differences:
@@ -435,7 +489,7 @@ typedef enum Precedence {
 } Precedence;
 
 static bool match_assignment(void) {
-  const TokenKind tok = cur_kind;
+  const TokenKind tok = parser.cur_kind;
   if (!(tok == TOK_EQ || tok == TOK_PLUSEQ || tok == TOK_MINUSEQ || tok == TOK_STAREQ ||
         tok == TOK_SLASHEQ || tok == TOK_PERCENTEQ || tok == TOK_CARETEQ || tok == TOK_PIPEEQ ||
         tok == TOK_AMPERSANDEQ || tok == TOK_LSHIFTEQ || tok == TOK_RSHIFTEQ)) {
@@ -462,7 +516,7 @@ static IRRef parse_and(IRRef left, bool can_assign) { ASSERT(false && "not imple
 
 static IRRef parse_binary(IRRef left, bool can_assign) {
   // Remember the operator.
-  TokenKind op = previous_kind;
+  TokenKind op = parser.prev_kind;
 
   // Compile the right operand.
   Rule* rule = get_rule(op);
@@ -487,7 +541,7 @@ static IRRef parse_null_literal(bool can_assign) { ASSERT(false && "not implemen
 
 static IRRef parse_number(bool can_assign) {
   Type suffix = {0};
-  uint64_t val = scan_int(lex_get_strview(previous_offset, cur_offset), &suffix);
+  uint64_t val = scan_int(lex_get_strview(parser.prev_offset, parser.cur_offset), &suffix);
   return gen_ssa_const(val, suffix);
 }
 
@@ -506,7 +560,7 @@ static IRRef parse_variable(bool can_assign) {
   if (can_assign && match_assignment()) {
     abort();
 #if 0
-    TokenKind eq = previous_kind;
+    TokenKind eq = parser.prev_kind;
     parse_expression(NULL);
     ASSERT(eq == TOK_EQ);
     //gen_assignment(target);
@@ -516,7 +570,7 @@ static IRRef parse_variable(bool can_assign) {
     if (!sym) {
       error(strf("Undefined variable '%s'.", cstr(target)));
     }
-    ASSERT(sym->is_local);
+    ASSERT(sym->scope_decl == SSD_DECLARED_LOCAL);
     return gen_ssa_load(sym->irref, sym->type);
   }
 
@@ -652,7 +706,7 @@ static Rule* get_rule(TokenKind tok_kind) {
 
 static IRRef parse_precedence(Precedence precedence) {
   advance();
-  PrefixFn prefix_rule = get_rule(previous_kind)->prefix;
+  PrefixFn prefix_rule = get_rule(parser.prev_kind)->prefix;
   if (!prefix_rule) {
     error("Expect expression.");
   }
@@ -660,9 +714,9 @@ static IRRef parse_precedence(Precedence precedence) {
   bool can_assign = precedence <= PREC_ASSIGNMENT;
   IRRef left = prefix_rule(can_assign);
 
-  while (precedence <= get_rule(cur_kind)->prec_for_infix) {
+  while (precedence <= get_rule(parser.cur_kind)->prec_for_infix) {
     advance();
-    InfixFn infix_rule = get_rule(previous_kind)->infix;
+    InfixFn infix_rule = get_rule(parser.prev_kind)->infix;
     left = infix_rule(left, can_assign);
   }
 
@@ -712,14 +766,12 @@ static bool parse_func_body_only_statement(void) {
   }
 
   if (match(TOK_RETURN)) {
-    ASSERT(cur_func.return_type.i);
-    //ContFixup result = gen_make_label("return_result");
+    ASSERT(parser.cur_func->return_type.i);
     IRRef val = {0};
-    if (cur_func.return_type.i != TYPE_VOID) {
+    if (parser.cur_func->return_type.i != TYPE_VOID) {
       val = parse_expression();
     }
-    gen_ssa_return(val, cur_func.return_type);
-    //gen_func_return(&result, cur_func.return_type);
+    gen_ssa_return(val, parser.cur_func->return_type);
     return true;
   }
 
@@ -749,7 +801,6 @@ static void parse_def(void) {
   consume(TOK_INDENT, "Expect indented function body.");
 
   enter_function(return_type, name, params);
-  //ContFixup done = gen_make_label("end_of_function");
   parse_block();
   leave_function();
 }
@@ -830,12 +881,18 @@ static void init_types(void) {
 void parse(const char* filename, ReadFileResult file) {
   init_types();
 
-  cur_filename = filename;
-  cur_token_index = 0;
+  parser.cur_filename = filename;
+  parser.cur_token_index = 0;
+  parser.num_funcdatas = 0;
+  parser.num_varscopes = 0;
+  parser.cur_func = NULL;
+  parser.cur_var_scope = NULL;
+  enter_scope(/*is_module=*/true, /*is_function=*/false);
+
   lex_start(file.buffer, file.allocated_size);
   advance();
 
-  while (cur_kind != TOK_EOF) {
+  while (parser.cur_kind != TOK_EOF) {
     parse_statement(/*toplevel=*/true);
   }
 }
