@@ -10,7 +10,8 @@ ROOT_DIR = os.path.normpath(
 
 FILELIST = [
     "base_win.c",
-    "gen.c",
+    #"gen.c",
+    "gen_ssa.c",
     "lex.c",
     "luvc_main.c",
     "parse.c",

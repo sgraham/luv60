@@ -92,10 +92,7 @@ typedef struct Sym {
   SymKind kind;
   Str name;
   Type type;
-  // TODO: Not sure how much const propagation to do, and how much can be
-  // resolved in a single pass. Probably only for actual `const`s?
-  // Val val;
-  int stack_offset;
+  IRRef irref;
   bool is_local;
 } Sym;
 
@@ -114,8 +111,7 @@ typedef struct FuncData {
   Str name;
   FuncParams params;
 
-  int locals_offset;
-  ContFixup func_exit_cont;
+  IRFunc ir_func;
   Sym locals[P_MAX_LOCALS];
   uint32_t num_locals;
 } FuncData;
@@ -284,8 +280,8 @@ static FuncParams parse_func_params(void) {
 }
 
 static void parse_statement(bool toplevel);
-static void parse_expression(ContFixup* cont);
-static void parse_block(ContFixup* cont);
+static IRRef parse_expression(void);
+static void parse_block(void);
 
 static Sym* alloc_local(Str name, Type type) {
   ASSERT(cur_func.name.i);
@@ -295,9 +291,7 @@ static Sym* alloc_local(Str name, Type type) {
   new->name = name;
   new->type = type;
   new->is_local = true;
-  // TODO: align, size, etc etc etc
-  new->stack_offset = cur_func.locals_offset + 32;
-  cur_func.locals_offset += 8;
+  new->irref = gen_ssa_alloc_local(type);
   return new;
 }
 
@@ -318,13 +312,14 @@ static void enter_function(Type return_type, Str name, FuncParams params) {
   cur_func.return_type = return_type;
   cur_func.name = name;
   cur_func.params = params;
-  cur_func.locals_offset = 0;
-  gen_func_entry();
+  cur_func.ir_func =
+      gen_ssa_start_function(name, return_type, params.num_params, params.types, params.names);
 }
 
-static void leave_function(ContFixup* done) {
-  gen_resolve_label(done);
+static void leave_function() {
+  //gen_resolve_label(done);
   //gen_func_exit_and_patch_func_entry(&cur_func.func_exit_cont, cur_func.return_type);
+  gen_ssa_end_function();
   memset(&cur_func, 0, sizeof(cur_func));
 }
 
@@ -450,8 +445,8 @@ static bool match_assignment(void) {
   return true;
 }
 
-typedef void (*PrefixFn)(bool can_assign, ContFixup* cont);
-typedef void (*InfixFn)(bool can_assign, ContFixup* cont);
+typedef IRRef (*PrefixFn)(bool can_assign);
+typedef IRRef (*InfixFn)(IRRef left, bool can_assign);
 
 typedef struct Rule {
   PrefixFn prefix;
@@ -460,52 +455,53 @@ typedef struct Rule {
 } Rule;
 
 static Rule* get_rule(TokenKind tok_kind);
-static void parse_precedence(Precedence precedence, ContFixup* cont);
+static IRRef parse_precedence(Precedence precedence);
 
-static void parse_alignof(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_and(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static IRRef parse_alignof(bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_and(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); }
 
-static void parse_binary(bool can_assign, ContFixup* cont) {
+static IRRef parse_binary(IRRef left, bool can_assign) {
   // Remember the operator.
   TokenKind op = previous_kind;
 
   // Compile the right operand.
   Rule* rule = get_rule(op);
-  parse_precedence(rule->prec_for_infix + 1, NULL);
+  IRRef rhs = parse_precedence(rule->prec_for_infix + 1);
+  (void)rhs;
 
-  if (op == TOK_PLUS) {
-    gen_add(NULL);
-  }
+  // TODO: gen binary lhs op rhs
+  CHECK(op == TOK_PLUS);
+  return gen_ssa_add(left, rhs);
 }
 
-static void parse_bool_literal(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_call(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_compound_literal(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_dict_literal(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_dot(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_grouping(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_in_or_not_in(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_len(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_list_literal_or_compr(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_null_literal(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static IRRef parse_bool_literal(bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_call(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_compound_literal(bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_dict_literal(bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_dot(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_grouping(bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_in_or_not_in(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_len(bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_list_literal_or_compr(bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_null_literal(bool can_assign) { ASSERT(false && "not implemented"); }
 
-static void parse_number(bool can_assign, ContFixup* cont) {
+static IRRef parse_number(bool can_assign) {
   Type suffix = {0};
   uint64_t val = scan_int(lex_get_strview(previous_offset, cur_offset), &suffix);
-  gen_push_number(val, suffix, cont);
+  return gen_ssa_const(val, suffix);
 }
 
-static void parse_offsetof(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_or(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_range(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_sizeof(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_string(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_string_interpolate(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_subscript(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_typeid(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
-static void parse_unary(bool can_assign, ContFixup* cont) { ASSERT(false && "not implemented"); }
+static IRRef parse_offsetof(bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_or(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_range(bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_sizeof(bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_string(bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_string_interpolate(bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_subscript(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_typeid(bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_unary(bool can_assign) { ASSERT(false && "not implemented"); }
 
-static void parse_variable(bool can_assign, ContFixup* cont) {
+static IRRef parse_variable(bool can_assign) {
   Str target = str_from_previous();
   if (can_assign && match_assignment()) {
     abort();
@@ -513,7 +509,7 @@ static void parse_variable(bool can_assign, ContFixup* cont) {
     TokenKind eq = previous_kind;
     parse_expression(NULL);
     ASSERT(eq == TOK_EQ);
-    gen_assignment(target);
+    //gen_assignment(target);
 #endif
   } else {
     Sym* sym = get_local(target);
@@ -521,8 +517,11 @@ static void parse_variable(bool can_assign, ContFixup* cont) {
       error(strf("Undefined variable '%s'.", cstr(target)));
     }
     ASSERT(sym->is_local);
-    gen_load_local(sym->stack_offset, sym->type, cont);
+    return gen_ssa_load(sym->irref, sym->type);
   }
+
+  abort();
+  return (IRRef){0};
 }
 
 // Has to match the order in tokens.inc.
@@ -651,7 +650,7 @@ static Rule* get_rule(TokenKind tok_kind) {
   return &rules[tok_kind];
 }
 
-static void parse_precedence(Precedence precedence, ContFixup* cont) {
+static IRRef parse_precedence(Precedence precedence) {
   advance();
   PrefixFn prefix_rule = get_rule(previous_kind)->prefix;
   if (!prefix_rule) {
@@ -659,49 +658,51 @@ static void parse_precedence(Precedence precedence, ContFixup* cont) {
   }
 
   bool can_assign = precedence <= PREC_ASSIGNMENT;
-  prefix_rule(can_assign, cont);
+  IRRef left = prefix_rule(can_assign);
 
   while (precedence <= get_rule(cur_kind)->prec_for_infix) {
     advance();
     InfixFn infix_rule = get_rule(previous_kind)->infix;
-    infix_rule(can_assign, cont);
+    left = infix_rule(left, can_assign);
   }
 
   if (can_assign && match_assignment()) {
     error("Invalid assignment target.");
   }
+
+  return left;
 }
 
-static void parse_expression(ContFixup* cont) {
-  parse_precedence(PREC_LOWEST, cont);
+static IRRef parse_expression(void) {
+  return parse_precedence(PREC_LOWEST);
 }
 
 static void if_statement(void) {
-  ContFixup cond = gen_make_label("if_cond");
-
-  parse_expression(&cond);
+  //ContFixup cond = gen_make_label("if_cond");
+  IRRef cond = parse_expression();
+  (void)cond;
 
   consume(TOK_COLON, "Expect ':' to start if.");
   consume(TOK_NEWLINE, "Expect newline after ':' to start if.");
   consume(TOK_INDENT, "Expect indent to start block after if.");
 
-  ContFixup then = gen_make_label("if_then");
-  ContFixup els = gen_make_label("if_else");
-  ContFixup after = gen_make_label("if_after");
+  //ContFixup then = gen_make_label("if_then");
+  //ContFixup els = gen_make_label("if_else");
+  //ContFixup after = gen_make_label("if_after");
 
-  gen_if(&cond, &then, &els);
+  //gen_if(&cond, &then, &els);
 
-  gen_resolve_label(&then);
+  //gen_resolve_label(&then);
 
-  parse_block(&after);
+  parse_block();
 
   // while (match(TOK_ELIF)) {}
 
-  gen_resolve_label(&els);
+  //gen_resolve_label(&els);
 
   // if (match(TOK_ELSE)) { }
 
-  gen_resolve_label(&after);
+  //gen_resolve_label(&after);
 }
 
 static bool parse_func_body_only_statement(void) {
@@ -712,25 +713,27 @@ static bool parse_func_body_only_statement(void) {
 
   if (match(TOK_RETURN)) {
     ASSERT(cur_func.return_type.i);
-    ContFixup result = gen_make_label("return_result");
+    //ContFixup result = gen_make_label("return_result");
+    IRRef val = {0};
     if (cur_func.return_type.i != TYPE_VOID) {
-      parse_expression(&result);
+      val = parse_expression();
     }
-    gen_func_return(&result, cur_func.return_type);
+    gen_ssa_return(val, cur_func.return_type);
+    //gen_func_return(&result, cur_func.return_type);
     return true;
   }
 
   return false;
 }
 
-static void parse_block(ContFixup* cont) {
+static void parse_block(void) {
   while (!check(TOK_DEDENT) && !check(TOK_EOF)) {
     parse_statement(/*toplevel=*/false);
     while (match(TOK_NEWLINE)) {
     }
   }
   consume(TOK_DEDENT, "Expect end of block.");
-  gen_jump(cont);
+  //gen_jump(cont);
 }
 
 // TODO: decorators
@@ -746,9 +749,9 @@ static void parse_def(void) {
   consume(TOK_INDENT, "Expect indented function body.");
 
   enter_function(return_type, name, params);
-  ContFixup done = gen_make_label("end_of_function");
-  parse_block(&done);
-  leave_function(&done);
+  //ContFixup done = gen_make_label("end_of_function");
+  parse_block();
+  leave_function();
 }
 
 static void parse_variable_statement(Type type) {
@@ -766,9 +769,9 @@ static void parse_variable_statement(Type type) {
   } else {
     have_init = match(TOK_EQ);
     if (have_init) {
-      parse_expression(NULL);
+      IRRef val = parse_expression();
       Sym* new = alloc_local(name, type);
-      gen_store_local(new->stack_offset, type);
+      gen_ssa_store(new->irref, type, val);
     }
   }
 

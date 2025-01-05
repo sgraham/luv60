@@ -110,7 +110,6 @@ void parse(const char* filename, ReadFileResult file);
 
 
 // gen.c
-
 typedef struct ContFixup {
   unsigned char* func_base;
   int32_t offset_of_list_head;
@@ -119,6 +118,7 @@ typedef struct ContFixup {
 #endif
 } ContFixup;
 
+#if 0
 void gen_init(void);
 void gen_finish_and_dump(void);
 int gen_finish_and_run(void);
@@ -145,3 +145,27 @@ void gen_resolve_label(ContFixup* cont);
 
 ContFixup snip_make_cont_fixup(unsigned char* function_base);
 void snip_patch_cont_fixup(ContFixup* fixup, unsigned char* target);
+#endif
+
+typedef struct IRFunc {
+  uint32_t i;
+} IRFunc;
+
+typedef struct IRRef {
+  uint32_t i;
+} IRRef;
+
+void gen_ssa_init(const char* filename);
+IRFunc gen_ssa_start_function(Str name,
+                              Type return_type,
+                              int num_params,
+                              Type* param_types,
+                              Str* param_names);
+IRRef gen_ssa_const(uint64_t val, Type type);
+void gen_ssa_return(IRRef val, Type type);
+void gen_ssa_end_function(void);
+IRRef gen_ssa_alloc_local(Type type);
+void gen_ssa_store(IRRef into, Type type, IRRef val);
+IRRef gen_ssa_load(IRRef from, Type type);
+IRRef gen_ssa_add(IRRef a, IRRef b);
+void gen_ssa_finish(void);
