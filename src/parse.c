@@ -62,6 +62,7 @@ typedef struct FuncParams {
   Type types[P_MAX_FUNC_PARAMS];
   Str names[P_MAX_FUNC_PARAMS];
   int num_params;
+  IRRef refs[P_MAX_FUNC_PARAMS];
 } FuncParams;
 
 typedef enum SymKind {
@@ -91,6 +92,7 @@ typedef enum SymScopeDecl {
   SSD_ASSUMED_GLOBAL,
   SSD_DECLARED_GLOBAL,
   SSD_DECLARED_LOCAL,
+  SSD_DECLARED_PARAMETER,
   SSD_DECLARED_NONLOCAL,
 } SymScopeDecl;
 
@@ -105,7 +107,6 @@ typedef struct Sym {
 typedef struct FuncData {
   Str name;
   Type return_type;
-  IRFunc ir_func;
 } FuncData;
 
 #define MAX_VARS_IN_SCOPE 256
@@ -155,6 +156,31 @@ static char* strf(const char* fmt, ...) {
   return str;
 }
 
+static Sym* sym_new(SymKind kind, Str name, Type type) {
+  ASSERT(parser.cur_var_scope);
+  ASSERT(parser.cur_var_scope->num_syms < COUNTOFI(parser.cur_var_scope->syms));
+  Sym* new = &parser.cur_var_scope->syms[parser.cur_var_scope->num_syms++];
+  new->kind = kind;
+  new->type = type;
+  new->name = name;
+  return new;
+}
+
+static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
+  Sym* new = sym_new(kind, name, type);
+  new->irref = gen_ssa_make_temp(type);
+  new->scope_decl = SSD_DECLARED_LOCAL;
+  gen_ssa_alloc_local(new->irref);
+  return new;
+}
+
+static Sym* make_param(Str name, Type type) {
+  Sym* new = sym_new(SYM_VAR, name, type);
+  new->irref = gen_ssa_make_temp(type);
+  new->scope_decl = SSD_DECLARED_PARAMETER;
+  return new;
+}
+
 static void error(const char* message) {
   base_writef_stderr("%s:<offset %d>: error: %s\n", parser.cur_filename, parser.cur_offset,
                      message);
@@ -178,14 +204,16 @@ static void leave_scope(void) {
   }
 }
 
-static void enter_function(Type return_type, Str name, FuncParams params) {
+static IRRef enter_function(Type return_type, Str name, FuncParams params) {
   parser.cur_func = &parser.funcdatas[parser.num_funcdatas++];
   parser.cur_func->name = name;
   parser.cur_func->return_type = return_type;
-  parser.cur_func->ir_func =
-      gen_ssa_start_function(name, return_type, params.num_params, params.types, params.names);
-
   enter_scope(/*is_module=*/false, /*is_function=*/true);
+
+  for (int i = 0; i < params.num_params; ++i) {
+    params.refs[i] = make_param(params.names[i], params.types[i])->irref;
+  }
+  return gen_ssa_start_function(name, return_type, params.num_params, params.refs);
 }
 
 static void leave_function(void) {
@@ -347,35 +375,14 @@ static FuncParams parse_func_params(void) {
   return ret;
 }
 
+static void skip_newlines(void) {
+  while (match(TOK_NEWLINE)) {
+  }
+}
+
 static void parse_statement(bool toplevel);
 static IRRef parse_expression(void);
 static void parse_block(void);
-
-static Sym* alloc_local(Str name, Type type) {
-  ASSERT(parser.cur_func && parser.cur_var_scope);
-  ASSERT(parser.cur_var_scope->num_syms < COUNTOFI(parser.cur_var_scope->syms));
-  Sym* new = &parser.cur_var_scope->syms[parser.cur_var_scope->num_syms++];
-  new->kind = SYM_VAR;
-  new->name = name;
-  new->type = type;
-  new->scope_decl = SSD_DECLARED_LOCAL;
-  new->irref = gen_ssa_alloc_local(type);
-  return new;
-}
-
-static Sym* get_local(Str name) {
-  ASSERT(parser.cur_var_scope);
-  if (parser.cur_var_scope->num_syms == 0) {
-    return NULL;
-  }
-  for (int i = parser.cur_var_scope->num_syms; i >= 0; --i) {
-    Sym* sym = &parser.cur_var_scope->syms[i];
-    if (sym->name.i == name.i) {
-      return sym;
-    }
-  }
-  return NULL;
-}
 
 // ~strtoull with slight differences:
 // - handles 0b and 0o but 0 prefix doesn't mean octal
@@ -524,12 +531,35 @@ static IRRef parse_binary(IRRef left, bool can_assign) {
   (void)rhs;
 
   // TODO: gen binary lhs op rhs
-  CHECK(op == TOK_PLUS);
-  return gen_ssa_add(left, rhs);
+  if (op == TOK_PLUS) {
+    return gen_ssa_add(left, rhs);
+  } else if (op == TOK_BANGEQ) {
+    return gen_ssa_neq(left, rhs);
+  } else {
+    ASSERT(false && "todo");
+  }
 }
 
 static IRRef parse_bool_literal(bool can_assign) { ASSERT(false && "not implemented"); }
-static IRRef parse_call(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); }
+
+static IRRef parse_call(IRRef left, bool can_assign) {
+  if (can_assign && match_assignment()) {
+    CHECK(false && "todo; returning address i think");
+  }
+  IRRef args[P_MAX_FUNC_PARAMS];
+  int num_args = 0;
+  if (!check(TOK_RPAREN)) {
+    for (;;) {
+      args[num_args++] = parse_precedence(PREC_OR);
+      if (!match(TOK_COMMA)) {
+        break;
+      }
+    }
+  }
+  consume(TOK_RPAREN, "Expect ')' after arguments.");
+  return gen_ssa_call((Type){TYPE_I32} /*XXX TODO !*/, left, num_args, args);
+}
+
 static IRRef parse_compound_literal(bool can_assign) { ASSERT(false && "not implemented"); }
 static IRRef parse_dict_literal(bool can_assign) { ASSERT(false && "not implemented"); }
 static IRRef parse_dot(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); }
@@ -555,6 +585,78 @@ static IRRef parse_subscript(IRRef left, bool can_assign) { ASSERT(false && "not
 static IRRef parse_typeid(bool can_assign) { ASSERT(false && "not implemented"); }
 static IRRef parse_unary(bool can_assign) { ASSERT(false && "not implemented"); }
 
+typedef enum ScopeResult {
+  SCOPE_RESULT_GLOBAL,
+  SCOPE_RESULT_UNDEFINED,
+  SCOPE_RESULT_LOCAL,
+  SCOPE_RESULT_PARAMETER,
+  SCOPE_RESULT_UPVALUE,
+  NUM_SCOPE_RESULTS,
+} ScopeResult;
+
+static int find_in_scope(VarScope* scope, Str name) {
+  for (int i = 0; i < scope->num_syms; ++i) {
+    if (name.i == scope->syms[i].name.i) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static ScopeResult scope_lookup(Str name, Sym** sym, SymScopeDecl* scope_decl) {
+  *scope_decl = SSD_NONE;
+  *sym = NULL;
+  bool crossed_function = false;
+  VarScope* cur_scope = parser.cur_var_scope;
+  for (;;) {
+    int lookup = find_in_scope(cur_scope, name);
+    if (lookup >= 0) {
+      SymScopeDecl sd = cur_scope->syms[lookup].scope_decl;
+      if (sd == SSD_ASSUMED_GLOBAL) {
+        *scope_decl = SSD_ASSUMED_GLOBAL;
+        return SCOPE_RESULT_UNDEFINED;
+      } else if (sd == SSD_DECLARED_NONLOCAL) {
+        *scope_decl = sd;
+        abort();
+        return SCOPE_RESULT_UPVALUE;
+      } else if (sd == SSD_DECLARED_GLOBAL) {
+        *scope_decl = sd;
+        *sym = &cur_scope->syms[lookup];
+        return SCOPE_RESULT_GLOBAL;
+      } else if (sd == SSD_DECLARED_PARAMETER) {
+        *scope_decl = sd;
+        *sym = &cur_scope->syms[lookup];
+        if (crossed_function) {
+          return SCOPE_RESULT_UPVALUE;
+        }
+        return SCOPE_RESULT_PARAMETER;
+      } else {
+        *sym = &cur_scope->syms[lookup];
+        if (cur_scope->is_module) {
+          return SCOPE_RESULT_GLOBAL;
+        } else if (crossed_function)  {
+          return SCOPE_RESULT_UPVALUE;
+        } else {
+          return SCOPE_RESULT_LOCAL;
+        }
+      }
+    }
+
+    if (cur_scope->is_function) {
+      crossed_function = true;
+    }
+
+    if (cur_scope == &parser.varscopes[0]) {
+      break;
+    }
+    ASSERT(cur_scope >= &parser.varscopes[0] &&
+           cur_scope <= &parser.varscopes[parser.num_varscopes - 1]);
+    cur_scope--;  // parent
+  }
+
+  return SCOPE_RESULT_UNDEFINED;
+}
+
 static IRRef parse_variable(bool can_assign) {
   Str target = str_from_previous();
   if (can_assign && match_assignment()) {
@@ -566,12 +668,19 @@ static IRRef parse_variable(bool can_assign) {
     //gen_assignment(target);
 #endif
   } else {
-    Sym* sym = get_local(target);
-    if (!sym) {
-      error(strf("Undefined variable '%s'.", cstr(target)));
+    SymScopeDecl scope_decl;
+    Sym* sym;
+    ScopeResult scope_result = scope_lookup(target, &sym, &scope_decl);
+    if (scope_result == SCOPE_RESULT_LOCAL) {
+      return gen_ssa_load(sym->irref, sym->type);
+    } else if (scope_result == SCOPE_RESULT_PARAMETER) {
+      // TODO: & of parameter won't work, maybe just disallow without in-source copy?
+      return sym->irref;
+    } else if (scope_result == SCOPE_RESULT_GLOBAL) {
+      return sym->irref;
+    } else {
+      error(strf("Undefined reference to '%s'.\n", cstr(target)));
     }
-    ASSERT(sym->scope_decl == SSD_DECLARED_LOCAL);
-    return gen_ssa_load(sym->irref, sym->type);
   }
 
   abort();
@@ -732,31 +841,30 @@ static IRRef parse_expression(void) {
 }
 
 static void if_statement(void) {
-  //ContFixup cond = gen_make_label("if_cond");
   IRRef cond = parse_expression();
-  (void)cond;
 
   consume(TOK_COLON, "Expect ':' to start if.");
   consume(TOK_NEWLINE, "Expect newline after ':' to start if.");
   consume(TOK_INDENT, "Expect indent to start block after if.");
 
-  //ContFixup then = gen_make_label("if_then");
-  //ContFixup els = gen_make_label("if_else");
-  //ContFixup after = gen_make_label("if_after");
+  IRBlock then = gen_ssa_make_block_name();
+  IRBlock els = gen_ssa_make_block_name();
+  IRBlock after = gen_ssa_make_block_name();
 
-  //gen_if(&cond, &then, &els);
+  gen_ssa_jump_cond(cond, then, els);
 
   //gen_resolve_label(&then);
 
+  gen_ssa_start_block(then);
   parse_block();
 
   // while (match(TOK_ELIF)) {}
 
-  //gen_resolve_label(&els);
+  gen_ssa_start_block(els);
 
   // if (match(TOK_ELSE)) { }
 
-  //gen_resolve_label(&after);
+  gen_ssa_start_block(after);
 }
 
 static bool parse_func_body_only_statement(void) {
@@ -781,26 +889,25 @@ static bool parse_func_body_only_statement(void) {
 static void parse_block(void) {
   while (!check(TOK_DEDENT) && !check(TOK_EOF)) {
     parse_statement(/*toplevel=*/false);
-    while (match(TOK_NEWLINE)) {
-    }
+    skip_newlines();
   }
   consume(TOK_DEDENT, "Expect end of block.");
   //gen_jump(cont);
 }
 
 // TODO: decorators
-static void parse_def(void) {
+static void parse_def_statement(void) {
   Type return_type = parse_type();
   Str name = parse_name("Expect function name.");
   consume(TOK_LPAREN, "Expect '(' after function name.");
   FuncParams params = parse_func_params();
   consume(TOK_COLON, "Expect ':' before function body.");
   consume(TOK_NEWLINE, "Expect newline before function body. (TODO: single line)");
-  while (match(TOK_NEWLINE)) {
-  }
+  skip_newlines();
   consume(TOK_INDENT, "Expect indented function body.");
 
-  enter_function(return_type, name, params);
+  Sym* func = sym_new(SYM_FUNC, name, (Type){TYPE_VOID} /* XXX TODO !*/);
+  func->irref = enter_function(return_type, name, params);
   parse_block();
   leave_function();
 }
@@ -821,7 +928,7 @@ static void parse_variable_statement(Type type) {
     have_init = match(TOK_EQ);
     if (have_init) {
       IRRef val = parse_expression();
-      Sym* new = alloc_local(name, type);
+      Sym* new = make_local_and_alloc(SYM_VAR, name, type);
       gen_ssa_store(new->irref, type, val);
     }
   }
@@ -831,7 +938,7 @@ static void parse_variable_statement(Type type) {
 
 static bool parse_anywhere_statement(void) {
   if (match(TOK_DEF)) {
-    parse_def();
+    parse_def_statement();
     return true;
   }
 
@@ -841,23 +948,21 @@ static bool parse_anywhere_statement(void) {
     return true;
   }
 
-  abort();
- // parse_expression();
+  //parse_expression();
   consume(TOK_NEWLINE, "Expect newline.");
   return true;
 }
 
 static void parse_statement(bool toplevel) {
-  while (match(TOK_NEWLINE)) {
-  }
-
   if (!toplevel) {
     if (parse_func_body_only_statement()) {
+      skip_newlines();
       return;
     }
   }
 
   parse_anywhere_statement();
+  skip_newlines();
 }
 
 static void init_types(void) {
@@ -894,5 +999,6 @@ void parse(const char* filename, ReadFileResult file) {
 
   while (parser.cur_kind != TOK_EOF) {
     parse_statement(/*toplevel=*/true);
+    skip_newlines();
   }
 }

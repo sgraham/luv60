@@ -13,11 +13,11 @@ void str_intern_pool_init(void) {
   str_map = dict_new(128, sizeof(Str), _Alignof(Str));
 }
 
-static Str str_alloc_uninitialized_pool_bytes(uint32_t bytes) {
-  uint32_t end = str_insert_location + bytes;
-  ASSERT(end < STR_POOL_SIZE);
+static uint32_t str_alloc_uninitialized_pool_bytes(uint32_t bytes) {
+  uint32_t start = str_insert_location;
+  ASSERT(str_insert_location + bytes < STR_POOL_SIZE);
   str_insert_location += bytes;
-  return (Str){end};
+  return start;
 }
 
 static size_t str_hash_func(void* ss) {
@@ -44,10 +44,11 @@ Str str_intern_len(const char* ptr, uint32_t len) {
   // inserted into the insert location (with the length header). If we do need
   // to insert, it's already there. If we don't, subtract the allocated amount.
   uint32_t allocate_bytes = len + sizeof(uint32_t) + 1;
-  Str str = str_alloc_uninitialized_pool_bytes(allocate_bytes);
-  memcpy(&str_intern_pool[str.i - sizeof(uint32_t)], &len, sizeof(len));
-  memcpy(&str_intern_pool[str.i], ptr, len);
-  str_intern_pool[str.i + len] = 0;
+  uint32_t start = str_alloc_uninitialized_pool_bytes(allocate_bytes);
+  memcpy(&str_intern_pool[start], &len, sizeof(len));
+  memcpy(&str_intern_pool[start + sizeof(uint32_t)], ptr, len);
+  str_intern_pool[start + sizeof(uint32_t) + len] = 0;
+  Str str = {start + sizeof(uint32_t)};
 
   DictInsert res =
       dict_deferred_insert(&str_map, &str, str_hash_func, str_eq_func, sizeof(Str), _Alignof(Str));

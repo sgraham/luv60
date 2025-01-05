@@ -147,25 +147,33 @@ ContFixup snip_make_cont_fixup(unsigned char* function_base);
 void snip_patch_cont_fixup(ContFixup* fixup, unsigned char* target);
 #endif
 
-typedef struct IRFunc {
-  uint32_t i;
-} IRFunc;
-
 typedef struct IRRef {
   uint32_t i;
 } IRRef;
 
+typedef struct IRBlock {
+  uint32_t i;
+} IRBlock;
+
 void gen_ssa_init(const char* filename);
-IRFunc gen_ssa_start_function(Str name,
-                              Type return_type,
-                              int num_params,
-                              Type* param_types,
-                              Str* param_names);
-IRRef gen_ssa_const(uint64_t val, Type type);
-void gen_ssa_return(IRRef val, Type type);
+
+IRRef gen_ssa_start_function(Str name, Type return_type, int num_params, IRRef* params);
 void gen_ssa_end_function(void);
-IRRef gen_ssa_alloc_local(Type type);
+
+IRRef gen_ssa_make_temp(Type type);
+IRBlock gen_ssa_make_block_name(void);
+void gen_ssa_start_block(IRBlock block);
+void gen_ssa_alloc_local(IRRef ref);
+
+IRRef gen_ssa_const(uint64_t val, Type type);
 void gen_ssa_store(IRRef into, Type type, IRRef val);
 IRRef gen_ssa_load(IRRef from, Type type);
+
+IRRef gen_ssa_call(Type return_type, IRRef func, int num_args, IRRef* args);
+void gen_ssa_jump_cond(IRRef cond, IRBlock iftrue, IRBlock iffalse);
+void gen_ssa_return(IRRef val, Type type);
+
 IRRef gen_ssa_add(IRRef a, IRRef b);
+IRRef gen_ssa_neq(IRRef a, IRRef b);
+
 void gen_ssa_finish(void);
