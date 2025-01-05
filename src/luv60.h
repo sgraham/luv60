@@ -174,6 +174,7 @@ void gen_ssa_jump_cond(IRRef cond, IRBlock iftrue, IRBlock iffalse);
 void gen_ssa_return(IRRef val, Type type);
 
 IRRef gen_ssa_add(IRRef a, IRRef b);
+IRRef gen_ssa_lt(IRRef a, IRRef b);
 IRRef gen_ssa_neq(IRRef a, IRRef b);
 
 void gen_ssa_finish(void);

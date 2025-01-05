@@ -152,6 +152,12 @@ IRRef gen_ssa_add(IRRef a, IRRef b) {
   return ret;
 }
 
+IRRef gen_ssa_lt(IRRef a, IRRef b) {
+  IRRef ret = gen_ssa_make_temp((Type){TYPE_BOOL});
+  fprintf(outf, "  %s =w cltw %s, %s\n", irref_as_str(ret), irref_as_str(a), irref_as_str(b));
+  return ret;
+}
+
 IRRef gen_ssa_neq(IRRef a, IRRef b) {
   IRRef ret = gen_ssa_make_temp((Type){TYPE_BOOL});
   fprintf(outf, "  %s =w cnew %s, %s\n", irref_as_str(ret), irref_as_str(a), irref_as_str(b));

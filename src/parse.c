@@ -535,6 +535,8 @@ static IRRef parse_binary(IRRef left, bool can_assign) {
     return gen_ssa_add(left, rhs);
   } else if (op == TOK_BANGEQ) {
     return gen_ssa_neq(left, rhs);
+  } else if (op == TOK_LT) {
+    return gen_ssa_lt(left, rhs);
   } else {
     ASSERT(false && "todo");
   }

@@ -1,0 +1,10 @@
+# DISABLED
+# TXT: c
+def int main():
+    int x = 5
+    if x < 1:
+        print "a"
+    elif x < 3:
+        print "b"
+    else:
+        print "c"
