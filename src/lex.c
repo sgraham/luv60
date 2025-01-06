@@ -20,7 +20,7 @@
 //    what will be tokens.
 // 2. The second step actually determines the type of the token at all
 //    the interesting locations and or's in the classification, which
-//    turns the indexes into |Token|s.
+//    turns the indexes into TokenKinds and records offsets.
 typedef struct Simd64 {
   __m256i chunks[2];
 } Simd64;

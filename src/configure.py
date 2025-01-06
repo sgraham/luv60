@@ -24,6 +24,7 @@ LUVC_FILELIST = [
 UNITTEST_FILELIST = [
     "test_main.c",
     "lex_test.c",
+    "str_test.c",
 ]
 
 CLANG_CL = "C:\\Program Files\\LLVM\\bin\\clang-cl.exe"

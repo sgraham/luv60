@@ -13,6 +13,11 @@ void str_intern_pool_init(void) {
   str_map = dict_new(128, sizeof(Str), _Alignof(Str));
 }
 
+void str_intern_pool_destroy_for_tests(void) {
+  base_large_alloc_free(str_intern_pool);
+  dict_destroy(&str_map);
+}
+
 static uint32_t str_alloc_uninitialized_pool_bytes(uint32_t bytes) {
   uint32_t start = str_insert_location;
   ASSERT(str_insert_location + bytes < STR_POOL_SIZE);
@@ -60,4 +65,8 @@ Str str_intern_len(const char* ptr, uint32_t len) {
     str_insert_location -= allocate_bytes; 
     return *dictstr;
   }
+}
+
+Str str_intern(const char* ptr) {
+  return str_intern_len(ptr, strlen(ptr));
 }
