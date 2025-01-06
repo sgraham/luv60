@@ -38,13 +38,19 @@ CONFIGS = {
     "w": {
         "d": {
             "COMPILE": CLANG_CL
-            + " /showIncludes -std:c11 /nologo /TC /FS /Od /Zi /D_DEBUG /DBUILD_DEBUG=1 /D_CRT_SECURE_NO_DEPRECATE $extra /W4 /WX -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo:$out /Fd:$out.pdb",
+            + " /showIncludes -std:c11 /nologo /TC /FS /Od /Zi /D_DEBUG /DBUILD_DEBUG=1 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo:$out /Fd:$out.pdb",
             "LINK": LLD_LINK
             + " /nologo /dynamicbase:no /DEBUG $in /out:$out /pdb:$out.pdb",
         },
         "r": {
             "COMPILE": CLANG_CL
-            + " /showIncludes -std:c11 /nologo -flto -fuse-ld=lld /FS /O2 /Zi /DNDEBUG /DBUILD_DEBUG=0 /D_CRT_SECURE_NO_DEPRECATE $extra /W4 /WX -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb",
+            + " /showIncludes -std:c11 /nologo -flto -fuse-ld=lld /FS /O2 /Zi /DNDEBUG /DBUILD_DEBUG=0 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb",
+            "LINK": LLD_LINK
+            + " /nologo /dynamicbase:no /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb",
+        },
+        "p": {
+            "COMPILE": CLANG_CL
+            + " /showIncludes /nologo -flto -fuse-ld=lld /FS /O2 /Zi /DTRACY_ENABLE=1 /DNDEBUG /DBUILD_DEBUG=0 /D_CRT_SECURE_NO_DEPRECATE /I$src/../third_party/tracy/public/tracy /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb",
             "LINK": LLD_LINK
             + " /nologo /dynamicbase:no /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb",
         },
@@ -163,6 +169,13 @@ def generate(platform, config, settings, cmdlines, tests):
             extra_deps = " | snippets.c" if src == "gen.c" else extra_deps
             extra_deps = " | categorizer.c" if src == "lex.c" else extra_deps
             f.write("build %s: cc $src/%s%s\n" % (obj, src, extra_deps))
+
+        if config == "p":
+            tracy_cpp = "../third_party/tracy/public/TracyClient.cpp"
+            obj = getobj(tracy_cpp)
+            common_objs.append(obj)
+            f.write("build %s: cc $src/%s\n" % (obj, tracy_cpp))
+            f.write("  extra=-Wno-missing-field-initializers -Wno-unused-variable -Wno-cast-function-type-mismatch -Wno-microsoft-cast -Wno-unused-function -Wno-unused-but-set-variable\n")
 
         luvc_objs = []
         for src in LUVC_FILELIST:

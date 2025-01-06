@@ -1,6 +1,14 @@
 #include "luv60.h"
 
+#ifdef TRACY_ENABLE
+#include "TracyC.h"
+#else
+#define TracyCZoneN(...)
+#define TracyCZoneEnd(...)
+#endif
+
 #define DO_PRINTS 0
+
 
 // This is based on https://arxiv.org/pdf/1902.08318.pdf which is the
 // paper about simdjson.org.
@@ -310,8 +318,12 @@ void lex_next_block(uint8_t token_kinds[128], uint32_t token_offsets[128]) {
   // this, we have to use some branches/loops to be able to exclude #
   // from within quotes, and quotes in comments.
 
+  TracyCZoneN(simd_load, "simd_load", 1);
   Simd64 data = {_mm256_loadu_si256((const __m256i*)&buf_[offset_]),
                  _mm256_loadu_si256((const __m256i*)&buf_[offset_ + 32])};
+  TracyCZoneEnd(simd_load);
+
+  TracyCZoneN(phase1, "phase1", 1);
 #if DO_PRINTS
   print_buf_ptr = (char*)&buf_[offset_];
 #endif
@@ -359,9 +371,13 @@ void lex_next_block(uint8_t token_kinds[128], uint32_t token_offsets[128]) {
 
   uint64_t indexes = S & ~(quotes & ~quotes_mask);
 
+  TracyCZoneEnd(phase1);
+
 #if DO_PRINTS
   print_with_coloured_bits("final", indexes, "");
 #endif
+
+  TracyCZoneN(categorize, "categorize", 1);
 
   uint8_t* tk = token_kinds;
   uint32_t* to = token_offsets;
@@ -441,6 +457,8 @@ void lex_next_block(uint8_t token_kinds[128], uint32_t token_offsets[128]) {
 
   state_start_rel_offset_ = start_rel_offset - 64;
   offset_ += 64;
+
+  TracyCZoneEnd(categorize);
 }
 
 StrView lex_get_strview(uint32_t from, uint32_t to) {
