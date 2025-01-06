@@ -93,9 +93,9 @@ static FORCEINLINE uint64_t prefix_xor(const uint64_t bitmask) {
 // bit 1:    2     0    <SPACE>
 // bit 2:    5     F    '_'
 // bit 3:    3   0-9    '0'..'9'
-// bit 4:  4,6   1-F    'A'..'O', 'a'..'o'
+// bit 4:  4,6   1-F    'A'..'O', 'a'..'o',
 // bit 5:  5,7   0-A    'P'..'Z', 'p'..'z'
-// bit 6:  not used yet
+// bit 6:    4     0    '@'
 // bit 7:  not used yet
 //
 // Expanded out into a full table to get the LUTs for the vpshufb instruction,
@@ -104,17 +104,17 @@ static FORCEINLINE uint64_t prefix_xor(const uint64_t bitmask) {
 //     low    |
 //     nibble |  0   1   2   3   4   5   6   7   8   9   a   b   c   d   e   f
 // high       |
-// nibble     | 42  56  56  56  56  56  56  56  56  56  48  16  16  16  16  20
+// nibble     | 46  56  56  56  56  56  56  56  56  56  48  16  16  16  16  20
 // ---------------------------------------------------------------------------
 //   0      0 |
 //   1      0 |
 //   2      2 |  2
 //   3      8 |  8   8   8   8   8   8   8   8   8   8
-//   4     16 |     16  16  16  16  16  16  16  16  16  16  16  16  16  16  16
+//   4     20 |  4  16  16  16  16  16  16  16  16  16  16  16  16  16  16  16
 //   5     36 | 32  32  32  32  32  32  32  32  32  32  32                   4
 //   6     16 |     16  16  16  16  16  16  16  16  16  16  16  16  16  16  16
-//   7     32 | 32  32  32  32  32  32  32  32  32  32  32
-//   8      0 |
+//   7     32 |     32  32  32  32  32  32  32  32  32  32
+//   8      0 |   
 //   9      0 |
 //   a      0 |
 //   b      0 |
@@ -125,11 +125,11 @@ static FORCEINLINE uint64_t prefix_xor(const uint64_t bitmask) {
 
 static FORCEINLINE Classes classify(const Simd64* __restrict in) {
   const __m256i low_lut =
-      _mm256_setr_epi8(42, 56, 56, 56, 56, 56, 56, 56, 56, 56, 48, 16, 16, 16, 16, 20,  //
-                       42, 56, 56, 56, 56, 56, 56, 56, 56, 56, 48, 16, 16, 16, 16, 20   //
+      _mm256_setr_epi8(46, 56, 56, 56, 56, 56, 56, 56, 56, 56, 48, 16, 16, 16, 16, 20,  //
+                       46, 56, 56, 56, 56, 56, 56, 56, 56, 56, 48, 16, 16, 16, 16, 20   //
       );
-  const __m256i high_lut = _mm256_setr_epi8(0, 0, 2, 8, 16, 36, 16, 32, 0, 0, 0, 0, 0, 0, 0, 0,  //
-                                            0, 0, 2, 8, 16, 36, 16, 32, 0, 0, 0, 0, 0, 0, 0, 0   //
+  const __m256i high_lut = _mm256_setr_epi8(0, 0, 2, 8, 20, 36, 16, 32, 0, 0, 0, 0, 0, 0, 0, 0,  //
+                                            0, 0, 2, 8, 20, 36, 16, 32, 0, 0, 0, 0, 0, 0, 0, 0   //
   );
 
   const Simd64 low_mask = {_mm256_shuffle_epi8(low_lut, in->chunks[0]),
@@ -288,6 +288,7 @@ static size_t buf_size_;
 static int64_t state_start_rel_offset_;
 static int indents_[256];
 static int num_indents_ = 1;
+static int continuation_paren_level_;
 
 void lex_start(const uint8_t* buf, size_t byte_count_rounded_up) {
   state_in_quoted_ = 0;
@@ -298,6 +299,7 @@ void lex_start(const uint8_t* buf, size_t byte_count_rounded_up) {
   buf_size_ = byte_count_rounded_up;
   state_start_rel_offset_ = 0;
   num_indents_ = 1;
+  continuation_paren_level_ = 0;
 }
 
 void lex_next_block(uint8_t token_kinds[128], uint32_t token_offsets[128]) {
@@ -404,26 +406,32 @@ void lex_next_block(uint8_t token_kinds[128], uint32_t token_offsets[128]) {
     *to++ = start_abs_offset; \
   } while (0)
 
-#define NEWLINE_INDENT_ADJUST_AND_BREAK(n)                       \
-  if (indents_[num_indents_ - 1] < n) {                          \
-    indents_[num_indents_++] = n;                                \
-    EMIT(TOK_NEWLINE);                                           \
-    token = TOK_INDENT;                                          \
-    break;                                                       \
-  } else if (indents_[num_indents_ - 1] > n) {                   \
-    EMIT(TOK_NEWLINE);                                           \
-    for (;;) {                                                   \
-      if (num_indents_ > 1 && indents_[num_indents_ - 2] == n) { \
-        token = TOK_DEDENT;                                      \
-        --num_indents_;                                          \
-        break;                                                   \
-      }                                                          \
-      EMIT(TOK_DEDENT);                                          \
-      --num_indents_;                                            \
-    }                                                            \
-    break;                                                       \
-  }                                                              \
-  token = TOK_NEWLINE;                                           \
+#define NEWLINE_INDENT_ADJUST_AND_BREAK(n)                         \
+  if (continuation_paren_level_) {                                 \
+    token = TOK_NL;                                                \
+  } else {                                                         \
+    if (indents_[num_indents_ - 1] < n) {                          \
+      indents_[num_indents_++] = n;                                \
+      EMIT(TOK_NEWLINE);                                           \
+      ++start_abs_offset;                                          \
+      token = TOK_INDENT;                                          \
+      break;                                                       \
+    } else if (indents_[num_indents_ - 1] > n) {                   \
+      EMIT(TOK_NEWLINE);                                           \
+      ++start_abs_offset;                                          \
+      for (;;) {                                                   \
+        if (num_indents_ > 1 && indents_[num_indents_ - 2] == n) { \
+          token = TOK_DEDENT;                                      \
+          --num_indents_;                                          \
+          break;                                                   \
+        }                                                          \
+        EMIT(TOK_DEDENT);                                          \
+        --num_indents_;                                            \
+      }                                                            \
+      break;                                                       \
+    }                                                              \
+    token = TOK_NEWLINE;                                           \
+  }                                                                \
   break;
 
 #include "categorizer.c"

@@ -81,18 +81,12 @@ decorator = '@' [a-z_][a-zA-Z0-9_]*;
   "u8"        { token = TOK_U8; break; }
   "uint"      { token = TOK_UINT; break; }
   "with"      { token = TOK_WITH; break; }
-  "{"         { token = TOK_LBRACE; break; }
-  "}"         { token = TOK_RBRACE; break; }
-  "("         {
-                token = TOK_LPAREN;
-                break;
-              }
-  ")"         {
-                token = TOK_RPAREN;
-                break;
-              }
-  "["         { token = TOK_LSQUARE; break; }
-  "]"         { token = TOK_RSQUARE; break; }
+  "{"         { token = TOK_LBRACE; ++continuation_paren_level_; break; }
+  "}"         { token = TOK_RBRACE; --continuation_paren_level_; break; }
+  "("         { token = TOK_LPAREN; ++continuation_paren_level_; break; }
+  ")"         { token = TOK_RPAREN; --continuation_paren_level_; break; }
+  "["         { token = TOK_LSQUARE; ++continuation_paren_level_; break; }
+  "]"         { token = TOK_RSQUARE; --continuation_paren_level_; break; }
   "=="        { token = TOK_EQEQ; SKIP(); break; }
   "="         { token = TOK_EQ; break; }
   ":"         { token = TOK_COLON; break; }
@@ -127,7 +121,7 @@ decorator = '@' [a-z_][a-zA-Z0-9_]*;
   // This makes sure the following indent adjusters don't match. The indexing
   // phase will point at the second newline on the next pass even though it
   // looks like it's being consumed here.
-  "\n"[ ]*"\n" { token = TOK_NEWLINE; break; }
+  "\n"[ ]*"\n" { token = continuation_paren_level_ ? TOK_NL : TOK_NEWLINE; break; }
   "\n                                            "    { token = TOK_ERROR; break; }
   "\n                                        "    { NEWLINE_INDENT_ADJUST_AND_BREAK(40); break; }
   "\n                                    "    { NEWLINE_INDENT_ADJUST_AND_BREAK(36); break; }
