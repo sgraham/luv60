@@ -3,6 +3,8 @@
 static FILE* outf;
 static Str main_func_name;
 
+IRRef gen_ssa_none_ref;
+
 typedef enum IRRefKind {
   REF_TEMP,
   REF_FUNC,
@@ -71,6 +73,7 @@ static const char* irblock_as_str(IRBlock block) {
 
 void gen_ssa_init(const char* filename) {
   num_refs = 0;
+  gen_ssa_none_ref = gen_ssa_make_temp((Type){TYPE_NONE});
   num_blocks = 0;
   main_func_name = str_intern_len("main", 4);
   outf = fopen(filename, "wb");
@@ -149,6 +152,12 @@ void gen_ssa_jump_cond(IRRef cond, IRBlock iftrue, IRBlock iffalse) {
 IRRef gen_ssa_add(IRRef a, IRRef b) {
   IRRef ret = gen_ssa_make_temp(refs[a.i].type);  // TODO: type
   fprintf(outf, "  %s =w add %s, %s\n", irref_as_str(ret), irref_as_str(a), irref_as_str(b));
+  return ret;
+}
+
+IRRef gen_ssa_mul(IRRef a, IRRef b) {
+  IRRef ret = gen_ssa_make_temp(refs[a.i].type);  // TODO: type
+  fprintf(outf, "  %s =w mul %s, %s\n", irref_as_str(ret), irref_as_str(a), irref_as_str(b));
   return ret;
 }
 

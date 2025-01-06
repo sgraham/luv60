@@ -39,6 +39,9 @@ def main():
             return 1
         return 0
     elif luvcres.returncode != 0:
+        print(
+            "--- STDOUT:\n%s\n\n--- STDERR:\n%s\n\n" % (luvcres.stdout, luvcres.stderr)
+        )
         return 1
 
     s_name = os.path.join(out_dir, input_name[0] + ".s")

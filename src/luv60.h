@@ -161,6 +161,8 @@ typedef struct IRBlock {
   uint32_t i;
 } IRBlock;
 
+extern IRRef gen_ssa_none_ref;
+
 void gen_ssa_init(const char* filename);
 
 IRRef gen_ssa_start_function(Str name, Type return_type, int num_params, IRRef* params);
@@ -180,6 +182,7 @@ void gen_ssa_jump_cond(IRRef cond, IRBlock iftrue, IRBlock iffalse);
 void gen_ssa_return(IRRef val, Type type);
 
 IRRef gen_ssa_add(IRRef a, IRRef b);
+IRRef gen_ssa_mul(IRRef a, IRRef b);
 IRRef gen_ssa_lt(IRRef a, IRRef b);
 IRRef gen_ssa_neq(IRRef a, IRRef b);
 

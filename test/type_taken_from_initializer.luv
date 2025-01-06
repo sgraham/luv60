@@ -1,0 +1,5 @@
+# RET: 12
+def int main():
+    int x = 2
+    y = 6
+    return x*y

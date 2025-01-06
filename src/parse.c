@@ -188,6 +188,7 @@ static void error(const char* message) {
   lex_get_location_and_line_slow(parser.cur_offset, &loc_line, &loc_column, &line);
   int indent = base_writef_stderr("%s:%d:%d:", parser.cur_filename, loc_line, loc_column);
   base_writef_stderr("%.*s\n", (int)line.size, line.data);
+
   base_writef_stderr("%*s", indent + loc_column - 1, "");
   base_writef_stderr("^ error: %s\n", message);
   base_exit(1);
@@ -541,6 +542,8 @@ static IRRef parse_binary(IRRef left, bool can_assign) {
   // TODO: gen binary lhs op rhs
   if (op == TOK_PLUS) {
     return gen_ssa_add(left, rhs);
+  } else if (op == TOK_STAR) {
+    return gen_ssa_mul(left, rhs);
   } else if (op == TOK_BANGEQ) {
     return gen_ssa_neq(left, rhs);
   } else if (op == TOK_LT) {
@@ -669,18 +672,27 @@ static ScopeResult scope_lookup(Str name, Sym** sym, SymScopeDecl* scope_decl) {
 
 static IRRef parse_variable(bool can_assign) {
   Str target = str_from_previous();
+  SymScopeDecl scope_decl = SSD_NONE;
+  Sym* sym = NULL;
+  ScopeResult scope_result = scope_lookup(target, &sym, &scope_decl);
   if (can_assign && match_assignment()) {
-    abort();
-#if 0
     TokenKind eq = parser.prev_kind;
-    parse_expression(NULL);
-    ASSERT(eq == TOK_EQ);
-    //gen_assignment(target);
-#endif
+    if (scope_result == SCOPE_RESULT_UNDEFINED && scope_decl == SSD_ASSUMED_GLOBAL) {
+      error(strf("Local variable '%s' referenced before assignment.", cstr(target)));
+    } else if (scope_result != SCOPE_RESULT_LOCAL && scope_decl == SSD_NONE) {
+      if (eq == TOK_EQ) {
+        // Variable declaration without a type.
+        IRRef val = parse_expression();
+        // TODO: parse_expression needs to let us figure out type
+        Type type = (Type){TYPE_I32} /* XXX TODO! */;
+        Sym* new = make_local_and_alloc(SYM_VAR, target, type);
+        gen_ssa_store(new->irref, type, val);
+        return gen_ssa_none_ref;
+      } else {
+        error("todo; aug assign");
+      }
+    }
   } else {
-    SymScopeDecl scope_decl;
-    Sym* sym;
-    ScopeResult scope_result = scope_lookup(target, &sym, &scope_decl);
     if (scope_result == SCOPE_RESULT_LOCAL) {
       return gen_ssa_load(sym->irref, sym->type);
     } else if (scope_result == SCOPE_RESULT_PARAMETER) {
@@ -932,20 +944,13 @@ static void parse_variable_statement(Type type) {
   ASSERT(name.i);
 
   bool have_init;
-  if (!type.i) {
-    abort();
-#if 0
-    consume(TOK_EQ, "Expect initializer for variable without type.");
-    parse_expression();
-    have_init = true;
-#endif
-  } else {
-    have_init = match(TOK_EQ);
-    if (have_init) {
-      IRRef val = parse_expression();
-      Sym* new = make_local_and_alloc(SYM_VAR, name, type);
-      gen_ssa_store(new->irref, type, val);
-    }
+  ASSERT(type.i);
+  have_init = match(TOK_EQ);
+  if (have_init) {
+    IRRef val = parse_expression();
+    // TODO: convert val to type
+    Sym* new = make_local_and_alloc(SYM_VAR, name, type);
+    gen_ssa_store(new->irref, type, val);
   }
 
   consume(TOK_NEWLINE, "Expect newline after variable declaration.");
