@@ -8,14 +8,22 @@ ROOT_DIR = os.path.normpath(
     os.path.join(os.path.abspath(os.path.dirname(__file__)), "..")
 )
 
-FILELIST = [
+COMMON_FILELIST = [
     "base_win.c",
     #"gen.c",
     "gen_ssa.c",
     "lex.c",
-    "luvc_main.c",
     "parse.c",
     "str.c",
+]
+
+LUVC_FILELIST = [
+    "luvc_main.c",
+]
+
+UNITTEST_FILELIST = [
+    "test_main.c",
+    "lex_test.c",
 ]
 
 CLANG_CL = "C:\\Program Files\\LLVM\\bin\\clang-cl.exe"
@@ -104,7 +112,6 @@ def generate(platform, config, settings, cmdlines, tests):
             sys.executable, root_dir, luvcexe))
         f.write('  description = TEST $in\n\n')
 
-        objs = []
 
         # snippets.c is included by gen.c (so don't build separately)
         snippets = 'snippets.c'
@@ -114,13 +121,29 @@ def generate(platform, config, settings, cmdlines, tests):
         categorizer = 'categorizer.c'
         f.write('build %s: re2c $src/categorizer.in.c\n' % categorizer)
 
-        for src in FILELIST:
-            obj = os.path.splitext(src)[0] + obj_ext
-            objs.append(obj)
+        def getobj(src):
+            return os.path.splitext(src)[0] + obj_ext
+
+        common_objs = []
+        for src in COMMON_FILELIST:
+            obj = getobj(src)
+            common_objs.append(obj)
             extra_deps = ''
             extra_deps = ' | snippets.c' if src == 'gen.c' else extra_deps
             extra_deps = ' | categorizer.c' if src == 'lex.c' else extra_deps
             f.write('build %s: cc $src/%s%s\n' % (obj, src, extra_deps))
+
+        luvc_objs = []
+        for src in LUVC_FILELIST:
+            obj = getobj(src)
+            luvc_objs.append(obj)
+            f.write('build %s: cc $src/%s\n' % (obj, src))
+
+        unittest_objs = []
+        for src in UNITTEST_FILELIST:
+            obj = getobj(src)
+            unittest_objs.append(obj)
+            f.write('build %s: cc $src/%s\n' % (obj, src))
 
         alltests = []
         for testf, cmds in tests.items():
@@ -132,11 +155,12 @@ def generate(platform, config, settings, cmdlines, tests):
             f.write('  data = %s\n' % str(cmds_to_pass, encoding='utf-8'))
             alltests.append(testf)
 
-        f.write('build %s: link %s\n' % (luvcexe, ' '.join(objs)))
+        f.write('build %s: link %s\n' % (luvcexe, ' '.join(common_objs + luvc_objs)))
+        f.write('build %s: link %s\n' % ("tests"+exe_ext, ' '.join(common_objs + unittest_objs)))
 
         f.write('\nbuild test: phony ' + ' '.join(alltests) + '\n')
 
-        f.write('\ndefault luvc%s\n' % exe_ext)
+        f.write('\ndefault luvc%s tests%s\n' % (exe_ext, exe_ext))
 
         f.write('\nrule gen\n')
         f.write('  command = %s $src/configure.py $in\n' % sys.executable)

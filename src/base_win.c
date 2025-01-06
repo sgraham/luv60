@@ -27,6 +27,10 @@ void base_set_protection_rx(unsigned char* ptr, size_t size) {
   VirtualProtect(ptr, size, PAGE_EXECUTE_READ, &old_protect);
 }
 
+void base_large_alloc_free(void* ptr) {
+  VirtualFree(ptr, 0, MEM_RELEASE);
+}
+
 ReadFileResult base_read_file(const char* filename) {
   SECURITY_ATTRIBUTES sa = {sizeof(sa), 0, 0};
   HANDLE file = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, &sa,
@@ -38,18 +42,18 @@ ReadFileResult base_read_file(const char* filename) {
   GetFileSizeEx(file, &size);
 
   size_t to_alloc = ALIGN_UP(size.QuadPart + 64, PAGE_SIZE);
-  unsigned char* read_buf = VirtualAlloc(NULL, to_alloc, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+  unsigned char* read_buf = base_large_alloc_rw(to_alloc);
   if (!read_buf) {
     return (ReadFileResult){0};
   }
 
   DWORD bytes_read = 0;
   if (!ReadFile(file, read_buf, size.QuadPart, &bytes_read, NULL)) {
-    VirtualFree(read_buf, 0, MEM_RELEASE);
+    base_large_alloc_free(read_buf);
     return (ReadFileResult){0};
   }
   if (bytes_read != size.QuadPart) {
-    VirtualFree(read_buf, 0, MEM_RELEASE);
+    base_large_alloc_free(read_buf);
     return (ReadFileResult){0};
   }
   CloseHandle(file);

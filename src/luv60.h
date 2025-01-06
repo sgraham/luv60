@@ -23,6 +23,7 @@ typedef struct ReadFileResult {
 int base_writef_stderr(const char* fmt, ...);
 unsigned char* base_large_alloc_rw(size_t size);
 unsigned char* base_large_alloc_rwx(size_t size);
+void base_large_alloc_free(void* ptr);
 void base_set_protection_rx(unsigned char* ptr, size_t size);
 ReadFileResult base_read_file(const char* filename);
 void base_exit(int rc);
