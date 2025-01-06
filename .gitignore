@@ -5,4 +5,5 @@ out/
 scratch/
 tags
 x.luv
+x.ssa
 third_party/tracy

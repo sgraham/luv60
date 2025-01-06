@@ -122,7 +122,7 @@ static FORCEINLINE uint64_t prefix_xor(const uint64_t bitmask) {
 //   5     36 | 32  32  32  32  32  32  32  32  32  32  32                   4
 //   6     16 |     16  16  16  16  16  16  16  16  16  16  16  16  16  16  16
 //   7     32 |     32  32  32  32  32  32  32  32  32  32
-//   8      0 |   
+//   8      0 |
 //   9      0 |
 //   a      0 |
 //   b      0 |
@@ -379,47 +379,44 @@ void lex_next_block(uint8_t token_kinds[128], uint32_t token_offsets[128]) {
 
   TracyCZoneN(categorize, "categorize", 1);
 
-  uint8_t* tk = token_kinds;
-  uint32_t* to = token_offsets;
-
   // Now actually do the branchy categorization of this batch of tokens. TBD:
   // maybe faster to extract bits from |indexes| first and then categorize in a second
   // pass that's going back to the buffer?
   //
   // The unaligned loads are probably bad too, and could probably be turned into
   // overlapped successive shifts, etc.
+  uint32_t* to = token_offsets;
+  uint8_t* tk = token_kinds;
 
-  uint64_t start_rel_offset;
+  int64_t rel_offset;
   if (state_start_rel_offset_ == 0) {
-    start_rel_offset = trailing_zeros(indexes);
+    rel_offset = trailing_zeros(indexes);
     indexes = clear_lowest_bit(indexes);
   } else {
-    start_rel_offset = state_start_rel_offset_;
+    rel_offset = state_start_rel_offset_;
   }
 
   while (indexes) {
-    uint64_t start_abs_offset = offset_ + start_rel_offset;
-    uint64_t end_rel_offset = trailing_zeros(indexes);
+    uint64_t abs_offset = offset_ + rel_offset;
+    rel_offset = trailing_zeros(indexes);
     indexes = clear_lowest_bit(indexes);
 #if DO_PRINTS
-    printf("[%3lld, %3lld)\n", start_rel_offset, end_rel_offset);
+    printf("%3lld\n", rel_offset);
 #endif
 
-    const unsigned char* p = (const unsigned char*)&buf_[start_abs_offset];
-
+    const unsigned char* p = (const unsigned char*)&buf_[abs_offset];
     const unsigned char* q;
 
-#define SKIP()                                \
-  do {                                        \
-    start_rel_offset = end_rel_offset;        \
-    end_rel_offset = trailing_zeros(indexes); \
-    indexes = clear_lowest_bit(indexes);      \
+#define SKIP()                            \
+  do {                                    \
+    rel_offset = trailing_zeros(indexes); \
+    indexes = clear_lowest_bit(indexes);  \
   } while (0)
 
-#define EMIT(tok)             \
-  do {                        \
-    *tk++ = tok;              \
-    *to++ = start_abs_offset; \
+#define EMIT(tok)       \
+  do {                  \
+    *tk++ = tok;        \
+    *to++ = abs_offset; \
   } while (0)
 
 #define NEWLINE_INDENT_ADJUST_AND_BREAK(n)                         \
@@ -429,12 +426,12 @@ void lex_next_block(uint8_t token_kinds[128], uint32_t token_offsets[128]) {
     if (indents_[num_indents_ - 1] < n) {                          \
       indents_[num_indents_++] = n;                                \
       EMIT(TOK_NEWLINE);                                           \
-      ++start_abs_offset;                                          \
+      ++abs_offset;                                                \
       token = TOK_INDENT;                                          \
       break;                                                       \
     } else if (indents_[num_indents_ - 1] > n) {                   \
       EMIT(TOK_NEWLINE);                                           \
-      ++start_abs_offset;                                          \
+      ++abs_offset;                                                \
       for (;;) {                                                   \
         if (num_indents_ > 1 && indents_[num_indents_ - 2] == n) { \
           token = TOK_DEDENT;                                      \
@@ -452,10 +449,9 @@ void lex_next_block(uint8_t token_kinds[128], uint32_t token_offsets[128]) {
 
 #include "categorizer.c"
   }
-
   *tk++ = TOK_INVALID;
 
-  state_start_rel_offset_ = start_rel_offset - 64;
+  state_start_rel_offset_ = rel_offset - 64;
   offset_ += 64;
 
   TracyCZoneEnd(categorize);

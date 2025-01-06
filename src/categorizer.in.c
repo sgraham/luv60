@@ -154,4 +154,3 @@ decorator = '@' [a-z_][a-zA-Z0-9_]*;
   } while(0);
 
   EMIT(token);
-  start_rel_offset = end_rel_offset;
