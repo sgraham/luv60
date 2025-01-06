@@ -527,8 +527,8 @@ typedef struct Rule {
 static Rule* get_rule(TokenKind tok_kind);
 static IRRef parse_precedence(Precedence precedence);
 
-static IRRef parse_alignof(bool can_assign) { ASSERT(false && "not implemented"); }
-static IRRef parse_and(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_alignof(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static IRRef parse_and(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
 
 static IRRef parse_binary(IRRef left, bool can_assign) {
   // Remember the operator.
@@ -550,10 +550,11 @@ static IRRef parse_binary(IRRef left, bool can_assign) {
     return gen_ssa_lt(left, rhs);
   } else {
     ASSERT(false && "todo");
+    return gen_ssa_none_ref;
   }
 }
 
-static IRRef parse_bool_literal(bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_bool_literal(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
 
 static IRRef parse_call(IRRef left, bool can_assign) {
   if (can_assign && match_assignment()) {
@@ -573,14 +574,14 @@ static IRRef parse_call(IRRef left, bool can_assign) {
   return gen_ssa_call((Type){TYPE_I32} /*XXX TODO !*/, left, num_args, args);
 }
 
-static IRRef parse_compound_literal(bool can_assign) { ASSERT(false && "not implemented"); }
-static IRRef parse_dict_literal(bool can_assign) { ASSERT(false && "not implemented"); }
-static IRRef parse_dot(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); }
-static IRRef parse_grouping(bool can_assign) { ASSERT(false && "not implemented"); }
-static IRRef parse_in_or_not_in(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); }
-static IRRef parse_len(bool can_assign) { ASSERT(false && "not implemented"); }
-static IRRef parse_list_literal_or_compr(bool can_assign) { ASSERT(false && "not implemented"); }
-static IRRef parse_null_literal(bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_compound_literal(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static IRRef parse_dict_literal(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static IRRef parse_dot(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static IRRef parse_grouping(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static IRRef parse_in_or_not_in(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static IRRef parse_len(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static IRRef parse_list_literal_or_compr(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static IRRef parse_null_literal(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
 
 static IRRef parse_number(bool can_assign) {
   Type suffix = {0};
@@ -588,15 +589,15 @@ static IRRef parse_number(bool can_assign) {
   return gen_ssa_const(val, suffix);
 }
 
-static IRRef parse_offsetof(bool can_assign) { ASSERT(false && "not implemented"); }
-static IRRef parse_or(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); }
-static IRRef parse_range(bool can_assign) { ASSERT(false && "not implemented"); }
-static IRRef parse_sizeof(bool can_assign) { ASSERT(false && "not implemented"); }
-static IRRef parse_string(bool can_assign) { ASSERT(false && "not implemented"); }
-static IRRef parse_string_interpolate(bool can_assign) { ASSERT(false && "not implemented"); }
-static IRRef parse_subscript(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); }
-static IRRef parse_typeid(bool can_assign) { ASSERT(false && "not implemented"); }
-static IRRef parse_unary(bool can_assign) { ASSERT(false && "not implemented"); }
+static IRRef parse_offsetof(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static IRRef parse_or(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static IRRef parse_range(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static IRRef parse_sizeof(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static IRRef parse_string(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static IRRef parse_string_interpolate(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static IRRef parse_subscript(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static IRRef parse_typeid(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static IRRef parse_unary(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
 
 typedef enum ScopeResult {
   SCOPE_RESULT_GLOBAL,
