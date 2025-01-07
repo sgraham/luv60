@@ -9,5 +9,5 @@ x.ssa
 x.s
 x.bat
 x.com.dbg
-x.com
+xbin.com
 third_party/tracy

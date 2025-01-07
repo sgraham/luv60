@@ -75,7 +75,7 @@ typedef struct Sym {
 
 typedef struct FuncData {
   Str name;
-  Type return_type;
+  Sym* sym;
 } FuncData;
 
 #define MAX_VARS_IN_SCOPE 256
@@ -180,10 +180,10 @@ static void leave_scope(void) {
   }
 }
 
-static IRRef enter_function(Type return_type, Str name, FuncParams params) {
+static IRRef enter_function(Sym* sym, Type return_type, Str name, FuncParams params) {
   parser.cur_func = &parser.funcdatas[parser.num_funcdatas++];
   parser.cur_func->name = name;
-  parser.cur_func->return_type = return_type;
+  parser.cur_func->sym = sym;
   enter_scope(/*is_module=*/false, /*is_function=*/true);
 
   for (int i = 0; i < params.num_params; ++i) {
@@ -304,6 +304,7 @@ static Type parse_type(void) {
     advance();
     return t;
   }
+
   return type_none;
 }
 
@@ -998,13 +999,14 @@ static bool parse_func_body_only_statement(void) {
   }
 
   if (match(TOK_RETURN)) {
-    ASSERT(!type_is_none(parser.cur_func->return_type));
+    Type func_ret = type_func_return_type(parser.cur_func->sym->type);
+    ASSERT(!type_is_none(func_ret));
     Operand op = operand_null;
-    if (!type_eq(parser.cur_func->return_type, type_void)) {
+    if (!type_eq(func_ret, type_void)) {
       op = parse_expression();
     }
 
-    gen_ssa_return(op.irref, parser.cur_func->return_type);
+    gen_ssa_return(op.irref, func_ret);
     return true;
   }
 
@@ -1023,6 +1025,9 @@ static void parse_block(void) {
 // TODO: decorators
 static void parse_def_statement(void) {
   Type return_type = parse_type();
+  if (type_is_none(return_type)) {
+    return_type = type_void;
+  }
   Str name = parse_name("Expect function name.");
   consume(TOK_LPAREN, "Expect '(' after function name.");
   FuncParams params = parse_func_params();
@@ -1034,7 +1039,7 @@ static void parse_def_statement(void) {
   Type type = type_function(params.types, params.num_params, return_type);
 
   Sym* func = sym_new(SYM_FUNC, name, type);
-  func->irref = enter_function(return_type, name, params);
+  func->irref = enter_function(func, return_type, name, params);
   parse_block();
   leave_function();
 }

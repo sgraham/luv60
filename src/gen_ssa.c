@@ -87,23 +87,6 @@ void gen_ssa_init(const char* filename) {
   num_blocks = 0;
   main_func_name = str_intern_len("main", 4);
   outf = fopen(filename, "wb");
-
-#if 0
-  fprintf(outf, "%s",
-"function w $add(w %a, w %b) {              # Define a function add\n"
-"@start\n"
-"  %c =w add %a, %b                   # Adds the 2 arguments\n"
-"  ret %c                             # Return the result\n"
-"}\n"
-"export function w $main() {                # Main function\n"
-"@start\n"
-"  %r =w call $add(w 1, w 1)          # Call add(1, 1)\n"
-"  call $printf(l $fmt, ..., w %r)    # Show the result\n"
-"  ret 0\n"
-"}\n"
-"data $fmt = { b \"One and one make %d!\\n\", b 0 }\n");
-#endif
-
 }
 
 static const char* type_to_qbe_name(Type type) {
