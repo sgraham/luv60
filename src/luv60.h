@@ -130,23 +130,20 @@ typedef enum TypeKind {
 #define type_str BASIC_TYPE_CONSTANT_IMPL(TYPE_STR)
 #define type_range BASIC_TYPE_CONSTANT_IMPL(TYPE_RANGE)
 
-static inline FORCEINLINE bool type_is_none(Type a) {
-  return a.u == 0;
-}
-
-static inline FORCEINLINE bool type_eq(Type a, Type b) {
-  return a.u == b.u;
-}
-
-static inline FORCEINLINE TypeKind type_kind(Type a) {
-  return (TypeKind)(a.u & 0xff);
-}
-
 void type_init(void);
 void type_destroy_for_tests(void);
 // returned str is either the cstr() of an interned string, or a constant.
 const char* type_as_str(Type type);
+
 Type type_function(Type* params, size_t num_params, Type return_type);
+
+static inline FORCEINLINE bool type_is_none(Type a) { return a.u == 0; }
+static inline FORCEINLINE bool type_eq(Type a, Type b) { return a.u == b.u; }
+static inline FORCEINLINE TypeKind type_kind(Type a) { return (TypeKind)(a.u & 0xff); }
+
+uint32_t type_func_num_params(Type type);
+Type type_func_return_type(Type type);
+Type type_func_param(Type type, uint32_t i);
 
 
 // parse.c

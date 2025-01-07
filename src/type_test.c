@@ -46,3 +46,21 @@ TEST(Type, FuncWithBasicParams) {
 
   type_destroy_for_tests();
 }
+
+TEST(Test, CrackFuncs) {
+  type_init();
+
+  Type params[4] = { type_i32, type_i32, type_bool, type_double };
+
+  Type f = type_function(params, 4, type_float);
+  EXPECT_EQ(type_kind(f), TYPE_FUNC);
+  EXPECT_EQ(type_func_num_params(f), 4);
+  EXPECT_TRUE(type_eq(type_func_return_type(f), type_float));
+  EXPECT_TRUE(type_eq(type_func_param(f, 0), type_i32));
+  EXPECT_TRUE(type_eq(type_func_param(f, 1), type_i32));
+  EXPECT_TRUE(type_eq(type_func_param(f, 2), type_bool));
+  EXPECT_TRUE(type_eq(type_func_param(f, 3), type_double));
+
+  type_destroy_for_tests();
+}
+

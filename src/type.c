@@ -180,6 +180,26 @@ void type_init(void) {
   num_typedata = NUM_TYPE_KINDS;
 }
 
+uint32_t type_func_num_params(Type type) {
+  ASSERT(type_kind(type) == TYPE_FUNC);
+  TypeData* td = type_td(type);
+  return td->FUNC.num_params;
+}
+
+Type type_func_return_type(Type type) {
+  ASSERT(type_kind(type) == TYPE_FUNC);
+  TypeData* td = type_td(type);
+  return td->FUNC.return_type;
+}
+
+Type type_func_param(Type type, uint32_t i){
+  ASSERT(type_kind(type) == TYPE_FUNC);
+  ASSERT(i < type_func_num_params(type));
+  TypeData* td = type_td(type);
+  TypeDataExtra* tde = (TypeDataExtra*)(td + 1 + (i / 3));
+  return tde->FUNC_EXTRA.param[i % 3];
+}
+
 void type_destroy_for_tests(void) {
   dict_destroy(&cached_func_types);
   memset(typedata, 0, sizeof(typedata));
