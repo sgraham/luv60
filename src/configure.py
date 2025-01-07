@@ -15,6 +15,7 @@ COMMON_FILELIST = [
     "lex.c",
     "parse.c",
     "str.c",
+    "type.c",
 ]
 
 LUVC_FILELIST = [
@@ -25,6 +26,7 @@ UNITTEST_FILELIST = [
     "test_main.c",
     "lex_test.c",
     "str_test.c",
+    "type_test.c",
 ]
 
 LEXBENCH_FILELIST = [

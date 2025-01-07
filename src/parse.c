@@ -1,36 +1,5 @@
 #include "luv60.h"
 
-typedef struct TypeData {
-  uint32_t ksa;  // 8 kind, 6 align, 18 size
-} TypeData;
-
-static TypeData typedata[16<<20];
-static int num_typedata;
-
-const char* typekind_names[] = {
-#define X(x) #x,
-  TYPEKINDS_X
-#undef X
-};
-
-const char* natural_builtin_type_names[NUM_TYPE_KINDS] = {
-    [TYPE_VOID] = "opaque",    //
-    [TYPE_BOOL] = "bool",      //
-    [TYPE_U8] = "u8",          //
-    [TYPE_U16] = "u16",        //
-    [TYPE_U32] = "u32",        //
-    [TYPE_U64] = "u64",        //
-    [TYPE_I8] = "i8",          //
-    [TYPE_I16] = "i16",        //
-    [TYPE_I32] = "i32",        //
-    [TYPE_I64] = "i64",        //
-    [TYPE_FLOAT] = "float",    //
-    [TYPE_DOUBLE] = "double",  //
-    [TYPE_STR] = "str",        //
-    [TYPE_RANGE] = "Range",    //
-    [TYPE_CHAR] = "char",      //
-};
-
 #if 0
 typedef struct TypeDataExtraPtr {
   Type type;
@@ -56,24 +25,6 @@ typedef struct TypeDataExtraFunc {
   uint32_t flags;
 } TypeDataExtraFunc;
 #endif
-
-static void set_typedata_raw(uint32_t index, uint32_t data) {
-  ASSERT(typedata[index].ksa == 0);
-  ASSERT(index < COUNTOF(typedata));
-  typedata[index].ksa = data;
-}
-
-static uint64_t pack_type(TypeKind kind, uint32_t size, uint32_t align) {
-  uint32_t ret = 0;
-  ASSERT(kind != 0);
-  ASSERT(kind < (1<<8));
-  ret |= (uint32_t)kind << 24;
-  ASSERT(align < (1<<6) );
-  ret |= (uint32_t)kind << 18;
-  ASSERT(size < (1<<18));
-  ret |= (uint32_t)size;
-  return ret;
-}
 
 #define P_MAX_FUNC_PARAMS 32
 typedef struct FuncParams {
@@ -161,15 +112,6 @@ typedef struct Parser {
 } Parser;
 
 static Parser parser;
-
-// returned str is either the cstr() of an interned string, or a constant.
-static const char* type_as_str(Type type) {
-  if (natural_builtin_type_names[type.i]) {
-    return natural_builtin_type_names[type.i];
-  } else {
-    return "TODO";
-  }
-}
 
 static Sym* sym_new(SymKind kind, Str name, Type type) {
   ASSERT(parser.cur_var_scope);
@@ -437,6 +379,92 @@ static Operand operand_const(Type type, IRRef irref) {
   return (Operand){.type = type, .irref = irref, .is_const = true};
 }
 
+static bool is_arithmetic_type(Type type) {
+  return type.i >= TYPE_U8 && type.i <= TYPE_DOUBLE;
+}
+
+static bool is_integer_type(Type type) {
+  return type.i >= TYPE_U8 && type.i <= TYPE_ENUM;
+}
+
+static bool is_ptr_like_type(Type type) {
+  return type.i == TYPE_PTR || type.i == TYPE_FUNC;
+}
+
+#if 0
+static bool is_floating_type(Type type) {
+  return type.i >= TYPE_FLOAT && type.i <= TYPE_DOUBLE;
+}
+#endif
+
+static bool is_condition_type(Type type) {
+  switch (type.i) {
+    case TYPE_BOOL:
+    case TYPE_STR:
+    case TYPE_SLICE:
+    case TYPE_PTR:
+      return true;
+    default:
+      return false;
+  }
+}
+
+static bool is_convertible(Operand* operand, Type dest) {
+  Type src = operand->type;
+  if (dest.i == src.i) {
+    return true;
+  } else if (dest.i == TYPE_VOID) {
+    return true;
+  } else if (is_arithmetic_type(dest) && is_arithmetic_type(src)) {
+    return true;
+  }
+  // TODO: various pointer, null, etc.
+  else {
+    return false;
+  }
+}
+
+static bool is_castable(Operand* operand, Type dest) {
+  Type src = operand->type;
+  if (is_convertible(operand, dest)) {
+    return true;
+  } else if (dest.i == TYPE_BOOL) {
+    return is_ptr_like_type(src) || is_integer_type(src);
+  } else if (is_integer_type(dest)) {
+    return is_ptr_like_type(src);
+  } else if (is_integer_type(src)) {
+    return is_ptr_like_type(dest);
+  } else if (is_ptr_like_type(dest) && is_ptr_like_type(src)) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+static bool cast_operand(Operand* operand, Type type) {
+  if (operand->type.i != type.i) {
+    if (!is_castable(operand, type)) {
+      return false;
+    }
+
+    if (operand->is_const) {
+      // TODO: save val into op and convert here
+    }
+  }
+
+  operand->type = type;
+  return true;
+}
+
+static bool convert_operand(Operand* operand, Type type) {
+  if (is_convertible(operand, type)) {
+    cast_operand(operand, type);
+    operand->is_lvalue = false;
+    return true;
+  }
+  return false;
+}
+
 static void parse_statement(bool toplevel);
 static Operand parse_expression(void);
 static void parse_block(void);
@@ -608,15 +636,23 @@ static Operand parse_call(Operand left, bool can_assign) {
   if (can_assign && match_assignment()) {
     CHECK(false && "todo; returning address i think");
   }
+  if (left.type.i != TYPE_FUNC) {
+    errorf("Expected function type, but type is %s.", type_as_str(left.type));
+  }
   Type arg_types[P_MAX_FUNC_PARAMS];
   IRRef arg_values[P_MAX_FUNC_PARAMS];
   int num_args = 0;
   if (!check(TOK_RPAREN)) {
     for (;;) {
-      Operand op = parse_precedence(PREC_OR);
+      Operand arg = parse_precedence(PREC_OR);
+      Type param_type = (Type){TYPE_I32}; // TODO XXX !
+      if (!convert_operand(&arg, param_type)) {
+        errorf("Call argument %d is type %s, but function expects type %s.", num_args + 1,
+               type_as_str(arg.type), type_as_str(param_type));
+      }
       // TODO: attempt conversion
-      arg_types[num_args] = op.type;
-      arg_values[num_args] = op.irref;
+      arg_types[num_args] = arg.type;
+      arg_values[num_args] = arg.irref;
       ++num_args;
       if (!match(TOK_COMMA)) {
         break;
@@ -923,18 +959,6 @@ static Operand parse_expression(void) {
   return parse_precedence(PREC_LOWEST);
 }
 
-static bool is_condition_type(Type type) {
-  switch (type.i) {
-    case TYPE_BOOL:
-    case TYPE_STR:
-    case TYPE_SLICE:
-    case TYPE_PTR:
-      return true;
-    default:
-      return false;
-  }
-}
-
 static void if_statement(void) {
   Operand cond = parse_expression();
 
@@ -983,6 +1007,7 @@ static bool parse_func_body_only_statement(void) {
     if (parser.cur_func->return_type.i != TYPE_VOID) {
       op = parse_expression();
     }
+
     gen_ssa_return(op.irref, parser.cur_func->return_type);
     return true;
   }
@@ -1010,7 +1035,9 @@ static void parse_def_statement(void) {
   skip_newlines();
   consume(TOK_INDENT, "Expect indented function body.");
 
-  Sym* func = sym_new(SYM_FUNC, name, (Type){TYPE_VOID} /* XXX TODO !*/);
+  Type type = type_function(params.types, params.num_params, return_type);
+
+  Sym* func = sym_new(SYM_FUNC, name, type);
   func->irref = enter_function(return_type, name, params);
   parse_block();
   leave_function();
@@ -1062,26 +1089,8 @@ static void parse_statement(bool toplevel) {
   skip_newlines();
 }
 
-static void init_types(void) {
-  set_typedata_raw(TYPE_VOID, pack_type(TYPE_VOID, 0, 0));
-  set_typedata_raw(TYPE_BOOL, pack_type(TYPE_BOOL, 1, 1));
-  set_typedata_raw(TYPE_U8, pack_type(TYPE_U8, 1, 1));
-  set_typedata_raw(TYPE_I8, pack_type(TYPE_I8, 1, 1));
-  set_typedata_raw(TYPE_U16, pack_type(TYPE_U16, 2, 2));
-  set_typedata_raw(TYPE_I16, pack_type(TYPE_I16, 2, 2));
-  set_typedata_raw(TYPE_U32, pack_type(TYPE_U32, 4, 4));
-  set_typedata_raw(TYPE_I32, pack_type(TYPE_I32, 4, 4));
-  set_typedata_raw(TYPE_U64, pack_type(TYPE_U64, 8, 8));
-  set_typedata_raw(TYPE_I64, pack_type(TYPE_I64, 8, 8));
-  set_typedata_raw(TYPE_FLOAT, pack_type(TYPE_FLOAT, 4, 4));
-  set_typedata_raw(TYPE_DOUBLE, pack_type(TYPE_DOUBLE, 8, 8));
-  set_typedata_raw(TYPE_STR, pack_type(TYPE_STR, 16, 8));
-  set_typedata_raw(TYPE_RANGE, pack_type(TYPE_STR, 24, 8));
-  num_typedata = NUM_TYPE_KINDS;
-}
-
 void parse(const char* filename, ReadFileResult file) {
-  init_types();
+  type_init();
 
   parser.cur_filename = filename;
   parser.cur_token_index = 0;

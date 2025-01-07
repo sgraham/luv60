@@ -69,7 +69,7 @@ void lex_get_location_and_line_slow(uint32_t offset,
                                     uint32_t* loc_column,
                                     StrView* contents);
 
-// parse.c
+// type.c
 
 typedef struct Type {
   uint32_t i;
@@ -110,7 +110,14 @@ typedef enum TypeKind {
       NUM_TYPE_KINDS,
 } TypeKind;
 
-extern const char* typekind_names[];
+void type_init(void);
+void type_destroy_for_tests(void);
+// returned str is either the cstr() of an interned string, or a constant.
+const char* type_as_str(Type type);
+Type type_function(Type* params, size_t num_params, Type return_type);
+
+
+// parse.c
 
 void parse(const char* filename, ReadFileResult file);
 

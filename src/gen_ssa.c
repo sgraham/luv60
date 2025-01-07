@@ -209,7 +209,7 @@ void gen_ssa_finish(void) {
   for (int i = 0; i < num_refs; ++i) {
     IRRefData* data = &refs[i];
     if (data->kind == REF_STR_CONST) {
-      fprintf(outf, "data %s = \"%s\"\n", irref_as_str((IRRef){i}), cstr(data->str));
+      fprintf(outf, "data %s = { b \"%s\" }\n", irref_as_str((IRRef){i}), cstr(data->str));
     }
   }
   fclose(outf);
