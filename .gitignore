@@ -6,4 +6,8 @@ scratch/
 tags
 x.luv
 x.ssa
+x.s
+x.bat
+x.com.dbg
+x.com
 third_party/tracy
