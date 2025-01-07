@@ -13,6 +13,24 @@ const char* typekind_names[] = {
 #undef X
 };
 
+const char* natural_builtin_type_names[NUM_TYPE_KINDS] = {
+    [TYPE_VOID] = "opaque",    //
+    [TYPE_BOOL] = "bool",      //
+    [TYPE_U8] = "u8",          //
+    [TYPE_U16] = "u16",        //
+    [TYPE_U32] = "u32",        //
+    [TYPE_U64] = "u64",        //
+    [TYPE_I8] = "i8",          //
+    [TYPE_I16] = "i16",        //
+    [TYPE_I32] = "i32",        //
+    [TYPE_I64] = "i64",        //
+    [TYPE_FLOAT] = "float",    //
+    [TYPE_DOUBLE] = "double",  //
+    [TYPE_STR] = "str",        //
+    [TYPE_RANGE] = "Range",    //
+    [TYPE_CHAR] = "char",      //
+};
+
 #if 0
 typedef struct TypeDataExtraPtr {
   Type type;
@@ -144,16 +162,13 @@ typedef struct Parser {
 
 static Parser parser;
 
-static char* strf(const char* fmt, ...) {
-  va_list args;
-  va_start(args, fmt);
-  size_t n = 1 + vsnprintf(NULL, 0, fmt, args);
-  va_end(args);
-  char* str = malloc(n);  // TODO: arena
-  va_start(args, fmt);
-  vsnprintf(str, n, fmt, args);
-  va_end(args);
-  return str;
+// returned str is either the cstr() of an interned string, or a constant.
+static const char* type_as_str(Type type) {
+  if (natural_builtin_type_names[type.i]) {
+    return natural_builtin_type_names[type.i];
+  } else {
+    return "TODO";
+  }
 }
 
 static Sym* sym_new(SymKind kind, Str name, Type type) {
@@ -181,7 +196,7 @@ static Sym* make_param(Str name, Type type) {
   return new;
 }
 
-static void error(const char* message) {
+NORETURN static void error(const char* message) {
   uint32_t loc_line;
   uint32_t loc_column;
   StrView line;
@@ -192,6 +207,18 @@ static void error(const char* message) {
   base_writef_stderr("%*s", indent + loc_column - 1, "");
   base_writef_stderr("^ error: %s\n", message);
   base_exit(1);
+}
+
+NORETURN static void errorf(const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  size_t n = 1 + vsnprintf(NULL, 0, fmt, args);
+  va_end(args);
+  char* str = malloc(n);  // just a simple malloc because we're going to base_exit() momentarily.
+  va_start(args, fmt);
+  vsnprintf(str, n, fmt, args);
+  va_end(args);
+  error(str);
 }
 
 static void enter_scope(bool is_module, bool is_function) {
@@ -389,8 +416,29 @@ static void skip_newlines(void) {
   }
 }
 
+typedef struct Operand {
+  Type type;
+  IRRef irref;
+  bool is_lvalue;
+  bool is_const;
+} Operand;
+
+static Operand operand_null;
+
+static Operand operand_lvalue(Type type, IRRef irref) {
+  return (Operand){.type = type, .irref = irref, .is_lvalue = true};
+}
+
+static Operand operand_rvalue(Type type, IRRef irref) {
+  return (Operand){.type = type, .irref = irref};
+}
+
+static Operand operand_const(Type type, IRRef irref) {
+  return (Operand){.type = type, .irref = irref, .is_const = true};
+}
+
 static void parse_statement(bool toplevel);
-static IRRef parse_expression(void);
+static Operand parse_expression(void);
 static void parse_block(void);
 
 // ~strtoull with slight differences:
@@ -515,8 +563,8 @@ static bool match_assignment(void) {
   return true;
 }
 
-typedef IRRef (*PrefixFn)(bool can_assign);
-typedef IRRef (*InfixFn)(IRRef left, bool can_assign);
+typedef Operand (*PrefixFn)(bool can_assign);
+typedef Operand (*InfixFn)(Operand left, bool can_assign);
 
 typedef struct Rule {
   PrefixFn prefix;
@@ -525,79 +573,93 @@ typedef struct Rule {
 } Rule;
 
 static Rule* get_rule(TokenKind tok_kind);
-static IRRef parse_precedence(Precedence precedence);
+static Operand parse_precedence(Precedence precedence);
 
-static IRRef parse_alignof(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
-static IRRef parse_and(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static Operand parse_alignof(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_and(Operand left, bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
 
-static IRRef parse_binary(IRRef left, bool can_assign) {
+static Operand parse_binary(Operand left, bool can_assign) {
   // Remember the operator.
   TokenKind op = parser.prev_kind;
 
   // Compile the right operand.
   Rule* rule = get_rule(op);
-  IRRef rhs = parse_precedence(rule->prec_for_infix + 1);
+  Operand rhs = parse_precedence(rule->prec_for_infix + 1);
   (void)rhs;
 
   // TODO: gen binary lhs op rhs
   if (op == TOK_PLUS) {
-    return gen_ssa_add(left, rhs);
+    return operand_rvalue((Type){TYPE_I32}, gen_ssa_add(left.irref, rhs.irref));
   } else if (op == TOK_STAR) {
-    return gen_ssa_mul(left, rhs);
+    return operand_rvalue((Type){TYPE_I32}, gen_ssa_mul(left.irref, rhs.irref));
   } else if (op == TOK_BANGEQ) {
-    return gen_ssa_neq(left, rhs);
+    return operand_rvalue((Type){TYPE_BOOL}, gen_ssa_neq(left.irref, rhs.irref));
   } else if (op == TOK_LT) {
-    return gen_ssa_lt(left, rhs);
+    return operand_rvalue((Type){TYPE_BOOL}, gen_ssa_lt(left.irref, rhs.irref));
   } else {
     ASSERT(false && "todo");
-    return gen_ssa_none_ref;
+    return operand_null;
   }
 }
 
-static IRRef parse_bool_literal(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static Operand parse_bool_literal(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
 
-static IRRef parse_call(IRRef left, bool can_assign) {
+static Operand parse_call(Operand left, bool can_assign) {
   if (can_assign && match_assignment()) {
     CHECK(false && "todo; returning address i think");
   }
-  IRRef args[P_MAX_FUNC_PARAMS];
+  Type arg_types[P_MAX_FUNC_PARAMS];
+  IRRef arg_values[P_MAX_FUNC_PARAMS];
   int num_args = 0;
   if (!check(TOK_RPAREN)) {
     for (;;) {
-      args[num_args++] = parse_precedence(PREC_OR);
+      Operand op = parse_precedence(PREC_OR);
+      // TODO: attempt conversion
+      arg_types[num_args] = op.type;
+      arg_values[num_args] = op.irref;
+      ++num_args;
       if (!match(TOK_COMMA)) {
         break;
       }
     }
   }
   consume(TOK_RPAREN, "Expect ')' after arguments.");
-  return gen_ssa_call((Type){TYPE_I32} /*XXX TODO !*/, left, num_args, args);
+  return operand_rvalue((Type){TYPE_I32}, gen_ssa_call((Type){TYPE_I32} /*XXX TODO !*/, left.irref,
+                                                       num_args, arg_types, arg_values));
 }
 
-static IRRef parse_compound_literal(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
-static IRRef parse_dict_literal(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
-static IRRef parse_dot(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
-static IRRef parse_grouping(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
-static IRRef parse_in_or_not_in(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
-static IRRef parse_len(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
-static IRRef parse_list_literal_or_compr(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
-static IRRef parse_null_literal(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static Operand parse_compound_literal(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_dict_literal(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_dot(Operand left, bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_grouping(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_in_or_not_in(Operand left, bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_len(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_list_literal_or_compr(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_null_literal(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
 
-static IRRef parse_number(bool can_assign) {
+static Operand parse_number(bool can_assign) {
   Type suffix = {0};
   uint64_t val = scan_int(lex_get_strview(parser.prev_offset, parser.cur_offset), &suffix);
-  return gen_ssa_const(val, suffix);
+  return operand_const((Type){suffix.i == TYPE_NONE ? TYPE_U64 : suffix.i},
+                       gen_ssa_const(val, suffix));
 }
 
-static IRRef parse_offsetof(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
-static IRRef parse_or(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
-static IRRef parse_range(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
-static IRRef parse_sizeof(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
-static IRRef parse_string(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
-static IRRef parse_string_interpolate(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
-static IRRef parse_subscript(IRRef left, bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
-static IRRef parse_typeid(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
-static IRRef parse_unary(bool can_assign) { ASSERT(false && "not implemented"); return gen_ssa_none_ref; }
+static Operand parse_offsetof(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_or(Operand left, bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_range(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_sizeof(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+
+static Operand parse_string(bool can_assign) {
+  // TODO: parse escapes
+  StrView str = lex_get_strview(parser.prev_offset, parser.cur_offset);
+  return operand_const((Type){TYPE_STR},
+                       gen_ssa_string_constant(str_intern_len(str.data + 1, str.size - 2)));
+}
+
+static Operand parse_string_interpolate(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_subscript(Operand left, bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_typeid(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_unary(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
 
 typedef enum ScopeResult {
   SCOPE_RESULT_GLOBAL,
@@ -671,7 +733,7 @@ static ScopeResult scope_lookup(Str name, Sym** sym, SymScopeDecl* scope_decl) {
   return SCOPE_RESULT_UNDEFINED;
 }
 
-static IRRef parse_variable(bool can_assign) {
+static Operand parse_variable(bool can_assign) {
   Str target = str_from_previous();
   SymScopeDecl scope_decl = SSD_NONE;
   Sym* sym = NULL;
@@ -679,35 +741,33 @@ static IRRef parse_variable(bool can_assign) {
   if (can_assign && match_assignment()) {
     TokenKind eq = parser.prev_kind;
     if (scope_result == SCOPE_RESULT_UNDEFINED && scope_decl == SSD_ASSUMED_GLOBAL) {
-      error(strf("Local variable '%s' referenced before assignment.", cstr(target)));
+      errorf("Local variable '%s' referenced before assignment.", cstr(target));
     } else if (scope_result != SCOPE_RESULT_LOCAL && scope_decl == SSD_NONE) {
       if (eq == TOK_EQ) {
         // Variable declaration without a type.
-        IRRef val = parse_expression();
-        // TODO: parse_expression needs to let us figure out type
-        Type type = (Type){TYPE_I32} /* XXX TODO! */;
-        Sym* new = make_local_and_alloc(SYM_VAR, target, type);
-        gen_ssa_store(new->irref, type, val);
-        return gen_ssa_none_ref;
+        Operand op = parse_expression();
+        Sym* new = make_local_and_alloc(SYM_VAR, target, op.type);
+        gen_ssa_store(new->irref, op.type, op.irref);
+        return operand_null;
       } else {
         error("todo; aug assign");
       }
     }
   } else {
     if (scope_result == SCOPE_RESULT_LOCAL) {
-      return gen_ssa_load(sym->irref, sym->type);
+      return operand_lvalue(sym->type, gen_ssa_load(sym->irref, sym->type));
     } else if (scope_result == SCOPE_RESULT_PARAMETER) {
       // TODO: & of parameter won't work, maybe just disallow without in-source copy?
-      return sym->irref;
+      return operand_rvalue(sym->type, sym->irref);
     } else if (scope_result == SCOPE_RESULT_GLOBAL) {
-      return sym->irref;
+      return operand_lvalue(sym->type, sym->irref);
     } else {
-      error(strf("Undefined reference to '%s'.\n", cstr(target)));
+      errorf("Undefined reference to '%s'.\n", cstr(target));
     }
   }
 
   abort();
-  return (IRRef){0};
+  return operand_null;
 }
 
 // Has to match the order in tokens.inc.
@@ -836,7 +896,7 @@ static Rule* get_rule(TokenKind tok_kind) {
   return &rules[tok_kind];
 }
 
-static IRRef parse_precedence(Precedence precedence) {
+static Operand parse_precedence(Precedence precedence) {
   advance();
   PrefixFn prefix_rule = get_rule(parser.prev_kind)->prefix;
   if (!prefix_rule) {
@@ -844,7 +904,7 @@ static IRRef parse_precedence(Precedence precedence) {
   }
 
   bool can_assign = precedence <= PREC_ASSIGNMENT;
-  IRRef left = prefix_rule(can_assign);
+  Operand left = prefix_rule(can_assign);
 
   while (precedence <= get_rule(parser.cur_kind)->prec_for_infix) {
     advance();
@@ -859,12 +919,28 @@ static IRRef parse_precedence(Precedence precedence) {
   return left;
 }
 
-static IRRef parse_expression(void) {
+static Operand parse_expression(void) {
   return parse_precedence(PREC_LOWEST);
 }
 
+static bool is_condition_type(Type type) {
+  switch (type.i) {
+    case TYPE_BOOL:
+    case TYPE_STR:
+    case TYPE_SLICE:
+    case TYPE_PTR:
+      return true;
+    default:
+      return false;
+  }
+}
+
 static void if_statement(void) {
-  IRRef cond = parse_expression();
+  Operand cond = parse_expression();
+
+  if (!is_condition_type(cond.type)) {
+    errorf("Result of condition expression cannot be type %s.", type_as_str(cond.type));
+  }
 
   consume(TOK_COLON, "Expect ':' to start if.");
   consume(TOK_NEWLINE, "Expect newline after ':' to start if.");
@@ -874,7 +950,7 @@ static void if_statement(void) {
   IRBlock els = gen_ssa_make_block_name();
   IRBlock after = gen_ssa_make_block_name();
 
-  gen_ssa_jump_cond(cond, then, els);
+  gen_ssa_jump_cond(cond.irref, then, els);
 
   //gen_resolve_label(&then);
 
@@ -903,11 +979,11 @@ static bool parse_func_body_only_statement(void) {
 
   if (match(TOK_RETURN)) {
     ASSERT(parser.cur_func->return_type.i);
-    IRRef val = {0};
+    Operand op = operand_null;
     if (parser.cur_func->return_type.i != TYPE_VOID) {
-      val = parse_expression();
+      op = parse_expression();
     }
-    gen_ssa_return(val, parser.cur_func->return_type);
+    gen_ssa_return(op.irref, parser.cur_func->return_type);
     return true;
   }
 
@@ -948,10 +1024,10 @@ static void parse_variable_statement(Type type) {
   ASSERT(type.i);
   have_init = match(TOK_EQ);
   if (have_init) {
-    IRRef val = parse_expression();
+    Operand op = parse_expression();
     // TODO: convert val to type
-    Sym* new = make_local_and_alloc(SYM_VAR, name, type);
-    gen_ssa_store(new->irref, type, val);
+    Sym* new = make_local_and_alloc(SYM_VAR, name, op.type);
+    gen_ssa_store(new->irref, op.type, op.irref);
   }
 
   consume(TOK_NEWLINE, "Expect newline after variable declaration.");

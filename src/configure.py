@@ -175,7 +175,9 @@ def generate(platform, config, settings, cmdlines, tests):
             obj = getobj(tracy_cpp)
             common_objs.append(obj)
             f.write("build %s: cc $src/%s\n" % (obj, tracy_cpp))
-            f.write("  extra=-Wno-missing-field-initializers -Wno-unused-variable -Wno-cast-function-type-mismatch -Wno-microsoft-cast -Wno-unused-function -Wno-unused-but-set-variable\n")
+            f.write(
+                "  extra=-Wno-missing-field-initializers -Wno-unused-variable -Wno-cast-function-type-mismatch -Wno-microsoft-cast -Wno-unused-function -Wno-unused-but-set-variable\n"
+            )
 
         luvc_objs = []
         for src in LUVC_FILELIST:
@@ -211,8 +213,19 @@ def generate(platform, config, settings, cmdlines, tests):
         f.write("build %s: link %s\n" % (luvcexe, " ".join(common_objs + luvc_objs)))
         f.write(
             "build %s: link %s\n"
-            % ("tests" + exe_ext, " ".join(common_objs + unittest_objs))
+            % ("unittests" + exe_ext, " ".join(common_objs + unittest_objs))
         )
+
+        f.write("build run_unittests: testrun unittests.exe\n")
+        cmds = {
+            "run": os.path.join(root_dir, "unittests" + exe_ext) + ' -q',
+            "ret": 0,
+            "direct": True,
+        }
+        cmds_to_pass = base64.b64encode(bytes(json.dumps(cmds), encoding="utf-8"))
+        f.write("  data = %s\n" % str(cmds_to_pass, encoding="utf-8"))
+        alltests.append("run_unittests")
+
         f.write(
             "build %s: link %s | dumbbench.luv\n"
             % ("lexbench" + exe_ext, " ".join(common_objs + lexbench_objs))
@@ -220,7 +233,9 @@ def generate(platform, config, settings, cmdlines, tests):
 
         f.write("\nbuild test: phony " + " ".join(alltests) + "\n")
 
-        f.write("\ndefault luvc%s tests%s lexbench%s\n" % (exe_ext, exe_ext, exe_ext))
+        f.write(
+            "\ndefault luvc%s unittests%s lexbench%s\n" % (exe_ext, exe_ext, exe_ext)
+        )
 
         f.write("\nrule gen\n")
         f.write("  command = %s $src/configure.py $in\n" % sys.executable)

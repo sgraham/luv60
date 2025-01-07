@@ -26,7 +26,7 @@ unsigned char* base_large_alloc_rwx(size_t size);
 void base_large_alloc_free(void* ptr);
 void base_set_protection_rx(unsigned char* ptr, size_t size);
 ReadFileResult base_read_file(const char* filename);
-void base_exit(int rc);
+NORETURN void base_exit(int rc);
 
 
 // str.c
@@ -161,8 +161,6 @@ typedef struct IRBlock {
   uint32_t i;
 } IRBlock;
 
-extern IRRef gen_ssa_none_ref;
-
 void gen_ssa_init(const char* filename);
 
 IRRef gen_ssa_start_function(Str name, Type return_type, int num_params, IRRef* params);
@@ -173,11 +171,16 @@ IRBlock gen_ssa_make_block_name(void);
 void gen_ssa_start_block(IRBlock block);
 void gen_ssa_alloc_local(IRRef ref);
 
+IRRef gen_ssa_string_constant(Str str);
 IRRef gen_ssa_const(uint64_t val, Type type);
 void gen_ssa_store(IRRef into, Type type, IRRef val);
 IRRef gen_ssa_load(IRRef from, Type type);
 
-IRRef gen_ssa_call(Type return_type, IRRef func, int num_args, IRRef* args);
+IRRef gen_ssa_call(Type return_type,
+                   IRRef func,
+                   int num_args,
+                   Type* arg_types,
+                   IRRef* arg_values);
 void gen_ssa_jump_cond(IRRef cond, IRBlock iftrue, IRBlock iffalse);
 void gen_ssa_return(IRRef val, Type type);
 

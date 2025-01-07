@@ -61,6 +61,6 @@ ReadFileResult base_read_file(const char* filename) {
   return (ReadFileResult){read_buf, size.QuadPart, to_alloc};
 }
 
-void base_exit(int rc) {
+NORETURN void base_exit(int rc) {
   ExitProcess(rc);
 }

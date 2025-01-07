@@ -3,17 +3,16 @@
 static FILE* outf;
 static Str main_func_name;
 
-IRRef gen_ssa_none_ref;
-
 typedef enum IRRefKind {
   REF_TEMP,
   REF_FUNC,
+  REF_STR_CONST,
 } IRRefKind;
 
 typedef struct IRRefData {
   IRRefKind kind;
   Type type;
-  Str func_name;
+  Str str;
 } IRRefData;
 static IRRefData refs[1<<20];
 static int num_refs;
@@ -30,12 +29,21 @@ IRRef gen_ssa_make_temp(Type type) {
   return ret;
 }
 
+static IRRef gen_ssa_make_str_const(Str str) {
+  IRRef ret = {num_refs++};
+  IRRefData* data = &refs[ret.i];
+  data->kind = REF_STR_CONST;
+  data->type = (Type){TYPE_STR};
+  data->str = str;
+  return ret;
+}
+
 IRRef gen_ssa_make_func(Str name, Type type) {
   IRRef ret = {num_refs++};
   IRRefData* data = &refs[ret.i];
   data->kind = REF_FUNC;
   data->type = type;
-  data->func_name = name;
+  data->str = name;
   return ret;
 }
 
@@ -55,7 +63,10 @@ static const char* irref_as_str(IRRef ref) {
       sprintf(buf, "%%t%d", ref.i);
       break;
     case REF_FUNC:
-      sprintf(buf, "$%s", cstr(refs[ref.i].func_name));
+      sprintf(buf, "$%s", cstr(refs[ref.i].str));
+      break;
+    case REF_STR_CONST:
+      sprintf(buf, "$str%d", ref.i);
       break;
     default:
       buf[0] = '?';
@@ -73,7 +84,6 @@ static const char* irblock_as_str(IRBlock block) {
 
 void gen_ssa_init(const char* filename) {
   num_refs = 0;
-  gen_ssa_none_ref = gen_ssa_make_temp((Type){TYPE_NONE});
   num_blocks = 0;
   main_func_name = str_intern_len("main", 4);
   outf = fopen(filename, "wb");
@@ -120,6 +130,10 @@ IRRef gen_ssa_const(uint64_t val, Type type) {
   IRRef ret = gen_ssa_make_temp(type);
   fprintf(outf, "  %s =w copy %lld\n", irref_as_str(ret), val);
   return ret;
+}
+
+IRRef gen_ssa_string_constant(Str str) {
+  return gen_ssa_make_str_const(str);
 }
 
 void gen_ssa_return(IRRef val, Type type) {
@@ -173,11 +187,15 @@ IRRef gen_ssa_neq(IRRef a, IRRef b) {
   return ret;
 }
 
-IRRef gen_ssa_call(Type return_type, IRRef func, int num_args, IRRef* args) {
+IRRef gen_ssa_call(Type return_type,
+                   IRRef func,
+                   int num_args,
+                   Type* arg_types,
+                   IRRef* arg_values) {
   IRRef ret = gen_ssa_make_temp(return_type);
   fprintf(outf, "  %s =w call %s(", irref_as_str(ret), irref_as_str(func));
   for (int i = 0; i < num_args; ++i) {
-    fprintf(outf, "w %s%s", irref_as_str(args[i]), i < num_args - 1 ? ", " : "");
+    fprintf(outf, "w %s%s", irref_as_str(arg_values[i]), i < num_args - 1 ? ", " : "");
   }
   fprintf(outf, ")\n");
   return ret;
@@ -188,5 +206,11 @@ void gen_ssa_end_function(void) {
 }
 
 void gen_ssa_finish(void) {
+  for (int i = 0; i < num_refs; ++i) {
+    IRRefData* data = &refs[i];
+    if (data->kind == REF_STR_CONST) {
+      fprintf(outf, "data %s = \"%s\"\n", irref_as_str((IRRef){i}), cstr(data->str));
+    }
+  }
   fclose(outf);
 }

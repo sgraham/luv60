@@ -72,3 +72,25 @@ BlockData:
   int num_instrs
 
 
+
+---
+
+I'm not sure if it's sensible to add interpolated Swift-style strings (or some
+other style). The lexer indexing currently ignores \().
+
+Adding ` to be like " also sort of works in the indexer. So the syntax could "x
++ y is `x+y`." which isn't too bad looking (sort of like shell). The first token
+would be QUOTED though, and so the parser can't easily tell if it should be
+building an interpolation list without looking ahead, and then if there's
+expressions inside the escape it's arbitraily far to know if you're ever going
+to get to a `. So that doesn't seem to work?
+
+Sticking with \(), the parser has to some how fully parse/lex the string as it's
+own little program. It won't be able to call parse_expression() to get the sub
+things otherwise as the whole thing is one big STRING_QUOTED. Maybe that's the
+way to go to keep the normal (non-interpolated) case fast. Maybe a memchr for
+the escape character ($, `, #, whatever) to know if the slow interpolate re-lex is
+required too (since those can't appear in actual code).
+
+
+# vim: set tw=80:

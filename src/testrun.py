@@ -15,6 +15,12 @@ def main():
     js = base64.b64decode(bytes(sys.argv[3], encoding="utf-8"))
     cmds = json.loads(js)
 
+    if cmds.get("direct"):
+        directres = subprocess.run(cmds["run"].split(" "))
+        if directres.returncode != cmds["ret"]:
+            return 1
+        return 0
+
     # The default is 1, but we would prefer something a little more distinct. Windows will
     # return the exception code (big number) so out of 0..255, but Linux is always in that
     # range, so select something arbitrary as an ASAN signal that's more notable than the
