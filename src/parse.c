@@ -634,11 +634,15 @@ static Operand parse_call(Operand left, bool can_assign) {
   }
   Type arg_types[P_MAX_FUNC_PARAMS];
   IRRef arg_values[P_MAX_FUNC_PARAMS];
-  int num_args = 0;
+  uint32_t num_args = 0;
   if (!check(TOK_RPAREN)) {
     for (;;) {
+      if (num_args >= type_func_num_params(left.type)) {
+        errorf("Passing >= %d arguments to function, but it expects %d.", num_args + 1,
+               type_func_num_params(left.type));
+      }
+      Type param_type = type_func_param(left.type, num_args);
       Operand arg = parse_precedence(PREC_OR);
-      Type param_type = (Type){TYPE_I32}; // TODO XXX !
       if (!convert_operand(&arg, param_type)) {
         errorf("Call argument %d is type %s, but function expects type %s.", num_args + 1,
                type_as_str(arg.type), type_as_str(param_type));

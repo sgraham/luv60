@@ -1,0 +1,9 @@
+# CRC: 1
+# TXT: {self}:9:12:    stuff(z)
+# TXT:                                                   ^ error: Call argument 1 is type str, but function expects type i32.
+def int stuff(int x):
+    return 0
+
+def int main():
+    z = "hi"
+    stuff(z)

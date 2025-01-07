@@ -1,0 +1,9 @@
+# CRC: 1
+# TXT: {self}:9:14:    stuff(4, z)
+# TXT:                                                      ^ error: Passing >= 2 arguments to function, but it expects 1.
+def int stuff(int x):
+    return 0
+
+def int main():
+    z = "hi"
+    stuff(4, z)
