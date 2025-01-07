@@ -137,7 +137,7 @@ IRRef gen_ssa_string_constant(Str str) {
 }
 
 void gen_ssa_return(IRRef val, Type type) {
-  if (type.i == TYPE_VOID) {
+  if (type_eq(type, type_void)) {
     fprintf(outf, "  ret\n");
   } else {
     fprintf(outf, "  ret %s\n", irref_as_str(val));

@@ -1,5 +1,4 @@
 # RET: 44
-# DISABLED
 def int stuff(int x):
     if x != 0:
         return 44

@@ -72,7 +72,7 @@ void lex_get_location_and_line_slow(uint32_t offset,
 // type.c
 
 typedef struct Type {
-  uint32_t i;
+  uint32_t u;
 } Type;
 
 #define TYPEKINDS_X \
@@ -109,6 +109,38 @@ typedef enum TypeKind {
 #undef X
       NUM_TYPE_KINDS,
 } TypeKind;
+
+#define BASIC_TYPE_CONSTANT_IMPL(typekind) \
+  (Type) {                                 \
+    (typekind << 24) | typekind            \
+  }
+#define type_none BASIC_TYPE_CONSTANT_IMPL(TYPE_NONE)
+#define type_void BASIC_TYPE_CONSTANT_IMPL(TYPE_VOID)
+#define type_bool BASIC_TYPE_CONSTANT_IMPL(TYPE_BOOL)
+#define type_u8 BASIC_TYPE_CONSTANT_IMPL(TYPE_U8)
+#define type_i8 BASIC_TYPE_CONSTANT_IMPL(TYPE_I8)
+#define type_u16 BASIC_TYPE_CONSTANT_IMPL(TYPE_U16)
+#define type_i16 BASIC_TYPE_CONSTANT_IMPL(TYPE_I16)
+#define type_u32 BASIC_TYPE_CONSTANT_IMPL(TYPE_U32)
+#define type_i32 BASIC_TYPE_CONSTANT_IMPL(TYPE_I32)
+#define type_u64 BASIC_TYPE_CONSTANT_IMPL(TYPE_U64)
+#define type_i64 BASIC_TYPE_CONSTANT_IMPL(TYPE_I64)
+#define type_float BASIC_TYPE_CONSTANT_IMPL(TYPE_FLOAT)
+#define type_double BASIC_TYPE_CONSTANT_IMPL(TYPE_DOUBLE)
+#define type_str BASIC_TYPE_CONSTANT_IMPL(TYPE_STR)
+#define type_range BASIC_TYPE_CONSTANT_IMPL(TYPE_RANGE)
+
+static inline FORCEINLINE bool type_is_none(Type a) {
+  return a.u == 0;
+}
+
+static inline FORCEINLINE bool type_eq(Type a, Type b) {
+  return a.u == b.u;
+}
+
+static inline FORCEINLINE TypeKind type_kind(Type a) {
+  return (TypeKind)(a.u & 0xff);
+}
 
 void type_init(void);
 void type_destroy_for_tests(void);

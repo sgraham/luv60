@@ -253,30 +253,24 @@ static uint64_t const_expression(void) {
 }
 
 static Type basic_tok_to_type[NUM_TOKEN_KINDS] = {
-    [TOK_BOOL] = {TYPE_BOOL},      //
-    [TOK_BYTE] = {TYPE_U8},        //
-    [TOK_CODEPOINT] = {TYPE_I32},  //
-    [TOK_DOUBLE] = {TYPE_DOUBLE},  //
-    [TOK_F32] = {TYPE_FLOAT},      //
-    [TOK_F64] = {TYPE_DOUBLE},     //
-    [TOK_FLOAT] = {TYPE_FLOAT},    //
-    [TOK_I16] = {TYPE_I16},        //
-    [TOK_I32] = {TYPE_I32},        //
-    [TOK_I64] = {TYPE_I64},        //
-    [TOK_I8] = {TYPE_I8},          //
-    [TOK_INT] = {TYPE_I32},        //
-    [TOK_STR] = {TYPE_STR},        //
-    [TOK_U16] = {TYPE_U16},        //
-    [TOK_U32] = {TYPE_U32},        //
-    [TOK_U64] = {TYPE_U64},        //
-    [TOK_U8] = {TYPE_U8},          //
-    [TOK_UINT] = {TYPE_U32},       //
-
-    //[TOK_CONST_CHAR] = TYPE_CONST_CHAR,      //
-    //[TOK_CONST_OPAQUE] = TYPE_CONST_OPAQUE,  //
-    //[TOK_F16] = TYPE_F16,                    //
-    //[TOK_OPAQUE] = TYPE_OPAQUE,              //
-    //[TOK_SIZE_T] = TYPE_SIZE_T,              //
+    [TOK_BOOL] = type_bool,      //
+    [TOK_BYTE] = type_u8,        //
+    [TOK_CODEPOINT] = type_i32,  //
+    [TOK_DOUBLE] = type_double,  //
+    [TOK_F32] = type_float,      //
+    [TOK_F64] = type_double,     //
+    [TOK_FLOAT] = type_float,    //
+    [TOK_I16] = type_i16,        //
+    [TOK_I32] = type_i32,        //
+    [TOK_I64] = type_i64,        //
+    [TOK_I8] = type_i8,          //
+    [TOK_INT] = type_i32,        //
+    [TOK_STR] = type_str,        //
+    [TOK_U16] = type_u16,        //
+    [TOK_U32] = type_u32,        //
+    [TOK_U64] = type_u64,        //
+    [TOK_U8] = type_u8,          //
+    [TOK_UINT] = type_u32,       //
 };
 
 static Type parse_type(void) {
@@ -290,7 +284,7 @@ static Type parse_type(void) {
     }
     consume(TOK_RSQUARE, "Expect ']' to close array type.");
     Type elem = parse_type();
-    if (!elem.i) {
+    if (type_is_none(elem)) {
       error("Expecting type of array or slice.");
     }
     return make_type_array(parser.cur_offset, count, elem);
@@ -306,11 +300,11 @@ static Type parse_type(void) {
 
   if (parser.cur_kind >= TOK_BOOL && parser.cur_kind <= TOK_UINT) {
     Type t = basic_tok_to_type[parser.cur_kind];
-    ASSERT(t.i != 0);
+    ASSERT(!type_is_none(t));
     advance();
     return t;
   }
-  return (Type){0};
+  return type_none;
 }
 
 static Str str_from_previous(void) {
@@ -333,8 +327,7 @@ static FuncParams parse_func_params(void) {
   while (require_more || !check(TOK_RPAREN)) {
     require_more = false;
     Type param_type = parse_type();
-    if (!param_type.i) {
-      advance();
+    if (type_is_none(param_type)) {
       error("Expect function parameter.");
     }
     Str param_name = parse_name("Expect parameter name.");
@@ -380,15 +373,15 @@ static Operand operand_const(Type type, IRRef irref) {
 }
 
 static bool is_arithmetic_type(Type type) {
-  return type.i >= TYPE_U8 && type.i <= TYPE_DOUBLE;
+  return type_kind(type) >= TYPE_U8 && type_kind(type) <= TYPE_DOUBLE;
 }
 
 static bool is_integer_type(Type type) {
-  return type.i >= TYPE_U8 && type.i <= TYPE_ENUM;
+  return type_kind(type) >= TYPE_U8 && type_kind(type) <= TYPE_ENUM;
 }
 
 static bool is_ptr_like_type(Type type) {
-  return type.i == TYPE_PTR || type.i == TYPE_FUNC;
+  return type_kind(type) == TYPE_PTR || type_kind(type) == TYPE_FUNC;
 }
 
 #if 0
@@ -398,7 +391,7 @@ static bool is_floating_type(Type type) {
 #endif
 
 static bool is_condition_type(Type type) {
-  switch (type.i) {
+  switch (type_kind(type)) {
     case TYPE_BOOL:
     case TYPE_STR:
     case TYPE_SLICE:
@@ -411,9 +404,9 @@ static bool is_condition_type(Type type) {
 
 static bool is_convertible(Operand* operand, Type dest) {
   Type src = operand->type;
-  if (dest.i == src.i) {
+  if (type_eq(dest, src)) {
     return true;
-  } else if (dest.i == TYPE_VOID) {
+  } else if (type_kind(dest) == TYPE_VOID) {
     return true;
   } else if (is_arithmetic_type(dest) && is_arithmetic_type(src)) {
     return true;
@@ -428,7 +421,7 @@ static bool is_castable(Operand* operand, Type dest) {
   Type src = operand->type;
   if (is_convertible(operand, dest)) {
     return true;
-  } else if (dest.i == TYPE_BOOL) {
+  } else if (type_kind(dest) == TYPE_BOOL) {
     return is_ptr_like_type(src) || is_integer_type(src);
   } else if (is_integer_type(dest)) {
     return is_ptr_like_type(src);
@@ -442,7 +435,7 @@ static bool is_castable(Operand* operand, Type dest) {
 }
 
 static bool cast_operand(Operand* operand, Type type) {
-  if (operand->type.i != type.i) {
+  if (type_kind(operand->type) != type_kind(type)) {
     if (!is_castable(operand, type)) {
       return false;
     }
@@ -636,7 +629,7 @@ static Operand parse_call(Operand left, bool can_assign) {
   if (can_assign && match_assignment()) {
     CHECK(false && "todo; returning address i think");
   }
-  if (left.type.i != TYPE_FUNC) {
+  if (type_kind(left.type) != TYPE_FUNC) {
     errorf("Expected function type, but type is %s.", type_as_str(left.type));
   }
   Type arg_types[P_MAX_FUNC_PARAMS];
@@ -676,8 +669,7 @@ static Operand parse_null_literal(bool can_assign) { ASSERT(false && "not implem
 static Operand parse_number(bool can_assign) {
   Type suffix = {0};
   uint64_t val = scan_int(lex_get_strview(parser.prev_offset, parser.cur_offset), &suffix);
-  return operand_const((Type){suffix.i == TYPE_NONE ? TYPE_U64 : suffix.i},
-                       gen_ssa_const(val, suffix));
+  return operand_const(type_is_none(suffix) ? type_u64 : suffix, gen_ssa_const(val, suffix));
 }
 
 static Operand parse_offsetof(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
@@ -1002,9 +994,9 @@ static bool parse_func_body_only_statement(void) {
   }
 
   if (match(TOK_RETURN)) {
-    ASSERT(parser.cur_func->return_type.i);
+    ASSERT(!type_is_none(parser.cur_func->return_type));
     Operand op = operand_null;
-    if (parser.cur_func->return_type.i != TYPE_VOID) {
+    if (!type_eq(parser.cur_func->return_type, type_void)) {
       op = parse_expression();
     }
 
@@ -1048,7 +1040,7 @@ static void parse_variable_statement(Type type) {
   ASSERT(name.i);
 
   bool have_init;
-  ASSERT(type.i);
+  ASSERT(!type_is_none(type));
   have_init = match(TOK_EQ);
   if (have_init) {
     Operand op = parse_expression();
@@ -1067,7 +1059,7 @@ static bool parse_anywhere_statement(void) {
   }
 
   Type var_type = parse_type();
-  if (var_type.i) {
+  if (!type_is_none(var_type)) {
     parse_variable_statement(var_type);
     return true;
   }

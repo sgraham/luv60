@@ -2,6 +2,8 @@
 
 #include "dict.h"
 
+_Static_assert(NUM_TYPE_KINDS < (1<<8), "Too many TypeKind");
+
 typedef struct TypeData {
   uint32_t kaps;  // 8 kind 8 align 8 padding 8 size(for non-array)
   union {
@@ -69,6 +71,10 @@ static void set_typedata_raw(uint32_t index, uint32_t data) {
   typedata[index].kaps = data;
 }
 
+static inline TypeData* type_td(Type t) {
+  return &typedata[t.u >> 8];
+}
+
 static uint32_t pack_type(TypeKind kind, uint8_t size, uint8_t align, uint8_t padding) {
   ASSERT(kind != 0);
   ASSERT(kind < (1<<8));
@@ -77,8 +83,9 @@ static uint32_t pack_type(TypeKind kind, uint8_t size, uint8_t align, uint8_t pa
   return ret;
 }
 
-static Type type_alloc(TypeKind kind, int extra) {
-  Type ret = {num_typedata++};
+static Type type_alloc(TypeKind kind, int extra, uint32_t* out_rewind_location) {
+  *out_rewind_location = num_typedata;
+  Type ret = {((num_typedata++) << 8) | kind};
   num_typedata += extra;
   return ret;
 }
@@ -86,21 +93,21 @@ static Type type_alloc(TypeKind kind, int extra) {
 static size_t functype_hash_func(void* functype) {
   Type t = *(Type*)functype;
   size_t hash = 0;
-  TypeData* td = &typedata[t.i];
+  TypeData* td = type_td(t);
   size_t typedata_blocks = 1 + (td->FUNC.num_params + 2) / 3;
-  dict_hash_write(&hash, &typedata[t.i], typedata_blocks * sizeof(TypeData));
+  dict_hash_write(&hash, td, typedata_blocks * sizeof(TypeData));
   return hash;
 }
 
 static bool functype_eq_func(void* keyvoid, void* slotvoid) {
   Type k = *(Type*)keyvoid;
   Type s = *(Type*)slotvoid;
-  TypeData* ktd = &typedata[k.i];
-  TypeData* std = &typedata[s.i];
+  TypeData* ktd = type_td(k);
+  TypeData* std = type_td(s);
   if (ktd->FUNC.num_params != std->FUNC.num_params) {
     return false;
   }
-  if (ktd->FUNC.return_type.i != std->FUNC.return_type.i) {
+  if (!type_eq(ktd->FUNC.return_type, std->FUNC.return_type)) {
     return false;
   }
   size_t extra_typedata_blocks = (ktd->FUNC.num_params + 2) / 3;
@@ -108,14 +115,15 @@ static bool functype_eq_func(void* keyvoid, void* slotvoid) {
 }
 
 Type type_function(Type* params, size_t num_params, Type return_type) {
-  Type func = type_alloc(TYPE_FUNC, /*extra=*/(num_params + 2) / 3);
+  uint32_t rewind_location;
+  Type func = type_alloc(TYPE_FUNC, /*extra=*/(num_params + 2) / 3, &rewind_location);
 
   // Copy it in to a new slot so that the DictImpl can hash/eq them, dealloc by
   // rewinding num_typedata if it turns out this type already exists.
   // TODO: probably could be a little faster with a special dict method that
   // takes a precomputed hash so we could calculate it in place first and then
   // only copy in to typedata if we don't match.
-  TypeData* td = &typedata[func.i];
+  TypeData* td = type_td(func);
   td->kaps = pack_type(TYPE_FUNC, 8, 8, 0);
   td->FUNC.num_params = num_params;
   td->FUNC.return_type = return_type;
@@ -135,20 +143,18 @@ Type type_function(Type* params, size_t num_params, Type return_type) {
                                         functype_eq_func, sizeof(Type), _Alignof(Type));
   Type* dicttype = ((Type*)dict_rawiter_get(&res.iter));
   if (res.inserted) {
-    dicttype->i = func.i;
+    dicttype->u = func.u;
     return func;
   } else {
-    // This is a "rewind", assuming that they're linearly allocated and we just
-    // got the last one, return the counter to top for the next allocation.
-    num_typedata = func.i;
+    num_typedata = rewind_location;
     return *dicttype;
   }
 }
 
 // returned str is either the cstr() of an interned string, or a constant.
 const char* type_as_str(Type type) {
-  if (natural_builtin_type_names[type.i]) {
-    return natural_builtin_type_names[type.i];
+  if (natural_builtin_type_names[type_kind(type)]) {
+    return natural_builtin_type_names[type_kind(type)];
   } else {
     return "TODO";
   }
