@@ -26,14 +26,6 @@ typedef struct TypeDataExtraFunc {
 } TypeDataExtraFunc;
 #endif
 
-#define P_MAX_FUNC_PARAMS 32
-typedef struct FuncParams {
-  Type types[P_MAX_FUNC_PARAMS];
-  Str names[P_MAX_FUNC_PARAMS];
-  int num_params;
-  IRRef refs[P_MAX_FUNC_PARAMS];
-} FuncParams;
-
 typedef enum SymKind {
   SYM_NONE,
   SYM_VAR,
@@ -74,13 +66,13 @@ typedef struct Sym {
 } Sym;
 
 typedef struct FuncData {
-  Str name;
   Sym* sym;
 } FuncData;
 
 #define MAX_VARS_IN_SCOPE 256
 #define MAX_FUNC_NESTING 16
 #define MAX_VARIABLE_SCOPES 32
+#define MAX_FUNC_PARAMS 32
 
 typedef struct VarScope VarScope;
 struct VarScope {
@@ -180,16 +172,17 @@ static void leave_scope(void) {
   }
 }
 
-static IRRef enter_function(Sym* sym, Type return_type, Str name, FuncParams params) {
+static IRRef enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS]) {
   parser.cur_func = &parser.funcdatas[parser.num_funcdatas++];
-  parser.cur_func->name = name;
   parser.cur_func->sym = sym;
   enter_scope(/*is_module=*/false, /*is_function=*/true);
 
-  for (int i = 0; i < params.num_params; ++i) {
-    params.refs[i] = make_param(params.names[i], params.types[i])->irref;
+  uint32_t num_params = type_func_num_params(sym->type);
+  IRRef refs[MAX_FUNC_PARAMS];
+  for (uint32_t i = 0; i < num_params; ++i) {
+    refs[i] = make_param(param_names[i], type_func_param(sym->type, i))->irref;
   }
-  return gen_ssa_start_function(name, return_type, params.num_params, params.refs);
+  return gen_ssa_start_function(sym->name, type_func_return_type(sym->type), num_params, refs);
 }
 
 static void leave_function(void) {
@@ -322,8 +315,8 @@ static Str parse_name(const char* err) {
   return str_from_previous();
 }
 
-static FuncParams parse_func_params(void) {
-  FuncParams ret = {0};
+static uint32_t parse_func_params(Type out_types[MAX_FUNC_PARAMS], Str out_names[MAX_FUNC_PARAMS]) {
+  uint32_t num_params = 0;
   bool require_more = false;
   while (require_more || !check(TOK_RPAREN)) {
     require_more = false;
@@ -333,9 +326,10 @@ static FuncParams parse_func_params(void) {
     }
     Str param_name = parse_name("Expect parameter name.");
     ASSERT(param_name.i);
-    ret.types[ret.num_params] = param_type;
-    ret.names[ret.num_params] = param_name;
-    ++ret.num_params;
+    ASSERT(num_params < MAX_FUNC_PARAMS);
+    out_types[num_params] = param_type;
+    out_names[num_params] = param_name;
+    num_params += 1;
 
     if (check(TOK_RPAREN)) {
       break;
@@ -344,7 +338,7 @@ static FuncParams parse_func_params(void) {
     require_more = true;
   }
   consume(TOK_RPAREN, "Expect ')' after function parameters.");
-  return ret;
+  return num_params;
 }
 
 static void skip_newlines(void) {
@@ -633,8 +627,8 @@ static Operand parse_call(Operand left, bool can_assign) {
   if (type_kind(left.type) != TYPE_FUNC) {
     errorf("Expected function type, but type is %s.", type_as_str(left.type));
   }
-  Type arg_types[P_MAX_FUNC_PARAMS];
-  IRRef arg_values[P_MAX_FUNC_PARAMS];
+  Type arg_types[MAX_FUNC_PARAMS];
+  IRRef arg_values[MAX_FUNC_PARAMS];
   uint32_t num_args = 0;
   if (!check(TOK_RPAREN)) {
     for (;;) {
@@ -1030,16 +1024,20 @@ static void parse_def_statement(void) {
   }
   Str name = parse_name("Expect function name.");
   consume(TOK_LPAREN, "Expect '(' after function name.");
-  FuncParams params = parse_func_params();
+
+  Type param_types[MAX_FUNC_PARAMS];
+  Str param_names[MAX_FUNC_PARAMS];
+  uint32_t num_params = parse_func_params(param_types, param_names);
+
   consume(TOK_COLON, "Expect ':' before function body.");
   consume(TOK_NEWLINE, "Expect newline before function body. (TODO: single line)");
   skip_newlines();
   consume(TOK_INDENT, "Expect indented function body.");
 
-  Type type = type_function(params.types, params.num_params, return_type);
+  Type functype = type_function(param_types, num_params, return_type);
 
-  Sym* func = sym_new(SYM_FUNC, name, type);
-  func->irref = enter_function(func, return_type, name, params);
+  Sym* funcsym = sym_new(SYM_FUNC, name, functype);
+  funcsym->irref = enter_function(funcsym, param_names);
   parse_block();
   leave_function();
 }
