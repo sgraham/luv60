@@ -170,6 +170,14 @@ IRRef gen_ssa_neq(IRRef a, IRRef b) {
   return ret;
 }
 
+void gen_ssa_print_i32(IRRef i) {
+  fprintf(outf, "  call $printf(l $intfmt, ..., w %s)\n", irref_as_str(i));
+}
+
+void gen_ssa_print_str(IRRef s) {
+  fprintf(outf, "  call $printf(l $strfmt, ..., w %s)\n", irref_as_str(s));
+}
+
 IRRef gen_ssa_call(Type return_type,
                    IRRef func,
                    int num_args,
@@ -195,5 +203,7 @@ void gen_ssa_finish(void) {
       fprintf(outf, "data %s = { b \"%s\" }\n", irref_as_str((IRRef){i}), cstr(data->str));
     }
   }
+  fprintf(outf, "data $intfmt = { b \"%%d\\n\" }\n");
+  fprintf(outf, "data $strfmt = { b \"%%s\\n\" }\n");
   fclose(outf);
 }

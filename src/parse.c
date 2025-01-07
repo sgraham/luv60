@@ -679,7 +679,7 @@ static Operand parse_sizeof(bool can_assign) { ASSERT(false && "not implemented"
 static Operand parse_string(bool can_assign) {
   // TODO: parse escapes
   StrView str = lex_get_strview(parser.prev_offset, parser.cur_offset);
-  return operand_const((Type){TYPE_STR},
+  return operand_const(type_str,
                        gen_ssa_string_constant(str_intern_len(str.data + 1, str.size - 2)));
 }
 
@@ -981,14 +981,23 @@ static void if_statement(void) {
   gen_ssa_start_block(after);
 }
 
+static void print_statement(void) {
+  Operand val = parse_expression();
+  if (type_eq(val.type, type_str)) {
+    gen_ssa_print_str(val.irref);
+  } else if (convert_operand(&val, type_i32)) {
+    gen_ssa_print_i32(val.irref);
+  }
+  consume(TOK_NEWLINE, "Expect newline after print.");
+}
+
 static bool parse_func_body_only_statement(void) {
   if (match(TOK_IF)) {
      if_statement();
      return true;
   }
   if (match(TOK_PRINT)) {
-    //gen_ssa_print(parse_expression());
-    consume(TOK_NEWLINE, "Expect newline after print.");
+    print_statement();
     return true;
   }
 
