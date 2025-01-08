@@ -89,8 +89,64 @@ void gen_ssa_init(const char* filename) {
   outf = fopen(filename, "wb");
 }
 
-static const char* type_to_qbe_name(Type type) {
-  return "w";
+static const char* type_to_qbe_base_type(Type type) {
+  switch (type_kind(type)) {
+    case TYPE_U64:
+    case TYPE_I64:
+      return "l";
+    case TYPE_U32:
+    case TYPE_I32:
+    case TYPE_U16:
+    case TYPE_I16:
+    case TYPE_U8:
+    case TYPE_I8:
+      return "w";
+    default:
+      ASSERT(false && "todo");
+      return "?";
+  }
+}
+
+static const char* type_to_qbe_store_type(Type type) {
+  switch (type_kind(type)) {
+    case TYPE_U64:
+    case TYPE_I64:
+      return "l";
+    case TYPE_U32:
+    case TYPE_I32:
+      return "w";
+    case TYPE_U16:
+    case TYPE_I16:
+      return "h";
+    case TYPE_U8:
+    case TYPE_I8:
+      return "b";
+    default:
+      ASSERT(false && "todo");
+      return "?";
+  }
+}
+
+static const char* type_to_qbe_load_type(Type type) {
+  switch (type_kind(type)) {
+    case TYPE_U64:
+    case TYPE_I64:
+      return "l";
+    case TYPE_U32:
+    case TYPE_I32:
+      return "w";
+    case TYPE_U16:
+      return "uh";
+    case TYPE_I16:
+      return "sh";
+    case TYPE_U8:
+      return "ub";
+    case TYPE_I8:
+      return "sb";
+    default:
+      ASSERT(false && "todo");
+      return "?";
+  }
 }
 
 IRRef gen_ssa_start_function(Str name, Type return_type, int num_params, IRRef* params) {
@@ -98,9 +154,9 @@ IRRef gen_ssa_start_function(Str name, Type return_type, int num_params, IRRef* 
   if (name.i == main_func_name.i) {
     export = "export ";
   }
-  fprintf(outf, "%sfunction %s $%s(", export, type_to_qbe_name(return_type), cstr(name));
+  fprintf(outf, "%sfunction %s $%s(", export, type_to_qbe_base_type(return_type), cstr(name));
   for (int i = 0; i < num_params; ++i) {
-    fprintf(outf, "%s %s%s", type_to_qbe_name(refs[params[i].i].type), irref_as_str(params[i]),
+    fprintf(outf, "%s %s%s", type_to_qbe_base_type(refs[params[i].i].type), irref_as_str(params[i]),
             i < num_params - 1 ? ", " : "");
   }
   fprintf(outf, ") {\n");
@@ -111,7 +167,7 @@ IRRef gen_ssa_start_function(Str name, Type return_type, int num_params, IRRef* 
 
 IRRef gen_ssa_const(uint64_t val, Type type) {
   IRRef ret = gen_ssa_make_temp(type);
-  fprintf(outf, "  %s =w copy %lld\n", irref_as_str(ret), val);
+  fprintf(outf, "  %s =%s copy %lld\n", irref_as_str(ret), type_to_qbe_base_type(type), val);
   return ret;
 }
 
@@ -127,17 +183,33 @@ void gen_ssa_return(IRRef val, Type type) {
   }
 }
 
-void gen_ssa_alloc_local(IRRef ref) {
-  fprintf(outf, "  %s =l alloc4 4\n", irref_as_str(ref));  // TODO: type
+void gen_ssa_alloc_local(size_t size, size_t align, IRRef ref) {
+  switch(align) {
+    case 1:
+    case 2:
+    case 4:
+      fprintf(outf, "  %s =l alloc4 %zu\n", irref_as_str(ref), size);
+      break;
+    case 8:
+      fprintf(outf, "  %s =l alloc8 %zu\n", irref_as_str(ref), size);
+      break;
+    case 16:
+      fprintf(outf, "  %s =l alloc16 %zu\n", irref_as_str(ref), size);
+      break;
+    default:
+      ASSERT(false && "unhandled alignment");
+  }
 }
 
 void gen_ssa_store(IRRef into, Type type, IRRef val) {
-  fprintf(outf, "  storew %s, %s\n", irref_as_str(val), irref_as_str(into));
+  fprintf(outf, "  store%s %s, %s\n", type_to_qbe_store_type(type), irref_as_str(val),
+          irref_as_str(into));
 }
 
 IRRef gen_ssa_load(IRRef from, Type type) {
   IRRef ret = gen_ssa_make_temp(type);
-  fprintf(outf, "  %s =w loadw %s\n", irref_as_str(ret), irref_as_str(from));
+  fprintf(outf, "  %s =%s load%s %s\n", irref_as_str(ret), type_to_qbe_base_type(type),
+          type_to_qbe_load_type(type), irref_as_str(from));
   return ret;
 }
 

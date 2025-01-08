@@ -119,7 +119,7 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
   Sym* new = sym_new(kind, name, type);
   new->irref = gen_ssa_make_temp(type);
   new->scope_decl = SSD_DECLARED_LOCAL;
-  gen_ssa_alloc_local(new->irref);
+  gen_ssa_alloc_local(type_size(type), type_align(type), new->irref);
   return new;
 }
 
@@ -700,7 +700,8 @@ static Operand parse_null_literal(bool can_assign) { ASSERT(false && "not implem
 static Operand parse_number(bool can_assign) {
   Type suffix = {0};
   uint64_t val = scan_int(lex_get_strview(parser.prev_offset, parser.cur_offset), &suffix);
-  return operand_const(type_is_none(suffix) ? type_u64 : suffix, gen_ssa_const(val, suffix));
+  Type type = type_is_none(suffix) ? type_u64 : suffix;
+  return operand_const(type, gen_ssa_const(val, type));
 }
 
 static Operand parse_offsetof(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
@@ -801,6 +802,14 @@ static Operand parse_variable(bool can_assign) {
     TokenKind eq = parser.prev_kind;
     if (scope_result == SCOPE_RESULT_UNDEFINED && scope_decl == SSD_ASSUMED_GLOBAL) {
       errorf("Local variable '%s' referenced before assignment.", cstr(target));
+    } else if (scope_result == SCOPE_RESULT_LOCAL) {
+      ASSERT(sym);
+      Operand op = parse_expression();
+      if (!convert_operand(&op, sym->type)) {
+        errorf("Cannot assign type %s to type %s.", type_as_str(op.type), type_as_str(sym->type));
+      }
+      gen_ssa_store(sym->irref, op.type, op.irref);
+      return operand_null;
     } else if (scope_result != SCOPE_RESULT_LOCAL && scope_decl == SSD_NONE) {
       if (eq == TOK_EQ) {
         // Variable declaration without a type.
@@ -825,7 +834,7 @@ static Operand parse_variable(bool can_assign) {
     }
   }
 
-  abort();
+  errorf("internal error in '%s'", __FUNCTION__);
   return operand_null;
 }
 
@@ -1110,7 +1119,10 @@ static void parse_variable_statement(Type type) {
   have_init = match(TOK_EQ);
   if (have_init) {
     Operand op = parse_expression();
-    // TODO: convert val to type
+    if (!convert_operand(&op, type)) {
+      errorf("Initializer cannot be converted from type %s to declared type %s.",
+             type_as_str(op.type), type_as_str(type));
+    }
     Sym* new = make_local_and_alloc(SYM_VAR, name, op.type);
     gen_ssa_store(new->irref, op.type, op.irref);
   }

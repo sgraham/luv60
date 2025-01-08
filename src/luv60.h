@@ -112,7 +112,7 @@ typedef enum TypeKind {
 
 #define BASIC_TYPE_CONSTANT_IMPL(typekind) \
   (Type) {                                 \
-    (typekind << 24) | typekind            \
+    (typekind << 8) | typekind             \
   }
 #define type_none BASIC_TYPE_CONSTANT_IMPL(TYPE_NONE)
 #define type_void BASIC_TYPE_CONSTANT_IMPL(TYPE_VOID)
@@ -134,6 +134,9 @@ void type_init(void);
 void type_destroy_for_tests(void);
 // returned str is either the cstr() of an interned string, or a constant.
 const char* type_as_str(Type type);
+
+size_t type_size(Type type);
+size_t type_align(Type type);
 
 Type type_function(Type* params, size_t num_params, Type return_type);
 
@@ -205,7 +208,7 @@ void gen_ssa_end_function(void);
 IRRef gen_ssa_make_temp(Type type);
 IRBlock gen_ssa_make_block_name(void);
 void gen_ssa_start_block(IRBlock block);
-void gen_ssa_alloc_local(IRRef ref);
+void gen_ssa_alloc_local(size_t size, size_t align, IRRef ref);
 
 IRRef gen_ssa_string_constant(Str str);
 IRRef gen_ssa_const(uint64_t val, Type type);

@@ -1,0 +1,56 @@
+# TXT: 1
+# TXT: 2
+# TXT: 3
+# TXT: 4
+# TXT: 5
+# TXT: 6
+# TXT: 7
+# TXT: 8
+# TXT: 10
+# TXT: 11
+# TXT: 12
+# TXT: 13
+# TXT: 14
+# TXT: 15
+# TXT: 16
+# TXT: 17
+# TXT: ok
+def int main():
+    i64 a = 1
+    i32 b = 2
+    i16 c = 3
+    i8 d = 4
+    u64 e = 5
+    u32 f = 6
+    u16 g = 7
+    u8 h = 8
+
+    print a
+    print b
+    print c
+    print d
+    print e
+    print f
+    print g
+    print h
+
+    a = 10
+    b = 11
+    c = 12
+    d = 13
+    e = 14
+    f = 15
+    g = 16
+    h = 17
+
+    print a
+    print b
+    print c
+    print d
+    print e
+    print f
+    print g
+    print h
+
+    print "ok"
+    return 0

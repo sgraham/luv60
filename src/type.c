@@ -5,6 +5,7 @@
 _Static_assert(NUM_TYPE_KINDS < (1<<8), "Too many TypeKind");
 
 typedef struct TypeData {
+  // TODO: maybe drop kind and padding, make align 6 bits, then array size max 1<<26
   uint32_t kaps;  // 8 kind 8 align 8 padding 8 size(for non-array)
   union {
     struct {
@@ -77,10 +78,26 @@ static inline TypeData* type_td(Type t) {
 
 static uint32_t pack_type(TypeKind kind, uint8_t size, uint8_t align, uint8_t padding) {
   ASSERT(kind != 0);
-  ASSERT(kind < (1<<8));
+  ASSERT(kind < (1 << 8));
   ASSERT(align > 0);
   uint32_t ret = (size << 24) | (padding << 16) | (align << 8) | kind;
   return ret;
+}
+
+size_t type_size(Type type) {
+  TypeKind kind = type_kind(type);
+  if (kind == TYPE_ARRAY) {
+    ASSERT(false && "todo");
+  } else {
+    ASSERT((type_td(type)->kaps & 0xff) == kind);
+    return type_td(type)->kaps >> 24;
+  }
+}
+
+size_t type_align(Type type) {
+  TypeKind kind = type_kind(type);
+  ASSERT((type_td(type)->kaps & 0xff) == kind);
+  return (type_td(type)->kaps >> 8) & 0xff;
 }
 
 static Type type_alloc(TypeKind kind, int extra, uint32_t* out_rewind_location) {
