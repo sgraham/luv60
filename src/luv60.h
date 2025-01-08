@@ -42,6 +42,7 @@ void str_intern_pool_destroy_for_tests(void);
 
 Str str_intern_len(const char* str, uint32_t len);
 Str str_intern(const char* str);
+Str str_process_escapes(const char* str, uint32_t len);
 
 static inline FORCEINLINE const char* cstr(Str str) {
   return &str_intern_pool[str.i];

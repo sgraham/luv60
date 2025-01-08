@@ -88,6 +88,7 @@ size_t type_size(Type type) {
   TypeKind kind = type_kind(type);
   if (kind == TYPE_ARRAY) {
     ASSERT(false && "todo");
+    abort();
   } else {
     ASSERT((type_td(type)->kaps & 0xff) == kind);
     return type_td(type)->kaps >> 24;

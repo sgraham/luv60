@@ -21,11 +21,33 @@ static int num_refs;
 //} IRBlockData;
 static int num_blocks;
 
+static bool is_aggregate_type(Type type) {
+  switch (type_kind(type)) {
+    case TYPE_U64:
+    case TYPE_I64:
+    case TYPE_U32:
+    case TYPE_I32:
+    case TYPE_U16:
+    case TYPE_I16:
+    case TYPE_U8:
+    case TYPE_I8:
+      return false;
+    case TYPE_STR:
+      return true;
+    default:
+      ASSERT(false && "todo");
+      abort();
+  }
+}
+
 IRRef gen_ssa_make_temp(Type type) {
   IRRef ret = {num_refs++};
   IRRefData* data = &refs[ret.i];
   data->kind = REF_TEMP;
   data->type = type;
+  if (is_aggregate_type(type)) {
+    gen_ssa_alloc_local(type_size(type), type_align(type), ret);
+  }
   return ret;
 }
 
@@ -33,7 +55,7 @@ static IRRef gen_ssa_make_str_const(Str str) {
   IRRef ret = {num_refs++};
   IRRefData* data = &refs[ret.i];
   data->kind = REF_STR_CONST;
-  data->type = (Type){TYPE_STR};
+  data->type = type_str;
   data->str = str;
   return ret;
 }
@@ -87,9 +109,34 @@ void gen_ssa_init(const char* filename) {
   num_blocks = 0;
   main_func_name = str_intern_len("main", 4);
   outf = fopen(filename, "wb");
+  fprintf(outf, "type :Str = { l, l }\n");
+  fprintf(outf, "data $intfmt = { b \"%%d\\n\" }\n");
+  fprintf(outf, "data $strfmt = { b \"%%.*s\\n\" }\n");
 }
 
-static const char* type_to_qbe_base_type(Type type) {
+static const char* type_to_qbe_data_type(Type type) {
+  switch (type_kind(type)) {
+    case TYPE_U64:
+    case TYPE_I64:
+      return "l";
+    case TYPE_U32:
+    case TYPE_I32:
+      return "w";
+    case TYPE_U16:
+    case TYPE_I16:
+      return "h";
+    case TYPE_U8:
+    case TYPE_I8:
+      return "b";
+    case TYPE_STR:
+      return ":Str";
+    default:
+      ASSERT(false && "todo");
+      return "?";
+  }
+}
+
+static const char* type_to_qbe_reg_type(Type type) {
   switch (type_kind(type)) {
     case TYPE_U64:
     case TYPE_I64:
@@ -108,6 +155,10 @@ static const char* type_to_qbe_base_type(Type type) {
 }
 
 static const char* type_to_qbe_store_type(Type type) {
+  if (is_aggregate_type(type)) {
+    // TODO: assuming this path is for the pointer to the aggregate, bad idea?
+    return "l";
+  }
   switch (type_kind(type)) {
     case TYPE_U64:
     case TYPE_I64:
@@ -154,9 +205,9 @@ IRRef gen_ssa_start_function(Str name, Type return_type, int num_params, IRRef* 
   if (name.i == main_func_name.i) {
     export = "export ";
   }
-  fprintf(outf, "%sfunction %s $%s(", export, type_to_qbe_base_type(return_type), cstr(name));
+  fprintf(outf, "%sfunction %s $%s(", export, type_to_qbe_data_type(return_type), cstr(name));
   for (int i = 0; i < num_params; ++i) {
-    fprintf(outf, "%s %s%s", type_to_qbe_base_type(refs[params[i].i].type), irref_as_str(params[i]),
+    fprintf(outf, "%s %s%s", type_to_qbe_reg_type(refs[params[i].i].type), irref_as_str(params[i]),
             i < num_params - 1 ? ", " : "");
   }
   fprintf(outf, ") {\n");
@@ -167,7 +218,7 @@ IRRef gen_ssa_start_function(Str name, Type return_type, int num_params, IRRef* 
 
 IRRef gen_ssa_const(uint64_t val, Type type) {
   IRRef ret = gen_ssa_make_temp(type);
-  fprintf(outf, "  %s =%s copy %lld\n", irref_as_str(ret), type_to_qbe_base_type(type), val);
+  fprintf(outf, "  %s =%s copy %lld\n", irref_as_str(ret), type_to_qbe_reg_type(type), val);
   return ret;
 }
 
@@ -208,7 +259,7 @@ void gen_ssa_store(IRRef into, Type type, IRRef val) {
 
 IRRef gen_ssa_load(IRRef from, Type type) {
   IRRef ret = gen_ssa_make_temp(type);
-  fprintf(outf, "  %s =%s load%s %s\n", irref_as_str(ret), type_to_qbe_base_type(type),
+  fprintf(outf, "  %s =%s load%s %s\n", irref_as_str(ret), type_to_qbe_reg_type(type),
           type_to_qbe_load_type(type), irref_as_str(from));
   return ret;
 }
@@ -248,15 +299,9 @@ static const char* cmp_names[NUM_IR_INT_CMPS] = {
 };
 
 IRRef gen_ssa_int_comparison(IRIntCmp cmp, IRRef a, IRRef b) {
-  IRRef ret = gen_ssa_make_temp((Type){TYPE_BOOL});
+  IRRef ret = gen_ssa_make_temp(type_bool);
   fprintf(outf, "  %s =w c%sw %s, %s\n", irref_as_str(ret), cmp_names[cmp], irref_as_str(a),
           irref_as_str(b));
-  return ret;
-}
-
-IRRef gen_ssa_neq(IRRef a, IRRef b) {
-  IRRef ret = gen_ssa_make_temp((Type){TYPE_BOOL});
-  fprintf(outf, "  %s =w cnew %s, %s\n", irref_as_str(ret), irref_as_str(a), irref_as_str(b));
   return ret;
 }
 
@@ -265,7 +310,14 @@ void gen_ssa_print_i32(IRRef i) {
 }
 
 void gen_ssa_print_str(IRRef s) {
-  fprintf(outf, "  call $printf(l $strfmt, ..., w %s)\n", irref_as_str(s));
+  IRRef bytes = gen_ssa_make_temp(type_u64);
+  fprintf(outf, "  %s =l loadl %s\n", irref_as_str(bytes), irref_as_str(s));
+  IRRef size_ptr = gen_ssa_make_temp(type_u64);
+  fprintf(outf, "  %s =l add %s, 8\n", irref_as_str(size_ptr), irref_as_str(s));
+  IRRef size = gen_ssa_make_temp(type_u64);
+  fprintf(outf, "  %s =l loadl %s\n", irref_as_str(size), irref_as_str(size_ptr));
+  fprintf(outf, "  call $printf(l $strfmt, ..., w %s, l %s)\n", irref_as_str(size),
+          irref_as_str(bytes));
 }
 
 IRRef gen_ssa_call(Type return_type,
@@ -274,7 +326,8 @@ IRRef gen_ssa_call(Type return_type,
                    Type* arg_types,
                    IRRef* arg_values) {
   IRRef ret = gen_ssa_make_temp(return_type);
-  fprintf(outf, "  %s =w call %s(", irref_as_str(ret), irref_as_str(func));
+  fprintf(outf, "  %s =%s call %s(", irref_as_str(ret), type_to_qbe_data_type(return_type),
+          irref_as_str(func));
   for (int i = 0; i < num_args; ++i) {
     fprintf(outf, "w %s%s", irref_as_str(arg_values[i]), i < num_args - 1 ? ", " : "");
   }
@@ -290,10 +343,18 @@ void gen_ssa_finish(void) {
   for (int i = 0; i < num_refs; ++i) {
     IRRefData* data = &refs[i];
     if (data->kind == REF_STR_CONST) {
-      fprintf(outf, "data %s = { b \"%s\" }\n", irref_as_str((IRRef){i}), cstr(data->str));
+      const char* strname = irref_as_str((IRRef){i});
+      fprintf(outf, "data %s_bytes = { b \"", strname);
+      for (const char* p = cstr(data->str); p != cstr(data->str) + str_len(data->str); ++p) {
+        if (*p >= 0x20) {
+          fprintf(outf, "%c", *p);
+        } else {
+          fprintf(outf, "\\x%02x", *p);
+        }
+      }
+      fprintf(outf, "\" }\n");
+      fprintf(outf, "data %s = { l %s_bytes, l %u }\n", strname, strname, str_len(data->str));
     }
   }
-  fprintf(outf, "data $intfmt = { b \"%%d\\n\" }\n");
-  fprintf(outf, "data $strfmt = { b \"%%s\\n\" }\n");
   fclose(outf);
 }

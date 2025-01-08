@@ -1,0 +1,8 @@
+def str func():
+    return "wee"
+
+def int main():
+    print "hi\nthere"
+    print 123
+    print func()
+    return 0

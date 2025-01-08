@@ -710,10 +710,17 @@ static Operand parse_range(bool can_assign) { ASSERT(false && "not implemented")
 static Operand parse_sizeof(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
 
 static Operand parse_string(bool can_assign) {
-  // TODO: parse escapes
-  StrView str = lex_get_strview(parser.prev_offset, parser.cur_offset);
-  return operand_const(type_str,
-                       gen_ssa_string_constant(str_intern_len(str.data + 1, str.size - 2)));
+  StrView strview = lex_get_strview(parser.prev_offset, parser.cur_offset);
+  if (memchr(strview.data, '\\', strview.size) != NULL) {
+    Str str = str_process_escapes(strview.data + 1, strview.size - 2);
+    if (str.i == 0) {
+      error("Invalid string escape.");
+    }
+    return operand_const(type_str, gen_ssa_string_constant(str));
+  } else {
+    return operand_const(
+        type_str, gen_ssa_string_constant(str_intern_len(strview.data + 1, strview.size - 2)));
+  }
 }
 
 static Operand parse_string_interpolate(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }

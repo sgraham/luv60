@@ -70,3 +70,45 @@ Str str_intern_len(const char* ptr, uint32_t len) {
 Str str_intern(const char* ptr) {
   return str_intern_len(ptr, strlen(ptr));
 }
+
+static char hex_digits[] = {
+    ['0'] = 0,  ['1'] = 1,  ['2'] = 2,  ['3'] = 3,  ['4'] = 4,  ['5'] = 5,  ['6'] = 6,  ['7'] = 7,
+    ['8'] = 8,  ['9'] = 9,  ['a'] = 10, ['b'] = 11, ['c'] = 12, ['d'] = 13, ['e'] = 14, ['f'] = 15,
+    ['A'] = 10, ['B'] = 11, ['C'] = 12, ['D'] = 13, ['E'] = 14, ['F'] = 15,
+};
+
+Str str_process_escapes(const char* ptr, uint32_t len) {
+  uint32_t allocate_bytes = len + sizeof(uint32_t) + 1;
+  uint32_t start = str_alloc_uninitialized_pool_bytes(allocate_bytes);
+  char* into_start = &str_intern_pool[start + sizeof(uint32_t)];
+  char* into = into_start;
+  for (const char* e = ptr; e != ptr + len; ++e) {
+    if (e[0] == '\\') {
+      switch (e[1]) {
+        case 'n': *into++ = '\n'; ++e; break;
+        case 't': *into++ = '\t'; ++e; break;
+        case 'r': *into++ = '\r'; ++e; break;
+        case '\\': *into++ = '\\'; ++e; break;
+        case '"': *into++ = '"'; ++e; break;
+        case 'x':
+          if (e + 3 >= ptr + len) {
+            goto escape_error;
+          }
+          *into++ = (char)(hex_digits[(int)e[2]] * 16 + hex_digits[(int)e[3]]);
+          e += 3;
+          break;
+        default:
+escape_error:
+          return (Str){0};
+      }
+    } else {
+      *into++ = *e;
+    }
+  }
+  uint32_t final_len = into - into_start;
+  memcpy(&str_intern_pool[start], &final_len, sizeof(final_len));
+  *into++ = 0;
+  ASSERT(final_len <= allocate_bytes);
+  str_insert_location -= allocate_bytes - (final_len + sizeof(uint32_t));
+  return (Str){start + sizeof(uint32_t)};
+}
