@@ -542,27 +542,27 @@ static uint64_t scan_int(StrView num, Type* suffix) {
 
   if (digits.size > 0) {
     if (digits.size == 2 && digits.data[0] == 'i' && digits.data[1] == '8') {
-      *suffix = (Type){TYPE_I8};
+      *suffix = type_i8;
     } else if (digits.size == 2 && digits.data[0] == 'u' && digits.data[1] == '8') {
-      *suffix = (Type){TYPE_U8};
+      *suffix = type_u8;
     } else if (digits.size == 3 && digits.data[0] == 'i' && digits.data[1] == '1' &&
                digits.data[2] == '6') {
-      *suffix = (Type){TYPE_I16};
+      *suffix = type_i16;
     } else if (digits.size == 3 && digits.data[0] == 'u' && digits.data[1] == '1' &&
                digits.data[2] == '6') {
-      *suffix = (Type){TYPE_U16};
+      *suffix = type_u16;
     } else if (digits.size == 3 && digits.data[0] == 'i' && digits.data[1] == '3' &&
                digits.data[2] == '2') {
-      *suffix = (Type){TYPE_I32};
+      *suffix = type_i32;
     } else if (digits.size == 3 && digits.data[0] == 'u' && digits.data[1] == '3' &&
                digits.data[2] == '2') {
-      *suffix = (Type){TYPE_U32};
+      *suffix = type_u32;
     } else if (digits.size == 3 && digits.data[0] == 'i' && digits.data[1] == '6' &&
                digits.data[2] == '4') {
-      *suffix = (Type){TYPE_I64};
+      *suffix = type_i64;
     } else if (digits.size == 3 && digits.data[0] == 'u' && digits.data[1] == '6' &&
                digits.data[2] == '4') {
-      *suffix = (Type){TYPE_U64};
+      *suffix = type_u64;
     } else {
       ASSERT(false && "internal error: lexer shouldn't allow unrecognized suffix");
       return 0;
@@ -626,20 +626,23 @@ static Operand parse_binary(Operand left, bool can_assign) {
 
   // TODO: gen binary lhs op rhs
   if (op == TOK_PLUS) {
-    return operand_rvalue((Type){TYPE_I32}, gen_ssa_add(left.irref, rhs.irref));
+    return operand_rvalue(type_i32, gen_ssa_add(left.irref, rhs.irref));
   } else if (op == TOK_STAR) {
-    return operand_rvalue((Type){TYPE_I32}, gen_ssa_mul(left.irref, rhs.irref));
+    return operand_rvalue(type_i32, gen_ssa_mul(left.irref, rhs.irref));
   } else if (op == TOK_BANGEQ) {
-    return operand_rvalue((Type){TYPE_BOOL}, gen_ssa_neq(left.irref, rhs.irref));
+    return operand_rvalue(type_bool, gen_ssa_neq(left.irref, rhs.irref));
   } else if (op == TOK_LT) {
-    return operand_rvalue((Type){TYPE_BOOL}, gen_ssa_lt(left.irref, rhs.irref));
+    return operand_rvalue(type_bool, gen_ssa_lt(left.irref, rhs.irref));
   } else {
     ASSERT(false && "todo");
     return operand_null;
   }
 }
 
-static Operand parse_bool_literal(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_bool_literal(bool can_assign) {
+  ASSERT(parser.prev_kind == TOK_FALSE || parser.prev_kind == TOK_TRUE);
+  return operand_const(type_bool, gen_ssa_const(parser.prev_kind == TOK_FALSE ? 0 : 1, type_bool));
+}
 
 static Operand parse_call(Operand left, bool can_assign) {
   if (can_assign && match_assignment()) {
@@ -664,7 +667,6 @@ static Operand parse_call(Operand left, bool can_assign) {
         errorf_offset(arg_offset, "Call argument %d is type %s, but function expects type %s.",
                       num_args + 1, type_as_str(arg.type), type_as_str(param_type));
       }
-      // TODO: attempt conversion
       arg_types[num_args] = arg.type;
       arg_values[num_args] = arg.irref;
       ++num_args;
@@ -674,8 +676,9 @@ static Operand parse_call(Operand left, bool can_assign) {
     }
   }
   consume(TOK_RPAREN, "Expect ')' after arguments.");
-  return operand_rvalue((Type){TYPE_I32}, gen_ssa_call((Type){TYPE_I32} /*XXX TODO !*/, left.irref,
-                                                       num_args, arg_types, arg_values));
+  return operand_rvalue(
+      type_func_return_type(left.type),
+      gen_ssa_call(type_func_return_type(left.type), left.irref, num_args, arg_types, arg_values));
 }
 
 static Operand parse_compound_literal(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }

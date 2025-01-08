@@ -1,0 +1,8 @@
+# RET: 18
+def bool stuff():
+    return true
+
+def int main():
+    if stuff():
+        return 18
+    return 111
