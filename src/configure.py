@@ -92,7 +92,9 @@ def get_tests():
                     disabled = True
 
             def sub(t):
-                return t.replace("{self}", test)
+                t = t.replace("{self}", test)
+                spaces = len(test) * " "
+                return t.replace("{ssss}", spaces)
 
             if not disabled:
                 tests[test] = {

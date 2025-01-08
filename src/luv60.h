@@ -222,6 +222,7 @@ IRRef gen_ssa_call(Type return_type,
                    Type* arg_types,
                    IRRef* arg_values);
 void gen_ssa_jump_cond(IRRef cond, IRBlock iftrue, IRBlock iffalse);
+void gen_ssa_jump(IRBlock block);
 void gen_ssa_return(IRRef val, Type type);
 
 IRRef gen_ssa_add(IRRef a, IRRef b);

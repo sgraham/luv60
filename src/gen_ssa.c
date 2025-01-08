@@ -141,6 +141,10 @@ IRRef gen_ssa_load(IRRef from, Type type) {
   return ret;
 }
 
+void gen_ssa_jump(IRBlock block) {
+  fprintf(outf, "  jmp %s\n", irblock_as_str(block));
+}
+
 void gen_ssa_jump_cond(IRRef cond, IRBlock iftrue, IRBlock iffalse) {
   fprintf(outf, "  jnz %s, %s, %s\n", irref_as_str(cond), irblock_as_str(iftrue),
           irblock_as_str(iffalse));
@@ -160,7 +164,7 @@ IRRef gen_ssa_mul(IRRef a, IRRef b) {
 
 IRRef gen_ssa_lt(IRRef a, IRRef b) {
   IRRef ret = gen_ssa_make_temp((Type){TYPE_BOOL});
-  fprintf(outf, "  %s =w cltw %s, %s\n", irref_as_str(ret), irref_as_str(a), irref_as_str(b));
+  fprintf(outf, "  %s =w csltw %s, %s\n", irref_as_str(ret), irref_as_str(a), irref_as_str(b));
   return ret;
 }
 

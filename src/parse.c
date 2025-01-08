@@ -130,17 +130,20 @@ static Sym* make_param(Str name, Type type) {
   return new;
 }
 
-NORETURN static void error(const char* message) {
+NORETURN static void error_offset(uint32_t offset, const char* message) {
   uint32_t loc_line;
   uint32_t loc_column;
   StrView line;
-  lex_get_location_and_line_slow(parser.cur_offset, &loc_line, &loc_column, &line);
+  lex_get_location_and_line_slow(offset, &loc_line, &loc_column, &line);
   int indent = base_writef_stderr("%s:%d:%d:", parser.cur_filename, loc_line, loc_column);
   base_writef_stderr("%.*s\n", (int)line.size, line.data);
-
   base_writef_stderr("%*s", indent + loc_column - 1, "");
   base_writef_stderr("^ error: %s\n", message);
   base_exit(1);
+}
+
+NORETURN static void error(const char* message) {
+  error_offset(parser.cur_offset, message);
 }
 
 NORETURN static void errorf(const char* fmt, ...) {
@@ -153,6 +156,18 @@ NORETURN static void errorf(const char* fmt, ...) {
   vsnprintf(str, n, fmt, args);
   va_end(args);
   error(str);
+}
+
+NORETURN static void errorf_offset(uint32_t offset, const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  size_t n = 1 + vsnprintf(NULL, 0, fmt, args);
+  va_end(args);
+  char* str = malloc(n);  // just a simple malloc because we're going to base_exit() momentarily.
+  va_start(args, fmt);
+  vsnprintf(str, n, fmt, args);
+  va_end(args);
+  error_offset(offset, str);
 }
 
 static void enter_scope(bool is_module, bool is_function) {
@@ -453,9 +468,15 @@ static bool convert_operand(Operand* operand, Type type) {
   return false;
 }
 
-static void parse_statement(bool toplevel);
+typedef enum LastStatementType {
+  LST_NON_RETURN,
+  LST_RETURN_VOID,
+  LST_RETURN_VALUE,
+} LastStatementType;
+
+static LastStatementType parse_statement(bool toplevel);
 static Operand parse_expression(void);
-static void parse_block(void);
+static LastStatementType parse_block(void);
 
 // ~strtoull with slight differences:
 // - handles 0b and 0o but 0 prefix doesn't mean octal
@@ -636,11 +657,12 @@ static Operand parse_call(Operand left, bool can_assign) {
         errorf("Passing >= %d arguments to function, but it expects %d.", num_args + 1,
                type_func_num_params(left.type));
       }
+      uint32_t arg_offset = parser.cur_offset;
       Type param_type = type_func_param(left.type, num_args);
       Operand arg = parse_precedence(PREC_OR);
       if (!convert_operand(&arg, param_type)) {
-        errorf("Call argument %d is type %s, but function expects type %s.", num_args + 1,
-               type_as_str(arg.type), type_as_str(param_type));
+        errorf_offset(arg_offset, "Call argument %d is type %s, but function expects type %s.",
+                      num_args + 1, type_as_str(arg.type), type_as_str(param_type));
       }
       // TODO: attempt conversion
       arg_types[num_args] = arg.type;
@@ -950,33 +972,41 @@ static Operand parse_expression(void) {
   return parse_precedence(PREC_LOWEST);
 }
 
-static void if_statement(void) {
+static Operand if_statement_cond_helper(void) {
   Operand cond = parse_expression();
-
   if (!is_condition_type(cond.type)) {
     errorf("Result of condition expression cannot be type %s.", type_as_str(cond.type));
   }
+  consume(TOK_COLON, "Expect ':' to start if/elif.");
+  consume(TOK_NEWLINE, "Expect newline after ':' to start if/elif.");
+  consume(TOK_INDENT, "Expect indent to start block after if/elif.");
+  return cond;
+}
 
-  consume(TOK_COLON, "Expect ':' to start if.");
-  consume(TOK_NEWLINE, "Expect newline after ':' to start if.");
-  consume(TOK_INDENT, "Expect indent to start block after if.");
-
-  IRBlock then = gen_ssa_make_block_name();
-  IRBlock els = gen_ssa_make_block_name();
+static void if_statement(void) {
   IRBlock after = gen_ssa_make_block_name();
 
-  gen_ssa_jump_cond(cond.irref, then, els);
+  do {
+    Operand cond = if_statement_cond_helper();
+    IRBlock then = gen_ssa_make_block_name();
+    IRBlock next = gen_ssa_make_block_name();
+    gen_ssa_jump_cond(cond.irref, then, next);
 
-  //gen_resolve_label(&then);
+    gen_ssa_start_block(then);
+    if (parse_block() == LST_NON_RETURN) {
+      gen_ssa_jump(after);
+    }
+    gen_ssa_start_block(next);
+  } while (match(TOK_ELIF));
 
-  gen_ssa_start_block(then);
-  parse_block();
-
-  // while (match(TOK_ELIF)) {}
-
-  gen_ssa_start_block(els);
-
-  // if (match(TOK_ELSE)) { }
+  if (match(TOK_ELSE)) {
+    consume(TOK_COLON, "Expect ':' to start else.");
+    consume(TOK_NEWLINE, "Expect newline after ':' to start else.");
+    consume(TOK_INDENT, "Expect indent to start block after else.");
+    if (parse_block() == LST_NON_RETURN) {
+      gen_ssa_jump(after);
+    }
+  }
 
   gen_ssa_start_block(after);
 }
@@ -991,7 +1021,7 @@ static void print_statement(void) {
   consume(TOK_NEWLINE, "Expect newline after print.");
 }
 
-static bool parse_func_body_only_statement(void) {
+static bool parse_func_body_only_statement(LastStatementType* lst) {
   if (match(TOK_IF)) {
      if_statement();
      return true;
@@ -1007,6 +1037,9 @@ static bool parse_func_body_only_statement(void) {
     Operand op = operand_null;
     if (!type_eq(func_ret, type_void)) {
       op = parse_expression();
+      *lst = LST_RETURN_VALUE;
+    } else {
+      *lst = LST_RETURN_VOID;
     }
 
     gen_ssa_return(op.irref, func_ret);
@@ -1016,13 +1049,14 @@ static bool parse_func_body_only_statement(void) {
   return false;
 }
 
-static void parse_block(void) {
+static LastStatementType parse_block(void) {
+  LastStatementType lst = LST_NON_RETURN;
   while (!check(TOK_DEDENT) && !check(TOK_EOF)) {
-    parse_statement(/*toplevel=*/false);
+    lst = parse_statement(/*toplevel=*/false);
     skip_newlines();
   }
   consume(TOK_DEDENT, "Expect end of block.");
-  //gen_jump(cont);
+  return lst;
 }
 
 // TODO: decorators
@@ -1031,6 +1065,7 @@ static void parse_def_statement(void) {
   if (type_is_none(return_type)) {
     return_type = type_void;
   }
+  uint32_t function_start_offset = parser.cur_offset;
   Str name = parse_name("Expect function name.");
   consume(TOK_LPAREN, "Expect '(' after function name.");
 
@@ -1047,7 +1082,12 @@ static void parse_def_statement(void) {
 
   Sym* funcsym = sym_new(SYM_FUNC, name, functype);
   funcsym->irref = enter_function(funcsym, param_names);
-  parse_block();
+  LastStatementType lst = parse_block();
+  if (lst == LST_NON_RETURN && !type_eq(type_void, type_func_return_type(functype))) {
+    errorf_offset(function_start_offset,
+                  "Function returns %s, but there is no return at the end of the body.",
+                  type_as_str(type_func_return_type(functype)));
+  }
   leave_function();
 }
 
@@ -1085,16 +1125,18 @@ static bool parse_anywhere_statement(void) {
   return true;
 }
 
-static void parse_statement(bool toplevel) {
+static LastStatementType parse_statement(bool toplevel) {
   if (!toplevel) {
-    if (parse_func_body_only_statement()) {
+    LastStatementType lst;
+    if (parse_func_body_only_statement(&lst)) {
       skip_newlines();
-      return;
+      return lst;
     }
   }
 
   parse_anywhere_statement();
   skip_newlines();
+  return LST_NON_RETURN;  // Return isn't possible unless in func.
 }
 
 void parse(const char* filename, ReadFileResult file) {
