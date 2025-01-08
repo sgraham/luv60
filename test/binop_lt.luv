@@ -1,0 +1,8 @@
+# RET: 6
+def int stuff(int a, int b):
+    if a < b:
+        return a
+    return b
+
+def int main():
+    return stuff(13, 6)

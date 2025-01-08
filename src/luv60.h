@@ -227,7 +227,22 @@ void gen_ssa_return(IRRef val, Type type);
 
 IRRef gen_ssa_add(IRRef a, IRRef b);
 IRRef gen_ssa_mul(IRRef a, IRRef b);
-IRRef gen_ssa_lt(IRRef a, IRRef b);
-IRRef gen_ssa_neq(IRRef a, IRRef b);
+
+typedef enum IRIntCmp {
+  IIC_INVALID,
+  IIC_EQ,
+  IIC_NE,
+  IIC_SLE,
+  IIC_SLT,
+  IIC_SGE,
+  IIC_SGT,
+  IIC_ULE,
+  IIC_ULT,
+  IIC_UGE,
+  IIC_UGT,
+  NUM_IR_INT_CMPS
+} IRIntCmp;
+
+IRRef gen_ssa_int_comparison(IRIntCmp cmp, IRRef a, IRRef b);
 
 void gen_ssa_finish(void);

@@ -162,9 +162,23 @@ IRRef gen_ssa_mul(IRRef a, IRRef b) {
   return ret;
 }
 
-IRRef gen_ssa_lt(IRRef a, IRRef b) {
+static const char* cmp_names[NUM_IR_INT_CMPS] = {
+  [IIC_EQ] = "eq",
+  [IIC_NE] = "ne",
+  [IIC_SLE] = "sle",
+  [IIC_SLT] = "slt",
+  [IIC_SGE] = "sge",
+  [IIC_SGT] = "sge",
+  [IIC_ULE] = "ule",
+  [IIC_ULT] = "ult",
+  [IIC_UGE] = "uge",
+  [IIC_UGT] = "uge",
+};
+
+IRRef gen_ssa_int_comparison(IRIntCmp cmp, IRRef a, IRRef b) {
   IRRef ret = gen_ssa_make_temp((Type){TYPE_BOOL});
-  fprintf(outf, "  %s =w csltw %s, %s\n", irref_as_str(ret), irref_as_str(a), irref_as_str(b));
+  fprintf(outf, "  %s =w c%sw %s, %s\n", irref_as_str(ret), cmp_names[cmp], irref_as_str(a),
+          irref_as_str(b));
   return ret;
 }
 

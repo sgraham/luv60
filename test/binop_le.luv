@@ -1,0 +1,8 @@
+# RET: 123
+def int stuff(int a, int b):
+    if a <= b:
+        return 123
+    return 456
+
+def int main():
+    return stuff(13, 13)

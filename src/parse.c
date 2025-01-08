@@ -625,14 +625,21 @@ static Operand parse_binary(Operand left, bool can_assign) {
   (void)rhs;
 
   // TODO: gen binary lhs op rhs
-  if (op == TOK_PLUS) {
+  static IRIntCmp tok_to_int_cmp_signed[NUM_TOKEN_KINDS] = {
+      [TOK_EQEQ] = IIC_EQ,    //
+      [TOK_BANGEQ] = IIC_NE,  //
+      [TOK_LEQ] = IIC_SLE,    //
+      [TOK_LT] = IIC_SLT,     //
+      [TOK_GEQ] = IIC_SGE,    //
+      [TOK_GT] = IIC_SGT,     //
+  };
+  if (tok_to_int_cmp_signed[op]) {
+    return operand_rvalue(type_bool,
+                          gen_ssa_int_comparison(tok_to_int_cmp_signed[op], left.irref, rhs.irref));
+  } else if (op == TOK_PLUS) {
     return operand_rvalue(type_i32, gen_ssa_add(left.irref, rhs.irref));
   } else if (op == TOK_STAR) {
     return operand_rvalue(type_i32, gen_ssa_mul(left.irref, rhs.irref));
-  } else if (op == TOK_BANGEQ) {
-    return operand_rvalue(type_bool, gen_ssa_neq(left.irref, rhs.irref));
-  } else if (op == TOK_LT) {
-    return operand_rvalue(type_bool, gen_ssa_lt(left.irref, rhs.irref));
   } else {
     ASSERT(false && "todo");
     return operand_null;
