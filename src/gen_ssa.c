@@ -31,6 +31,7 @@ static bool is_aggregate_type(Type type) {
     case TYPE_I16:
     case TYPE_U8:
     case TYPE_I8:
+    case TYPE_BOOL:
       return false;
     case TYPE_STR:
       return true;
@@ -114,6 +115,7 @@ void gen_ssa_init(const char* filename) {
   fprintf(outf, "data $strfmt = { b \"%%.*s\\n\" }\n");
 }
 
+#if 0
 static const char* type_to_qbe_data_type(Type type) {
   switch (type_kind(type)) {
     case TYPE_U64:
@@ -127,7 +129,30 @@ static const char* type_to_qbe_data_type(Type type) {
       return "h";
     case TYPE_U8:
     case TYPE_I8:
+    case TYPE_BOOL:
       return "b";
+    case TYPE_STR:
+      return ":Str";
+    default:
+      ASSERT(false && "todo");
+      return "?";
+  }
+}
+#endif
+
+static const char* type_to_qbe_return_type(Type type) {
+  switch (type_kind(type)) {
+    case TYPE_U64:
+    case TYPE_I64:
+      return "l";
+    case TYPE_U32:
+    case TYPE_I32:
+    case TYPE_U16:
+    case TYPE_I16:
+    case TYPE_U8:
+    case TYPE_I8:
+    case TYPE_BOOL:
+      return "w";
     case TYPE_STR:
       return ":Str";
     default:
@@ -140,6 +165,7 @@ static const char* type_to_qbe_reg_type(Type type) {
   switch (type_kind(type)) {
     case TYPE_U64:
     case TYPE_I64:
+    case TYPE_STR:
       return "l";
     case TYPE_U32:
     case TYPE_I32:
@@ -147,6 +173,7 @@ static const char* type_to_qbe_reg_type(Type type) {
     case TYPE_I16:
     case TYPE_U8:
     case TYPE_I8:
+    case TYPE_BOOL:
       return "w";
     default:
       ASSERT(false && "todo");
@@ -171,7 +198,10 @@ static const char* type_to_qbe_store_type(Type type) {
       return "h";
     case TYPE_U8:
     case TYPE_I8:
+    case TYPE_BOOL:
       return "b";
+    case TYPE_STR:
+      return ":Str";
     default:
       ASSERT(false && "todo");
       return "?";
@@ -191,9 +221,12 @@ static const char* type_to_qbe_load_type(Type type) {
     case TYPE_I16:
       return "sh";
     case TYPE_U8:
+    case TYPE_BOOL:
       return "ub";
     case TYPE_I8:
       return "sb";
+    case TYPE_STR:
+      return ":Str";
     default:
       ASSERT(false && "todo");
       return "?";
@@ -205,7 +238,7 @@ IRRef gen_ssa_start_function(Str name, Type return_type, int num_params, IRRef* 
   if (name.i == main_func_name.i) {
     export = "export ";
   }
-  fprintf(outf, "%sfunction %s $%s(", export, type_to_qbe_data_type(return_type), cstr(name));
+  fprintf(outf, "%sfunction %s $%s(", export, type_to_qbe_return_type(return_type), cstr(name));
   for (int i = 0; i < num_params; ++i) {
     fprintf(outf, "%s %s%s", type_to_qbe_reg_type(refs[params[i].i].type), irref_as_str(params[i]),
             i < num_params - 1 ? ", " : "");
@@ -326,7 +359,7 @@ IRRef gen_ssa_call(Type return_type,
                    Type* arg_types,
                    IRRef* arg_values) {
   IRRef ret = gen_ssa_make_temp(return_type);
-  fprintf(outf, "  %s =%s call %s(", irref_as_str(ret), type_to_qbe_data_type(return_type),
+  fprintf(outf, "  %s =%s call %s(", irref_as_str(ret), type_to_qbe_return_type(return_type),
           irref_as_str(func));
   for (int i = 0; i < num_args; ++i) {
     fprintf(outf, "w %s%s", irref_as_str(arg_values[i]), i < num_args - 1 ? ", " : "");

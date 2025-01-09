@@ -1,3 +1,7 @@
+# TXT: hi
+# TXT: there
+# TXT: 123
+# TXT: wee
 def str func():
     return "wee"
 

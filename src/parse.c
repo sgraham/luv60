@@ -1078,8 +1078,8 @@ static bool parse_func_body_only_statement(LastStatementType* lst) {
 static LastStatementType parse_block(void) {
   LastStatementType lst = LST_NON_RETURN;
   while (!check(TOK_DEDENT) && !check(TOK_EOF)) {
-    lst = parse_statement(/*toplevel=*/false);
     skip_newlines();
+    lst = parse_statement(/*toplevel=*/false);
   }
   consume(TOK_DEDENT, "Expect end of block.");
   return lst;
