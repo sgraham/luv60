@@ -1078,8 +1078,8 @@ static bool parse_func_body_only_statement(LastStatementType* lst) {
 static LastStatementType parse_block(void) {
   LastStatementType lst = LST_NON_RETURN;
   while (!check(TOK_DEDENT) && !check(TOK_EOF)) {
-    skip_newlines();
     lst = parse_statement(/*toplevel=*/false);
+    skip_newlines();
   }
   consume(TOK_DEDENT, "Expect end of block.");
   return lst;
@@ -1155,10 +1155,10 @@ static bool parse_anywhere_statement(void) {
 }
 
 static LastStatementType parse_statement(bool toplevel) {
+  skip_newlines();
   if (!toplevel) {
     LastStatementType lst;
     if (parse_func_body_only_statement(&lst)) {
-      skip_newlines();
       return lst;
     }
   }
@@ -1183,8 +1183,6 @@ void parse(const char* filename, ReadFileResult file) {
   advance();
 
   while (parser.cur_kind != TOK_EOF) {
-    skip_newlines();
     parse_statement(/*toplevel=*/true);
-    skip_newlines();
   }
 }

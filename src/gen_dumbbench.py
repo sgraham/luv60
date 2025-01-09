@@ -59,9 +59,9 @@ with open('dumbbench.luv', 'w', newline='\n') as f:
 # This is the {name} function!
 def int {name}():
     int x = 0
-    str z = "this is a string";
+    str z = "this is a string"
     for i in range(5):
-        x += i;
+        x += i
     return x
 
 ''')
