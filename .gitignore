@@ -10,5 +10,6 @@ x.s
 x.asm
 x.bat
 x.com.dbg
-xbin.com
+x.com
+z.bat
 third_party/tracy
