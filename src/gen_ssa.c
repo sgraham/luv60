@@ -113,10 +113,10 @@ void gen_ssa_init(const char* filename) {
   outf = fopen(filename, "wb");
   fprintf(outf, "type :Str = { l, l } # data, length\n");
   fprintf(outf, "type :Range = { l, l, l } # start, stop, step\n");
-  fprintf(outf, "data $intfmt = { b \"%%d\\n\" }\n");
-  fprintf(outf, "data $strfmt = { b \"%%.*s\\n\" }\n");
-  fprintf(outf, "data $range2fmt = { b \"range(%%lld, %%lld)\\n\" }\n");
-  fprintf(outf, "data $range3fmt = { b \"range(%%lld, %%lld, %%lld)\\n\" }\n");
+  fprintf(outf, "data $intfmt = { b \"%%d\\n\", z 1 }\n");
+  fprintf(outf, "data $strfmt = { b \"%%.*s\\n\", z 1 }\n");
+  fprintf(outf, "data $range2fmt = { b \"range(%%lld, %%lld)\\n\", z 1 }\n");
+  fprintf(outf, "data $range3fmt = { b \"range(%%lld, %%lld, %%lld)\\n\", z 1 }\n");
 }
 
 #if 0
@@ -436,7 +436,7 @@ void gen_ssa_finish(void) {
           fprintf(outf, "\\x%02x", *p);
         }
       }
-      fprintf(outf, "\" }\n");
+      fprintf(outf, "\", z 1 }\n");
       fprintf(outf, "data %s = { l %s_bytes, l %u }\n", strname, strname, str_len(data->str));
     }
   }

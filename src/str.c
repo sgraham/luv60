@@ -108,7 +108,8 @@ escape_error:
   uint32_t final_len = into - into_start;
   memcpy(&str_intern_pool[start], &final_len, sizeof(final_len));
   *into++ = 0;
-  ASSERT(final_len <= allocate_bytes);
-  str_insert_location -= allocate_bytes - (final_len + sizeof(uint32_t));
+
+  ASSERT(final_len + sizeof(uint32_t) + 1 <= allocate_bytes);
+  str_insert_location -= allocate_bytes - (final_len + sizeof(uint32_t) + 1);
   return (Str){start + sizeof(uint32_t)};
 }
