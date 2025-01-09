@@ -857,7 +857,8 @@ static Operand parse_variable(bool can_assign) {
   Sym* sym = NULL;
   ScopeResult scope_result = scope_lookup(target, &sym, &scope_decl);
   if (can_assign && match_assignment()) {
-    TokenKind eq = parser.prev_kind;
+    TokenKind eq_kind = parser.prev_kind;
+    TokenKind eq_offset = parser.prev_offset;
     if (scope_result == SCOPE_RESULT_UNDEFINED && scope_decl == SSD_ASSUMED_GLOBAL) {
       errorf("Local variable '%s' referenced before assignment.", cstr(target));
     } else if (scope_result == SCOPE_RESULT_LOCAL) {
@@ -866,17 +867,25 @@ static Operand parse_variable(bool can_assign) {
       if (!convert_operand(&op, sym->type)) {
         errorf("Cannot assign type %s to type %s.", type_as_str(op.type), type_as_str(sym->type));
       }
-      gen_ssa_store(sym->irref, op.type, op.irref);
+      if (eq_kind == TOK_EQ) {
+        gen_ssa_store(sym->irref, op.type, op.irref);
+      } else if (eq_kind == TOK_PLUSEQ) {
+        gen_ssa_store(sym->irref, op.type,
+                      gen_ssa_add(gen_ssa_load(sym->irref, op.type), op.irref));
+      } else {
+        error_offset(eq_offset, "Unhandled assignment type.");
+      }
       return operand_null;
     } else if (scope_result != SCOPE_RESULT_LOCAL && scope_decl == SSD_NONE) {
-      if (eq == TOK_EQ) {
+      if (eq_kind == TOK_EQ) {
         // Variable declaration without a type.
         Operand op = parse_expression();
         Sym* new = make_local_and_alloc(SYM_VAR, target, op.type);
         gen_ssa_store(new->irref, op.type, op.irref);
         return operand_null;
       } else {
-        error("todo; aug assign");
+        error_offset(eq_offset,
+                     "Cannot use an augmented assignment when implicitly declaring a local.");
       }
     }
   } else {
@@ -1171,6 +1180,8 @@ static void print_statement(void) {
 }
 
 static bool parse_func_body_only_statement(LastStatementType* lst) {
+  *lst = LST_NON_RETURN;
+
   if (match(TOK_IF)) {
      if_statement();
      return true;
