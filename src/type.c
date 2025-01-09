@@ -194,7 +194,7 @@ void type_init(void) {
   set_typedata_raw(TYPE_FLOAT, pack_type(TYPE_FLOAT, 4, 4, 0));
   set_typedata_raw(TYPE_DOUBLE, pack_type(TYPE_DOUBLE, 8, 8, 0));
   set_typedata_raw(TYPE_STR, pack_type(TYPE_STR, 16, 8, 0));
-  set_typedata_raw(TYPE_RANGE, pack_type(TYPE_STR, 24, 8, 0));
+  set_typedata_raw(TYPE_RANGE, pack_type(TYPE_RANGE, 24, 8, 0));
   num_typedata = NUM_TYPE_KINDS;
 }
 

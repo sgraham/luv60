@@ -215,10 +215,12 @@ IRRef gen_ssa_string_constant(Str str);
 IRRef gen_ssa_const(uint64_t val, Type type);
 void gen_ssa_store(IRRef into, Type type, IRRef val);
 IRRef gen_ssa_load(IRRef from, Type type);
+void gen_ssa_store_field(IRRef baseptr, uint32_t offset, Type type, IRRef val);
 
 // some temp hacks until we have memfn to_str
 void gen_ssa_print_i32(IRRef i);
 void gen_ssa_print_str(IRRef s);
+void gen_ssa_print_range(IRRef r);
 
 IRRef gen_ssa_call(Type return_type,
                    IRRef func,

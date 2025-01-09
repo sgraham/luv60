@@ -706,7 +706,49 @@ static Operand parse_number(bool can_assign) {
 
 static Operand parse_offsetof(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
 static Operand parse_or(Operand left, bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
-static Operand parse_range(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+
+static Operand parse_range(bool can_assign) {
+  consume(TOK_LPAREN, "Expect '(' after range.");
+  Operand first = parse_precedence(PREC_OR);
+  if (!convert_operand(&first, type_i64)) {
+    errorf("Cannot convert type %s to i64.", type_as_str(first.type));
+  }
+
+  Operand second = operand_null;
+  Operand third = operand_null;
+  if (match(TOK_COMMA)) {
+    second = parse_precedence(PREC_OR);
+    if (!convert_operand(&second, type_i64)) {
+      errorf("Cannot convert type %s to i64.", type_as_str(second.type));
+    }
+    if (match(TOK_COMMA)) {
+      third = parse_precedence(PREC_OR);
+      if (!convert_operand(&third, type_i64)) {
+        errorf("Cannot convert type %s to i64.", type_as_str(third.type));
+      }
+    }
+  }
+  consume(TOK_RPAREN, "Expect ')' after range.");
+
+  IRRef range = gen_ssa_make_temp(type_range);
+  if (type_is_none(second.type)) {
+    // range(0, first, 0)
+    gen_ssa_store_field(range, 0, type_i64, gen_ssa_const(0, type_i64));
+    gen_ssa_store_field(range, type_size(type_i64), type_i64, first.irref);
+    gen_ssa_store_field(range, type_size(type_i64) * 2, type_i64, gen_ssa_const(0, type_i64));
+  } else {
+    // range(first, second, third || 0)
+    gen_ssa_store_field(range, 0, type_i64, first.irref);
+    gen_ssa_store_field(range, type_size(type_i64), type_i64, second.irref);
+    if (type_is_none(third.type)) {
+      gen_ssa_store_field(range, type_size(type_i64) * 2, type_i64, gen_ssa_const(0, type_i64));
+    } else {
+      gen_ssa_store_field(range, type_size(type_i64) * 2, type_i64, third.irref);
+    }
+  }
+  return operand_rvalue(type_range, range);
+}
+
 static Operand parse_sizeof(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
 
 static Operand parse_string(bool can_assign) {
@@ -1037,10 +1079,42 @@ static void if_statement(void) {
   gen_ssa_start_block(after);
 }
 
+static void for_statement(void) {
+#if 0
+  // Can be:
+  // 1. no condition
+  // 2. condition only, while style
+  // 3. iter in expr
+  // 4. *ptr in expr
+  // 5. index, iter enumerate expr
+  // 6. index, *ptr enumerate expr
+
+  IRBlock after = gen_ssa_make_block_name();
+  IRBlock top = gen_ssa_make_block_name();
+
+  gen_ssa_start_block(top);
+  if (check(TOK_COLON)) {
+    // Nothing, case 1:
+  } else { // if (check(TOK_IDENT_VAR) && peek(2, TOK_IN)) {
+    // Case 3.
+    consume(TOK_IDENT_VAR, "Expect iterator name.");
+    consume(TOK_IN, "Expect 'in'.");
+    Operand expr = parse_expression();
+  }
+
+  consume(TOK_COLON, "Expect ':' to start for.");
+  consume(TOK_NEWLINE, "Expect newline after ':' to start for.");
+  consume(TOK_INDENT, "Expect indent to start block after for.");
+  parse_block();
+#endif
+}
+
 static void print_statement(void) {
   Operand val = parse_expression();
   if (type_eq(val.type, type_str)) {
     gen_ssa_print_str(val.irref);
+  } else if (type_eq(val.type, type_range)) {
+    gen_ssa_print_range(val.irref);
   } else if (convert_operand(&val, type_i32)) {
     gen_ssa_print_i32(val.irref);
   }
@@ -1051,6 +1125,10 @@ static bool parse_func_body_only_statement(LastStatementType* lst) {
   if (match(TOK_IF)) {
      if_statement();
      return true;
+  }
+  if (match(TOK_FOR)) {
+    for_statement();
+    return true;
   }
   if (match(TOK_PRINT)) {
     print_statement();

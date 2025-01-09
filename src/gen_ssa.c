@@ -34,6 +34,7 @@ static bool is_aggregate_type(Type type) {
     case TYPE_BOOL:
       return false;
     case TYPE_STR:
+    case TYPE_RANGE:
       return true;
     default:
       ASSERT(false && "todo");
@@ -110,9 +111,12 @@ void gen_ssa_init(const char* filename) {
   num_blocks = 0;
   main_func_name = str_intern_len("main", 4);
   outf = fopen(filename, "wb");
-  fprintf(outf, "type :Str = { l, l }\n");
+  fprintf(outf, "type :Str = { l, l } # data, length\n");
+  fprintf(outf, "type :Range = { l, l, l } # start, stop, step\n");
   fprintf(outf, "data $intfmt = { b \"%%d\\n\" }\n");
   fprintf(outf, "data $strfmt = { b \"%%.*s\\n\" }\n");
+  fprintf(outf, "data $range2fmt = { b \"range(%%lld, %%lld)\\n\" }\n");
+  fprintf(outf, "data $range3fmt = { b \"range(%%lld, %%lld, %%lld)\\n\" }\n");
 }
 
 #if 0
@@ -155,6 +159,8 @@ static const char* type_to_qbe_return_type(Type type) {
       return "w";
     case TYPE_STR:
       return ":Str";
+    case TYPE_RANGE:
+      return ":Range";
     default:
       ASSERT(false && "todo");
       return "?";
@@ -166,6 +172,7 @@ static const char* type_to_qbe_reg_type(Type type) {
     case TYPE_U64:
     case TYPE_I64:
     case TYPE_STR:
+    case TYPE_RANGE:
       return "l";
     case TYPE_U32:
     case TYPE_I32:
@@ -200,8 +207,6 @@ static const char* type_to_qbe_store_type(Type type) {
     case TYPE_I8:
     case TYPE_BOOL:
       return "b";
-    case TYPE_STR:
-      return ":Str";
     default:
       ASSERT(false && "todo");
       return "?";
@@ -209,6 +214,10 @@ static const char* type_to_qbe_store_type(Type type) {
 }
 
 static const char* type_to_qbe_load_type(Type type) {
+  if (is_aggregate_type(type)) {
+    // TODO: assuming this path is for the pointer to the aggregate, bad idea?
+    return "l";
+  }
   switch (type_kind(type)) {
     case TYPE_U64:
     case TYPE_I64:
@@ -225,8 +234,6 @@ static const char* type_to_qbe_load_type(Type type) {
       return "ub";
     case TYPE_I8:
       return "sb";
-    case TYPE_STR:
-      return ":Str";
     default:
       ASSERT(false && "todo");
       return "?";
@@ -290,6 +297,16 @@ void gen_ssa_store(IRRef into, Type type, IRRef val) {
           irref_as_str(into));
 }
 
+void gen_ssa_store_field(IRRef baseptr, uint32_t offset, Type type, IRRef val) {
+  if (offset == 0) {
+    gen_ssa_store(baseptr, type, val);
+  } else {
+    IRRef into_ptr = gen_ssa_make_temp(type_u64);
+    fprintf(outf, "  %s =l add %s, %d\n", irref_as_str(into_ptr), irref_as_str(baseptr), offset);
+    gen_ssa_store(into_ptr, type, val);
+  }
+}
+
 IRRef gen_ssa_load(IRRef from, Type type) {
   IRRef ret = gen_ssa_make_temp(type);
   fprintf(outf, "  %s =%s load%s %s\n", irref_as_str(ret), type_to_qbe_reg_type(type),
@@ -345,12 +362,46 @@ void gen_ssa_print_i32(IRRef i) {
 void gen_ssa_print_str(IRRef s) {
   IRRef bytes = gen_ssa_make_temp(type_u64);
   fprintf(outf, "  %s =l loadl %s\n", irref_as_str(bytes), irref_as_str(s));
+
   IRRef size_ptr = gen_ssa_make_temp(type_u64);
   fprintf(outf, "  %s =l add %s, 8\n", irref_as_str(size_ptr), irref_as_str(s));
   IRRef size = gen_ssa_make_temp(type_u64);
   fprintf(outf, "  %s =l loadl %s\n", irref_as_str(size), irref_as_str(size_ptr));
+
   fprintf(outf, "  call $printf(l $strfmt, ..., w %s, l %s)\n", irref_as_str(size),
           irref_as_str(bytes));
+}
+
+void gen_ssa_print_range(IRRef s) {
+  IRRef first = gen_ssa_make_temp(type_u64);
+  fprintf(outf, "  %s =l loadl %s\n", irref_as_str(first), irref_as_str(s));
+
+  IRRef second_ptr = gen_ssa_make_temp(type_u64);
+  fprintf(outf, "  %s =l add %s, 8\n", irref_as_str(second_ptr), irref_as_str(s));
+  IRRef second = gen_ssa_make_temp(type_u64);
+  fprintf(outf, "  %s =l loadl %s\n", irref_as_str(second), irref_as_str(second_ptr));
+
+  IRRef third_ptr = gen_ssa_make_temp(type_u64);
+  fprintf(outf, "  %s =l add %s, 16\n", irref_as_str(third_ptr), irref_as_str(s));
+  IRRef third = gen_ssa_make_temp(type_u64);
+  fprintf(outf, "  %s =l loadl %s\n", irref_as_str(third), irref_as_str(third_ptr));
+
+  IRBlock range2 = gen_ssa_make_block_name();
+  IRBlock range3 = gen_ssa_make_block_name();
+  IRBlock after = gen_ssa_make_block_name();
+  gen_ssa_jump_cond(third, range3, range2);
+
+  gen_ssa_start_block(range2);
+  fprintf(outf, "  call $printf(l $range2fmt, ..., l %s, l %s)\n", irref_as_str(first),
+          irref_as_str(second));
+  gen_ssa_jump(after);
+
+  gen_ssa_start_block(range3);
+  fprintf(outf, "  call $printf(l $range3fmt, ..., l %s, l %s, l %s)\n", irref_as_str(first),
+          irref_as_str(second), irref_as_str(third));
+  gen_ssa_jump(after);
+
+  gen_ssa_start_block(after);
 }
 
 IRRef gen_ssa_call(Type return_type,
