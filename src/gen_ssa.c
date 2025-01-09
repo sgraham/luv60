@@ -14,7 +14,7 @@ typedef struct IRRefData {
   Type type;
   Str str;
 } IRRefData;
-static IRRefData refs[1<<20];
+static IRRefData refs[1<<24];
 static int num_refs;
 
 //typedef struct IRBlockData {
@@ -32,17 +32,20 @@ static bool is_aggregate_type(Type type) {
     case TYPE_U8:
     case TYPE_I8:
     case TYPE_BOOL:
+    case TYPE_FUNC:
       return false;
     case TYPE_STR:
     case TYPE_RANGE:
       return true;
     default:
+      base_writef_stderr("%s: %s\n", __FUNCTION__, type_as_str(type));
       ASSERT(false && "todo");
       abort();
   }
 }
 
 IRRef gen_ssa_make_temp(Type type) {
+  ASSERT(num_refs < COUNTOFI(refs));
   IRRef ret = {num_refs++};
   IRRefData* data = &refs[ret.i];
   data->kind = REF_TEMP;
@@ -54,6 +57,7 @@ IRRef gen_ssa_make_temp(Type type) {
 }
 
 static IRRef gen_ssa_make_str_const(Str str) {
+  ASSERT(num_refs < COUNTOFI(refs));
   IRRef ret = {num_refs++};
   IRRefData* data = &refs[ret.i];
   data->kind = REF_STR_CONST;
@@ -63,6 +67,7 @@ static IRRef gen_ssa_make_str_const(Str str) {
 }
 
 IRRef gen_ssa_make_func(Str name, Type type) {
+  ASSERT(num_refs < COUNTOFI(refs));
   IRRef ret = {num_refs++};
   IRRefData* data = &refs[ret.i];
   data->kind = REF_FUNC;
@@ -173,6 +178,7 @@ static const char* type_to_qbe_reg_type(Type type) {
     case TYPE_I64:
     case TYPE_STR:
     case TYPE_RANGE:
+    case TYPE_FUNC:
       return "l";
     case TYPE_U32:
     case TYPE_I32:
@@ -221,6 +227,7 @@ static const char* type_to_qbe_load_type(Type type) {
   switch (type_kind(type)) {
     case TYPE_U64:
     case TYPE_I64:
+    case TYPE_FUNC:
       return "l";
     case TYPE_U32:
     case TYPE_I32:

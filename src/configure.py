@@ -159,7 +159,7 @@ def generate(platform, config, settings, cmdlines, tests):
         f.write("build categorizer.c: re2c $src/categorizer.in.c\n")
 
         f.write(
-            "build dumbbench.c dumbbench.lua dumbbench.py dumbbench.luv: gendumbbench\n"
+            "build dumbbench.c dumbbench.lua dumbbench.py dumbbench.luv: gendumbbench | $src/gen_dumbbench.py\n"
         )
 
         def getobj(src):

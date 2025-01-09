@@ -18,3 +18,16 @@ TEST(Str, Intern) {
 
   str_intern_pool_destroy_for_tests();
 }
+
+TEST(Str, Internf) {
+  str_intern_pool_init();
+
+  Str x = str_internf("hi%d", 44);
+  EXPECT_STREQ(cstr(x), "hi44");
+
+  Str y = str_intern("hi44");
+  EXPECT_EQ(x.i, y.i);
+  EXPECT_TRUE(str_eq(x, y));
+
+  str_intern_pool_destroy_for_tests();
+}

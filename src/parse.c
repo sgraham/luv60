@@ -1,30 +1,6 @@
 #include "luv60.h"
 
-#if 0
-typedef struct TypeDataExtraPtr {
-  Type type;
-} TypeDataExtraPtr;
-
-typedef struct TypeDataExtraArray {
-  Type type;
-  uint32_t count;
-} TypeDataExtraArray;
-
-typedef struct TypeDataExtraDict {
-  Type key;
-  Type value;
-} TypeDataExtraDict;
-
-typedef struct TypeDataExtraStruct {
-  Type type;
-  Str name;
-  uint32_t offset;
-} TypeDataExtraStruct;
-
-typedef struct TypeDataExtraFunc {
-  uint32_t flags;
-} TypeDataExtraFunc;
-#endif
+#include "dict.h"
 
 typedef enum SymKind {
   SYM_NONE,
@@ -76,8 +52,7 @@ typedef struct FuncData {
 
 typedef struct VarScope VarScope;
 struct VarScope {
-  Sym syms[MAX_VARS_IN_SCOPE];
-  int num_syms;
+  DictImpl sym_dict;
   bool is_function;
   bool is_module;
 };
@@ -105,14 +80,38 @@ typedef struct Parser {
 
 static Parser parser;
 
+typedef struct NameSymPair {
+  Str name;
+  Sym sym;
+} NameSymPair;
+
+static size_t namesym_hash_func(void* vnsp) {
+  NameSymPair* nsp = (NameSymPair*)vnsp;
+  size_t hash = 0;
+  dict_hash_write(&hash, &nsp->name, sizeof(Str));
+  return hash;
+}
+
+static bool namesym_eq_func(void* void_nsp_a, void* void_nsp_b) {
+  NameSymPair* nsp_a = (NameSymPair*)void_nsp_a;
+  NameSymPair* nsp_b = (NameSymPair*)void_nsp_b;
+  return str_eq(nsp_a->name, nsp_b->name);
+}
+
+// Returns pointer into dict where Sym is stored by value, probably bad idea.
 static Sym* sym_new(SymKind kind, Str name, Type type) {
   ASSERT(parser.cur_var_scope);
-  ASSERT(parser.cur_var_scope->num_syms < COUNTOFI(parser.cur_var_scope->syms));
-  Sym* new = &parser.cur_var_scope->syms[parser.cur_var_scope->num_syms++];
-  new->kind = kind;
-  new->type = type;
-  new->name = name;
-  return new;
+  NameSymPair nsp = {
+    .name = name,
+    .sym = {
+      .kind = kind,
+      .name = name,
+      .type = type,
+    }
+  };
+  DictInsert res = dict_insert(&parser.cur_var_scope->sym_dict, &nsp, namesym_hash_func,
+                               namesym_eq_func, sizeof(NameSymPair), _Alignof(NameSymPair));
+  return &((NameSymPair*)dict_rawiter_get(&res.iter))->sym;
 }
 
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
@@ -172,7 +171,8 @@ NORETURN static void errorf_offset(uint32_t offset, const char* fmt, ...) {
 
 static void enter_scope(bool is_module, bool is_function) {
   parser.cur_var_scope = &parser.varscopes[parser.num_varscopes++];
-  parser.cur_var_scope->num_syms = 0;
+  parser.cur_var_scope->sym_dict =
+      dict_new(is_module ? (1 << 24) : 16, sizeof(NameSymPair), _Alignof(NameSymPair));
   parser.cur_var_scope->is_function = is_function;
   parser.cur_var_scope->is_module = is_module;
 }
@@ -788,24 +788,26 @@ typedef enum ScopeResult {
   NUM_SCOPE_RESULTS,
 } ScopeResult;
 
-static int find_in_scope(VarScope* scope, Str name) {
-  for (int i = 0; i < scope->num_syms; ++i) {
-    if (name.i == scope->syms[i].name.i) {
-      return i;
-    }
+static Sym* find_in_scope(VarScope* scope, Str name) {
+  DictRawIter iter =
+      dict_find(&scope->sym_dict, &name, namesym_hash_func, namesym_eq_func, sizeof(NameSymPair));
+  NameSymPair* nsp = (NameSymPair*)dict_rawiter_get(&iter);
+  if (!nsp) {
+    return NULL;
   }
-  return -1;
+  return &nsp->sym;
 }
 
+// Returns pointer into sym_dict (where Sym is stored by value), probably a bad idea.
 static ScopeResult scope_lookup(Str name, Sym** sym, SymScopeDecl* scope_decl) {
   *scope_decl = SSD_NONE;
   *sym = NULL;
   bool crossed_function = false;
   VarScope* cur_scope = parser.cur_var_scope;
   for (;;) {
-    int lookup = find_in_scope(cur_scope, name);
-    if (lookup >= 0) {
-      SymScopeDecl sd = cur_scope->syms[lookup].scope_decl;
+    Sym* found_sym = find_in_scope(cur_scope, name);
+    if (found_sym) {
+      SymScopeDecl sd = found_sym->scope_decl;
       if (sd == SSD_ASSUMED_GLOBAL) {
         *scope_decl = SSD_ASSUMED_GLOBAL;
         return SCOPE_RESULT_UNDEFINED;
@@ -815,17 +817,17 @@ static ScopeResult scope_lookup(Str name, Sym** sym, SymScopeDecl* scope_decl) {
         return SCOPE_RESULT_UPVALUE;
       } else if (sd == SSD_DECLARED_GLOBAL) {
         *scope_decl = sd;
-        *sym = &cur_scope->syms[lookup];
+        *sym = found_sym;
         return SCOPE_RESULT_GLOBAL;
       } else if (sd == SSD_DECLARED_PARAMETER) {
         *scope_decl = sd;
-        *sym = &cur_scope->syms[lookup];
+        *sym = found_sym;
         if (crossed_function) {
           return SCOPE_RESULT_UPVALUE;
         }
         return SCOPE_RESULT_PARAMETER;
       } else {
-        *sym = &cur_scope->syms[lookup];
+        *sym = found_sym;
         if (cur_scope->is_module) {
           return SCOPE_RESULT_GLOBAL;
         } else if (crossed_function)  {
@@ -868,6 +870,7 @@ static Operand parse_variable(bool can_assign) {
         errorf("Cannot assign type %s to type %s.", type_as_str(op.type), type_as_str(sym->type));
       }
       if (eq_kind == TOK_EQ) {
+        ///| store sym->irref, i64, op.irref
         gen_ssa_store(sym->irref, op.type, op.irref);
       } else if (eq_kind == TOK_PLUSEQ) {
         gen_ssa_store(sym->irref, op.type,
@@ -894,7 +897,7 @@ static Operand parse_variable(bool can_assign) {
     } else if (scope_result == SCOPE_RESULT_PARAMETER) {
       // TODO: & of parameter won't work, maybe just disallow without in-source copy?
       return operand_rvalue(sym->type, sym->irref);
-} else if (scope_result == SCOPE_RESULT_GLOBAL) {
+    } else if (scope_result == SCOPE_RESULT_GLOBAL) {
       return operand_lvalue(sym->type, sym->irref);
     } else {
       errorf("Undefined reference to '%s'.\n", cstr(target));

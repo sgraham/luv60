@@ -42,6 +42,7 @@ void str_intern_pool_destroy_for_tests(void);
 
 Str str_intern_len(const char* str, uint32_t len);
 Str str_intern(const char* str);
+Str str_internf(const char* fmt, ...);
 Str str_process_escapes(const char* str, uint32_t len);
 
 static inline FORCEINLINE const char* cstr(Str str) {
@@ -52,6 +53,9 @@ static inline FORCEINLINE uint32_t str_len(Str str) {
   return *(uint32_t*)&str_intern_pool[str.i - sizeof(uint32_t)];
 }
 
+static inline FORCEINLINE bool str_eq(Str a, Str b) {
+  return a.i == b.i;
+}
 
 // lex.c
 

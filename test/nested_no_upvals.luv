@@ -1,0 +1,8 @@
+# DISABLED
+# TXT: 13
+def int main():
+    def int inner():
+        return 13
+
+    print inner()
+    return 0

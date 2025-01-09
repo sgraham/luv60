@@ -169,12 +169,27 @@ Type type_function(Type* params, size_t num_params, Type return_type) {
   }
 }
 
-// returned str is either the cstr() of an interned string, or a constant.
+// Returned str is either the cstr() of an interned string, or a constant.
+// Not fast or memory efficient, should only be used during errors though.
 const char* type_as_str(Type type) {
   if (natural_builtin_type_names[type_kind(type)]) {
     return natural_builtin_type_names[type_kind(type)];
-  } else {
-    return "TODO";
+  }
+  switch (type_kind(type)) {
+    case TYPE_FUNC: {
+      Type return_type = type_func_return_type(type);
+      Str head =
+          str_internf("def %s (", type_eq(type_void, return_type) ? "" : type_as_str(return_type));
+      uint32_t num = type_func_num_params(type);
+      for (uint32_t i = 0; i < num; ++i) {
+        head = str_internf("%s%s%s", cstr(head), type_as_str(type_func_param(type, i)),
+                           i < num - 1 ? ", " : "");
+      }
+      return cstr(str_internf("%s)", cstr(head)));
+    }
+    default:
+      ASSERT(false && "todo");
+      return "TODO";
   }
 }
 
