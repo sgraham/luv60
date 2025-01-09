@@ -216,6 +216,7 @@ IRRef gen_ssa_const(uint64_t val, Type type);
 void gen_ssa_store(IRRef into, Type type, IRRef val);
 IRRef gen_ssa_load(IRRef from, Type type);
 void gen_ssa_store_field(IRRef baseptr, uint32_t offset, Type type, IRRef val);
+IRRef gen_ssa_load_field(IRRef baseptr, uint32_t offset, Type type);
 
 // some temp hacks until we have memfn to_str
 void gen_ssa_print_i32(IRRef i);
@@ -231,6 +232,7 @@ void gen_ssa_jump_cond(IRRef cond, IRBlock iftrue, IRBlock iffalse);
 void gen_ssa_jump(IRBlock block);
 void gen_ssa_return(IRRef val, Type type);
 
+IRRef gen_ssa_neg(IRRef a);
 IRRef gen_ssa_add(IRRef a, IRRef b);
 IRRef gen_ssa_mul(IRRef a, IRRef b);
 

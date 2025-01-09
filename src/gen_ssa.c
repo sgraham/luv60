@@ -314,6 +314,16 @@ IRRef gen_ssa_load(IRRef from, Type type) {
   return ret;
 }
 
+IRRef gen_ssa_load_field(IRRef baseptr, uint32_t offset, Type type) {
+  if (offset == 0) {
+    return gen_ssa_load(baseptr, type);
+  } else {
+    IRRef outof_ptr = gen_ssa_make_temp(type_u64);
+    fprintf(outf, "  %s =l add %s, %d\n", irref_as_str(outof_ptr), irref_as_str(baseptr), offset);
+    return gen_ssa_load(outof_ptr, type);
+  }
+}
+
 void gen_ssa_jump(IRBlock block) {
   fprintf(outf, "  jmp %s\n", irblock_as_str(block));
 }
@@ -324,13 +334,22 @@ void gen_ssa_jump_cond(IRRef cond, IRBlock iftrue, IRBlock iffalse) {
 }
 
 IRRef gen_ssa_add(IRRef a, IRRef b) {
-  IRRef ret = gen_ssa_make_temp(refs[a.i].type);  // TODO: type
-  fprintf(outf, "  %s =w add %s, %s\n", irref_as_str(ret), irref_as_str(a), irref_as_str(b));
+  IRRef ret = gen_ssa_make_temp(refs[a.i].type);
+  fprintf(outf, "  %s =%s add %s, %s\n", irref_as_str(ret), type_to_qbe_reg_type(refs[a.i].type),
+          irref_as_str(a), irref_as_str(b));
+  return ret;
+}
+
+IRRef gen_ssa_neg(IRRef v) {
+  Type type = refs[v.i].type;  // TODO: type match
+  IRRef ret = gen_ssa_make_temp(type);
+  fprintf(outf, "  %s =%s neg %s\n", irref_as_str(ret), type_to_qbe_reg_type(type),
+          irref_as_str(v));
   return ret;
 }
 
 IRRef gen_ssa_mul(IRRef a, IRRef b) {
-  IRRef ret = gen_ssa_make_temp(refs[a.i].type);  // TODO: type
+  IRRef ret = gen_ssa_make_temp(refs[a.i].type);  // TODO: type match
   fprintf(outf, "  %s =w mul %s, %s\n", irref_as_str(ret), irref_as_str(a), irref_as_str(b));
   return ret;
 }
@@ -341,17 +360,18 @@ static const char* cmp_names[NUM_IR_INT_CMPS] = {
   [IIC_SLE] = "sle",
   [IIC_SLT] = "slt",
   [IIC_SGE] = "sge",
-  [IIC_SGT] = "sge",
+  [IIC_SGT] = "sgt",
   [IIC_ULE] = "ule",
   [IIC_ULT] = "ult",
   [IIC_UGE] = "uge",
-  [IIC_UGT] = "uge",
+  [IIC_UGT] = "ugt",
 };
 
 IRRef gen_ssa_int_comparison(IRIntCmp cmp, IRRef a, IRRef b) {
   IRRef ret = gen_ssa_make_temp(type_bool);
-  fprintf(outf, "  %s =w c%sw %s, %s\n", irref_as_str(ret), cmp_names[cmp], irref_as_str(a),
-          irref_as_str(b));
+  Type type = refs[a.i].type;  // TODO type match
+  fprintf(outf, "  %s =w c%s%s %s, %s\n", irref_as_str(ret), cmp_names[cmp],
+          type_to_qbe_reg_type(type), irref_as_str(a), irref_as_str(b));
   return ret;
 }
 
@@ -372,6 +392,7 @@ void gen_ssa_print_str(IRRef s) {
           irref_as_str(bytes));
 }
 
+// TODO: make this a function instead of inlining
 void gen_ssa_print_range(IRRef s) {
   IRRef first = gen_ssa_make_temp(type_u64);
   fprintf(outf, "  %s =l loadl %s\n", irref_as_str(first), irref_as_str(s));
@@ -389,7 +410,8 @@ void gen_ssa_print_range(IRRef s) {
   IRBlock range2 = gen_ssa_make_block_name();
   IRBlock range3 = gen_ssa_make_block_name();
   IRBlock after = gen_ssa_make_block_name();
-  gen_ssa_jump_cond(third, range3, range2);
+  IRRef non_one = gen_ssa_int_comparison(IIC_NE, third, gen_ssa_const(1, type_i64));
+  gen_ssa_jump_cond(non_one, range3, range2);
 
   gen_ssa_start_block(range2);
   fprintf(outf, "  call $printf(l $range2fmt, ..., l %s, l %s)\n", irref_as_str(first),

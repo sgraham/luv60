@@ -1,0 +1,39 @@
+# TXT: 0
+# TXT: 1
+# TXT: 2
+# TXT: ---
+# TXT: 3
+# TXT: 4
+# TXT: 5
+# TXT: 6
+# TXT: ---
+# TXT: 2
+# TXT: 5
+# TXT: ---
+# TXT: 4
+# TXT: ---
+# TXT: ---
+# TXT: 0
+# TXT: -1
+# TXT: -2
+# TXT: -3
+# TXT: -4
+def int main():
+    for a in range(3):
+        print a
+    print "---"
+    for b in range(3, 7):
+        print b
+    print "---"
+    for c in range(2, 7, 3):
+        print c
+    print "---"
+    for d in range(4, 6, 2):
+        print d
+    print "---"
+    for e in range(-5):
+        print e
+    print "---"
+    for f in range(0, -5, -1):
+        print f
+    return 0

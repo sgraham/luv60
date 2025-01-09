@@ -732,16 +732,16 @@ static Operand parse_range(bool can_assign) {
 
   IRRef range = gen_ssa_make_temp(type_range);
   if (type_is_none(second.type)) {
-    // range(0, first, 0)
+    // range(0, first, 1)
     gen_ssa_store_field(range, 0, type_i64, gen_ssa_const(0, type_i64));
     gen_ssa_store_field(range, type_size(type_i64), type_i64, first.irref);
-    gen_ssa_store_field(range, type_size(type_i64) * 2, type_i64, gen_ssa_const(0, type_i64));
+    gen_ssa_store_field(range, type_size(type_i64) * 2, type_i64, gen_ssa_const(1, type_i64));
   } else {
-    // range(first, second, third || 0)
+    // range(first, second, third || 1)
     gen_ssa_store_field(range, 0, type_i64, first.irref);
     gen_ssa_store_field(range, type_size(type_i64), type_i64, second.irref);
     if (type_is_none(third.type)) {
-      gen_ssa_store_field(range, type_size(type_i64) * 2, type_i64, gen_ssa_const(0, type_i64));
+      gen_ssa_store_field(range, type_size(type_i64) * 2, type_i64, gen_ssa_const(1, type_i64));
     } else {
       gen_ssa_store_field(range, type_size(type_i64) * 2, type_i64, third.irref);
     }
@@ -768,7 +768,16 @@ static Operand parse_string(bool can_assign) {
 static Operand parse_string_interpolate(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
 static Operand parse_subscript(Operand left, bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
 static Operand parse_typeid(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
-static Operand parse_unary(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+
+static Operand parse_unary(bool can_assign) {
+  TokenKind op_kind = parser.prev_kind;
+  Operand expr = parse_precedence(PREC_UNARY);
+  if (op_kind == TOK_MINUS) {
+    return operand_rvalue(expr.type, gen_ssa_neg(expr.irref));
+  } else {
+    error("unary operator not implemented");
+  }
+}
 
 typedef enum ScopeResult {
   SCOPE_RESULT_GLOBAL,
@@ -876,7 +885,7 @@ static Operand parse_variable(bool can_assign) {
     } else if (scope_result == SCOPE_RESULT_PARAMETER) {
       // TODO: & of parameter won't work, maybe just disallow without in-source copy?
       return operand_rvalue(sym->type, sym->irref);
-    } else if (scope_result == SCOPE_RESULT_GLOBAL) {
+} else if (scope_result == SCOPE_RESULT_GLOBAL) {
       return operand_lvalue(sym->type, sym->irref);
     } else {
       errorf("Undefined reference to '%s'.\n", cstr(target));
@@ -1080,7 +1089,6 @@ static void if_statement(void) {
 }
 
 static void for_statement(void) {
-#if 0
   // Can be:
   // 1. no condition
   // 2. condition only, while style
@@ -1091,22 +1099,63 @@ static void for_statement(void) {
 
   IRBlock after = gen_ssa_make_block_name();
   IRBlock top = gen_ssa_make_block_name();
+  IRBlock body = gen_ssa_make_block_name();
+  IRBlock tail = gen_ssa_make_block_name();
 
-  gen_ssa_start_block(top);
   if (check(TOK_COLON)) {
     // Nothing, case 1:
   } else { // if (check(TOK_IDENT_VAR) && peek(2, TOK_IN)) {
     // Case 3.
-    consume(TOK_IDENT_VAR, "Expect iterator name.");
+    Str it_name = parse_name("Expect iterator name.");
     consume(TOK_IN, "Expect 'in'.");
     Operand expr = parse_expression();
+    if (type_eq(expr.type, type_range)) {
+      IRRef step = gen_ssa_load_field(expr.irref, 16 /*.step*/, type_i64);
+      IRRef is_neg = gen_ssa_int_comparison(IIC_SLT, step, gen_ssa_const(0, type_i64));
+
+      Sym* it = make_local_and_alloc(SYM_VAR, it_name, type_i64);
+
+      gen_ssa_store(it->irref, type_i64, gen_ssa_load_field(expr.irref, 0 /*.start*/, type_i64));
+
+      IRRef stop = gen_ssa_load_field(expr.irref, 8 /*.stop*/, type_i64);
+
+      gen_ssa_start_block(top);
+
+      IRRef cur_val = gen_ssa_load(it->irref, type_i64);
+
+      // is_neg ? (it > stop) : (it < stop)
+      IRBlock is_neg_cmp = gen_ssa_make_block_name();
+      IRBlock is_pos_cmp = gen_ssa_make_block_name();
+      gen_ssa_jump_cond(is_neg, is_neg_cmp, is_pos_cmp);
+
+      gen_ssa_start_block(is_neg_cmp);
+      IRRef should_cont_neg = gen_ssa_int_comparison(IIC_SGT, cur_val, stop);
+      gen_ssa_jump_cond(should_cont_neg, body, after);
+
+      gen_ssa_start_block(is_pos_cmp);
+      IRRef should_cont_pos = gen_ssa_int_comparison(IIC_SLT, cur_val, stop);
+      gen_ssa_jump_cond(should_cont_pos, body, after);
+
+      // block goes in here
+
+      gen_ssa_start_block(tail);
+      IRRef cur = gen_ssa_load(it->irref, type_i64);
+      IRRef incremented = gen_ssa_add(cur, step);
+      gen_ssa_store(it->irref, type_i64, incremented);
+      gen_ssa_jump(top);
+    } else {
+      errorf("Unhandled for/in over type %s.", type_as_str(expr.type));
+    }
   }
 
   consume(TOK_COLON, "Expect ':' to start for.");
   consume(TOK_NEWLINE, "Expect newline after ':' to start for.");
   consume(TOK_INDENT, "Expect indent to start block after for.");
+  gen_ssa_start_block(body);
   parse_block();
-#endif
+  gen_ssa_jump(tail);
+
+  gen_ssa_start_block(after);
 }
 
 static void print_statement(void) {
