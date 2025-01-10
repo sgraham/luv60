@@ -45,7 +45,6 @@ typedef struct FuncData {
   Sym* sym;
 } FuncData;
 
-#define MAX_VARS_IN_SCOPE 256
 #define MAX_FUNC_NESTING 16
 #define MAX_VARIABLE_SCOPES 32
 #define MAX_FUNC_PARAMS 32
@@ -899,6 +898,12 @@ static Operand parse_variable(bool can_assign) {
       return operand_rvalue(sym->type, sym->irref);
     } else if (scope_result == SCOPE_RESULT_GLOBAL) {
       return operand_lvalue(sym->type, sym->irref);
+    } else if (scope_result == SCOPE_RESULT_UPVALUE) {
+      // identify upvals
+      // figure out how many up into parents
+      // determine all neccessary values referenced in child
+      // - need to parse body to get those hmm
+      error("todo, upval");
     } else {
       errorf("Undefined reference to '%s'.\n", cstr(target));
     }
