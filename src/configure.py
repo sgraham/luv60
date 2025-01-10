@@ -221,7 +221,7 @@ def generate(platform, config, settings, cmdlines, tests):
 
         f.write("build run_unittests: testrun unittests.exe\n")
         cmds = {
-            "run": os.path.join(root_dir, "unittests" + exe_ext) + ' -q',
+            "run": os.path.join(root_dir, "unittests" + exe_ext) + " -q",
             "ret": 0,
             "direct": True,
         }
@@ -229,9 +229,14 @@ def generate(platform, config, settings, cmdlines, tests):
         f.write("  data = %s\n" % str(cmds_to_pass, encoding="utf-8"))
         alltests.append("run_unittests")
 
+        common_without_higher_level = [
+            x
+            for x in common_objs
+            if "parse." not in x and "gen_ssa." not in x and "type." not in x
+        ]
         f.write(
             "build %s: link %s | dumbbench.luv\n"
-            % ("lexbench" + exe_ext, " ".join(common_objs + lexbench_objs))
+            % ("lexbench" + exe_ext, " ".join(common_without_higher_level + lexbench_objs))
         )
 
         f.write("\nbuild test: phony " + " ".join(alltests) + "\n")

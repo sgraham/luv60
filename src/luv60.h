@@ -66,6 +66,9 @@ typedef enum TokenKind {
   NUM_TOKEN_KINDS,
 } TokenKind;
 
+uint32_t lex_indexer(const uint8_t* buf, uint32_t byte_count_rounded_up, uint32_t* token_offsets);
+TokenKind lex_categorize(const unsigned char* buf, uint32_t offset);
+
 void lex_start(const uint8_t* buf, size_t byte_count_rounded_up);
 void lex_next_block(uint8_t token_kinds[128], uint32_t token_offsets[128]);
 StrView lex_get_strview(uint32_t from, uint32_t to);

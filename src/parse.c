@@ -917,7 +917,7 @@ static Operand parse_variable(bool can_assign) {
 static Rule rules[NUM_TOKEN_KINDS] = {
     {NULL, NULL, PREC_NONE},  // TOK_INVALID
     {NULL, NULL, PREC_NONE},  // TOK_EOF
-    {NULL, NULL, PREC_NONE},  // TOK_INDENT
+    {NULL, NULL, PREC_NONE},  // TOK_NEWLINE_AND_INDENT
     {NULL, NULL, PREC_NONE},  // TOK_DEDENT
     {NULL, NULL, PREC_NONE},  // TOK_NEWLINE
     {NULL, NULL, PREC_NONE},  // TOK_NL
@@ -1072,8 +1072,7 @@ static Operand if_statement_cond_helper(void) {
     errorf("Result of condition expression cannot be type %s.", type_as_str(cond.type));
   }
   consume(TOK_COLON, "Expect ':' to start if/elif.");
-  consume(TOK_NEWLINE, "Expect newline after ':' to start if/elif.");
-  consume(TOK_INDENT, "Expect indent to start block after if/elif.");
+  consume(TOK_NEWLINE_AND_INDENT, "Expect newline and indent after ':' to start if/elif.");
   return cond;
 }
 
@@ -1095,8 +1094,7 @@ static void if_statement(void) {
 
   if (match(TOK_ELSE)) {
     consume(TOK_COLON, "Expect ':' to start else.");
-    consume(TOK_NEWLINE, "Expect newline after ':' to start else.");
-    consume(TOK_INDENT, "Expect indent to start block after else.");
+    consume(TOK_NEWLINE_AND_INDENT, "Expect newline and indent after ':' to start else.");
     if (parse_block() == LST_NON_RETURN) {
       gen_ssa_jump(after);
     }
@@ -1166,8 +1164,7 @@ static void for_statement(void) {
   }
 
   consume(TOK_COLON, "Expect ':' to start for.");
-  consume(TOK_NEWLINE, "Expect newline after ':' to start for.");
-  consume(TOK_INDENT, "Expect indent to start block after for.");
+  consume(TOK_NEWLINE_AND_INDENT, "Expect newline and indent after ':' to start for.");
   gen_ssa_start_block(body);
   parse_block();
   gen_ssa_jump(tail);
@@ -1246,9 +1243,9 @@ static void parse_def_statement(void) {
   uint32_t num_params = parse_func_params(param_types, param_names);
 
   consume(TOK_COLON, "Expect ':' before function body.");
-  consume(TOK_NEWLINE, "Expect newline before function body. (TODO: single line)");
+  consume(TOK_NEWLINE_AND_INDENT,
+          "Expect newline and indent before function body. (TODO: single line)");
   skip_newlines();
-  consume(TOK_INDENT, "Expect indented function body.");
 
   Type functype = type_function(param_types, num_params, return_type);
 
@@ -1325,7 +1322,10 @@ void parse(const char* filename, ReadFileResult file) {
   parser.cur_var_scope = NULL;
   enter_scope(/*is_module=*/true, /*is_function=*/false);
 
+  abort();
+#if 0
   lex_start(file.buffer, file.allocated_size);
+#endif
   advance();
 
   while (parser.cur_kind != TOK_EOF) {

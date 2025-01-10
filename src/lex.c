@@ -54,6 +54,10 @@ EQ_CHAR(double_quote, '"')
 EQ_CHAR(zero, 0)
 EQ_CHAR(hash, '#')
 EQ_CHAR(newline, '\n')
+EQ_CHAR(less_than, '<')
+EQ_CHAR(greater_than, '>')
+EQ_CHAR(equal, '=')
+EQ_CHAR(bang, '!')
 
 #define HAS_BIT(n)                                                               \
   static FORCEINLINE uint64_t has_bit_##n(const Simd64* __restrict in) {         \
@@ -286,6 +290,147 @@ static void print_with_coloured_bits(char* label, uint64_t bitmask, char* commen
 }
 #endif
 
+#if 1
+
+uint32_t lex_indexer(const uint8_t* buf, uint32_t byte_count_rounded_up, uint32_t* token_offsets) {
+#if DO_PRINTS
+  extern __stdcall bool SetConsoleOutputCP(int);
+  SetConsoleOutputCP(65001);
+#endif
+  // The first attempt at this lexer followed simdjson's lexing. Their
+  // double quote mask finding is very clever. But, in the presence of
+  // comments I wasn't able to find a way to create a mask that handled
+  // the possibility of double quotes appearing in comments. Due to
+  // this, we have to use some branches/loops to be able to exclude #
+  // from within quotes, and quotes in comments. From some rough measurements
+  // done by removing find_delimiters() and not handling comments at all, I
+  // can't measure any difference, so at least in this phase we're pretty close
+  // to memory bandwidth bound anyway even with some presumably mispredicted
+  // branches in find_delimiters' while loop.
+
+  uint64_t state_in_quoted = 0;
+  uint64_t state_in_comment = 0;
+  uint64_t state_structural_start = 1;
+  uint64_t state_start_rel_offset = 0;
+  uint64_t state_first_is_escaped = 0;
+  uint64_t state_first_is_lt_escaped = 0;
+  uint64_t state_first_is_gt_escaped = 0;
+  uint64_t state_first_is_eq_escaped = 0;
+  uint64_t state_first_is_bang_escaped = 0;
+  uint32_t* to = token_offsets;
+
+  for (uint32_t offset = 0; offset < byte_count_rounded_up; offset += 64) {
+    Simd64 data = {_mm256_loadu_si256((const __m256i*)&buf[offset]),
+                   _mm256_loadu_si256((const __m256i*)&buf[offset + 32])};
+#if DO_PRINTS
+    printf("\n");
+  print_buf_ptr = (char*)&buf[offset];
+#endif
+
+    const uint64_t backslash = eq_backslash(&data);
+
+    const uint64_t escaped = escapes_next_block(backslash, &state_first_is_escaped);
+
+    const uint64_t newlines = eq_newline(&data);
+
+    uint64_t quotes = eq_double_quote(&data) & ~escaped;
+    const uint64_t hashes = eq_hash(&data) & ~escaped;
+
+    uint64_t quotes_mask = state_in_quoted;
+    uint64_t comments_mask = state_in_comment;
+
+    if (state_in_comment || hashes) {
+      uint64_t comments = 0;
+      find_delimiters(quotes, hashes, newlines, quotes_mask, comments_mask, &quotes, &comments);
+
+      quotes_mask ^= prefix_xor(quotes);
+      state_in_quoted = set_all_bits_if_high_bit_set(quotes_mask);
+      comments_mask ^= prefix_xor(comments);
+      state_in_comment = set_all_bits_if_high_bit_set(comments_mask);
+    } else {
+      quotes_mask ^= prefix_xor(quotes);
+      state_in_quoted = set_all_bits_if_high_bit_set(quotes_mask);
+    }
+
+    // For double character tokens, we don't want indexes at both of them for
+    // <<, >>, <=, >=, ==, !=.
+    // 
+    // We use the same categorization helper as backslashes, and handle
+    // 'carries' across blocks (i.e. < and the end of the block followed by
+    // another < at the beginning of the next.)
+    const uint64_t lt = eq_less_than(&data);
+    const uint64_t gt = eq_greater_than(&data);
+    const uint64_t eq = eq_equal(&data);
+    const uint64_t bang = eq_bang(&data);
+    const uint64_t ltesc = escapes_next_block(lt, &state_first_is_lt_escaped);
+    const uint64_t gtesc = escapes_next_block(gt, &state_first_is_gt_escaped);
+    const uint64_t eqesc = escapes_next_block(eq, &state_first_is_eq_escaped);
+    const uint64_t bangesc = escapes_next_block(bang, &state_first_is_bang_escaped);
+    const uint64_t double_mask =
+        (ltesc & (lt | eq)) | (gtesc & (gt | eq)) | (eqesc & eq) | (bangesc & eq);
+
+    Classes classes = classify(&data);
+
+    uint64_t S = classes.punct & ~(quotes_mask | comments_mask);
+#if DO_PRINTS
+    print_with_coloured_bits("S", S, "");
+#  endif
+
+    S = S | quotes;
+
+    uint64_t P = S | classes.space;
+
+    const uint64_t structural_start_shoved = P >> 63;
+    P = (P << 1) | state_structural_start;
+    state_structural_start = structural_start_shoved;
+
+    P &= ~classes.space & ~(quotes_mask | comments_mask);
+
+    S = S | P;
+
+    uint64_t indexes = S & ~(quotes & ~quotes_mask) & ~double_mask;
+
+#if DO_PRINTS
+  print_with_coloured_bits("final", indexes, "");
+#endif
+
+    int64_t rel_offset;
+    if (state_start_rel_offset == 0) {
+      rel_offset = trailing_zeros(indexes);
+      indexes = clear_lowest_bit(indexes);
+    } else {
+      rel_offset = state_start_rel_offset;
+    }
+
+    while (indexes) {
+      *to++ = offset + rel_offset;
+      rel_offset = trailing_zeros(indexes);
+      indexes = clear_lowest_bit(indexes);
+    }
+    state_start_rel_offset = rel_offset - 64;
+  }
+
+  return to - token_offsets;
+}
+
+static int continuation_paren_level_;
+
+TokenKind lex_categorize(const unsigned char* buffer, uint32_t offset) {
+  const unsigned char* p = &buffer[offset];
+  const unsigned char* q;
+
+#  define NEWLINE_INDENT_ADJUST(n)   \
+    if (continuation_paren_level_) { \
+      return TOK_NL;                 \
+    } else {                         \
+      return TOK_NEWLINE_INDENT_##n; \
+    }
+
+#  include "categorizer.c"
+}
+
+#else
+
 // These are for carries across blocks.
 static uint64_t state_in_quoted_;
 static uint64_t state_in_comment_;
@@ -311,12 +456,6 @@ void lex_start(const uint8_t* buf, size_t byte_count_rounded_up) {
 }
 
 void lex_next_block(uint8_t token_kinds[128], uint32_t token_offsets[128]) {
-  // The first attempt at this lexer followed simdjson's lexing. Their
-  // double quote mask finding is very clever. But, in the presence of
-  // comments I wasn't able to find a way to create a mask that handled
-  // the possibility of double quotes appearing in comments. Due to
-  // this, we have to use some branches/loops to be able to exclude #
-  // from within quotes, and quotes in comments.
 
   TracyCZoneN(simd_load, "simd_load", 1);
   Simd64 data = {_mm256_loadu_si256((const __m256i*)&buf_[offset_]),
@@ -457,6 +596,7 @@ void lex_next_block(uint8_t token_kinds[128], uint32_t token_offsets[128]) {
   TracyCZoneEnd(categorize);
 }
 
+
 StrView lex_get_strview(uint32_t from, uint32_t to) {
   return (StrView){(const char*)&buf_[from], to - from};
 }
@@ -487,3 +627,4 @@ void lex_get_location_and_line_slow(uint32_t offset,
     }
   }
 }
+#endif

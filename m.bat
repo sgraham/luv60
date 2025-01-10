@@ -1,4 +1,5 @@
 @echo off
+setlocal enabledelayedexpansion
 if '%1==' goto :err
 call python src/configure.py || exit /b
 call third_party\ninja\ninja-win.exe -C out\w%1 %2 %3 %4 %5 || exit /b

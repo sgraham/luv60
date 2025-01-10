@@ -18,46 +18,41 @@ static bool lex_test(const char* buf, KindAndOffset* exp, size_t num_exp) {
   unsigned char* padded_copy = base_large_alloc_rw(alloc_size);
   memcpy(padded_copy, buf, len);
 
-  lex_start(padded_copy, alloc_size);
+  uint32_t* token_offsets = (uint32_t*)base_large_alloc_rw(alloc_size * sizeof(uint32_t));
+  lex_indexer(padded_copy, alloc_size, token_offsets);
 
-  uint8_t token_kinds[128] = {0};
-  uint32_t token_offsets[128] = {0};
-  size_t cur_tok_index = 0;
+  bool ok = true;
   for (size_t i = 0; i < num_exp; ++i) {
-    while (!token_kinds[cur_tok_index]) {
-      cur_tok_index = 0;
-      lex_next_block(token_kinds, token_offsets);
-    }
+    TokenKind kind = lex_categorize(padded_copy, token_offsets[i]);
 
-    if (token_kinds[cur_tok_index] != exp[i].kind) {
-      base_writef_stderr("\nindex %zd: got %s, wanted %s\n", i,
-                         token_names[token_kinds[cur_tok_index]], token_names[exp[i].kind]);
-      base_large_alloc_free(padded_copy);
-      return false;
+    if (kind != exp[i].kind) {
+      base_writef_stderr("\nindex %zd: got %s, wanted %s\n", i, token_names[kind],
+                         token_names[exp[i].kind]);
+      ok = false;
+      goto done;
     }
-    if (token_offsets[cur_tok_index] != exp[i].offset) {
-      base_writef_stderr("\nindex %zd was %s, but got off %d, wanted %d\n", i,
-                         token_names[token_kinds[cur_tok_index]], token_offsets[cur_tok_index],
-                         exp[i].offset);
-      base_large_alloc_free(padded_copy);
-      return false;
+    if (token_offsets[i] != exp[i].offset) {
+      base_writef_stderr("\nindex %zd was %s, but got off %d, wanted %d\n", i, token_names[kind],
+                         token_offsets[i], exp[i].offset);
+      ok = false;
+      goto done;
     }
-
-    ++cur_tok_index;
   }
 
+done:
   base_large_alloc_free(padded_copy);
-  return true;
+  base_large_alloc_free(token_offsets);
+  return ok;
 }
 
 TEST(Lex, Basic) {
   KindAndOffset expected[] = {
-      {TOK_CONST, 0},       //
-      {TOK_IDENT_VAR, 6},   //
-      {TOK_EQ, 13},         //
-      {TOK_IDENT_VAR, 15},  //
-      {TOK_NEWLINE, 19},    //
-      {TOK_EOF, 20},        //
+      {TOK_CONST, 0},              //
+      {TOK_IDENT_VAR, 6},          //
+      {TOK_EQ, 13},                //
+      {TOK_IDENT_VAR, 15},         //
+      {TOK_NEWLINE_INDENT_0, 19},  //
+      {TOK_EOF, 20},               //
   };
   EXPECT_TRUE(lex_test("const kStuff = blah\n", expected, COUNTOF(expected)));
 }
@@ -77,28 +72,24 @@ TEST(Lex, Punctuation) {
       {TOK_MINUS, 22},    //
       {TOK_STAR, 24},     //
       {TOK_SLASH, 26},    //
-      {TOK_PLUSEQ, 28},   //
-      {TOK_MINUSEQ, 31},  //
-      {TOK_STAREQ, 34},   //
-      {TOK_SLASHEQ, 37},  //
-      {TOK_EOF, 39},      //
+      {TOK_EOF, 27},      //
   };
-  EXPECT_TRUE(lex_test("{ } [ ] . <= >= < > + - * / += -= *= /=", expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test("{ } [ ] . <= >= < > + - * /", expected, COUNTOF(expected)));
 }
 
 TEST(Lex, Keywords) {
   KindAndOffset expected[] = {
-      {TOK_CONST, 0},     //
-      {TOK_DEF, 6},       //
-      {TOK_ELIF, 10},     //
-      {TOK_ELSE, 15},     //
-      {TOK_FALSE, 20},    //
-      {TOK_FOR, 26},      //
-      {TOK_IF, 30},       //
-      {TOK_STRUCT, 33},   //
-      {TOK_NEWLINE, 39},  //
-      {TOK_TRUE, 40},     //
-      {TOK_EOF, 44},      //
+      {TOK_CONST, 0},              //
+      {TOK_DEF, 6},                //
+      {TOK_ELIF, 10},              //
+      {TOK_ELSE, 15},              //
+      {TOK_FALSE, 20},             //
+      {TOK_FOR, 26},               //
+      {TOK_IF, 30},                //
+      {TOK_STRUCT, 33},            //
+      {TOK_NEWLINE_INDENT_0, 39},  //
+      {TOK_TRUE, 40},              //
+      {TOK_EOF, 44},               //
   };
   EXPECT_TRUE(
       lex_test("const def elif else false for if struct\ntrue", expected, COUNTOF(expected)));
@@ -145,7 +136,7 @@ TEST(Lex, Newlines) {
       {TOK_LPAREN, 5},     //
       {TOK_RPAREN, 6},     //
       {TOK_COLON, 7},      //
-      {TOK_NEWLINE, 8},    //
+      {TOK_NEWLINE_INDENT_0, 8},    //
       {TOK_EOF, 9},        //
   };
   const char input[] = "def a():\n";
@@ -154,39 +145,31 @@ TEST(Lex, Newlines) {
 
 TEST(Lex, IndentDedent) {
   KindAndOffset expected[] = {
-      {TOK_DEF, 0},         //
-      {TOK_IDENT_VAR, 4},   //
-      {TOK_LPAREN, 5},      //
-      {TOK_RPAREN, 6},      //
-      {TOK_COLON, 7},       //
-      {TOK_NEWLINE, 8},     //
-      {TOK_INDENT, 9},      //
-      {TOK_IF, 13},         //
-      {TOK_IDENT_VAR, 16},  //
-      {TOK_COLON, 17},      //
-      {TOK_NEWLINE, 18},    //
-      {TOK_INDENT, 19},     //
-      {TOK_PRINT, 27},      //
-      {TOK_IDENT_VAR, 33},  //
-      {TOK_NEWLINE, 35},    //
-      {TOK_DEDENT, 36},     //
-      {TOK_ELIF, 40},       //
-      {TOK_COLON, 44},      //
-      {TOK_NEWLINE, 45},    //
-      {TOK_INDENT, 46},     //
-      {TOK_IDENT_VAR, 54},  //
-      {TOK_NEWLINE, 59},    //
-      {TOK_IF, 68},         //
-      {TOK_IDENT_VAR, 71},  //
-      {TOK_COLON, 72},      //
-      {TOK_NEWLINE, 73},    //
-      {TOK_INDENT, 74},     //
-      {TOK_PASS, 86},       //
-      {TOK_NEWLINE, 90},    //
-      {TOK_DEDENT, 91},     //
-      {TOK_DEDENT, 91},     //
-      {TOK_DEDENT, 91},     //
-      {TOK_EOF, 91},        //
+      {TOK_DEF, 0},                 //
+      {TOK_IDENT_VAR, 4},           //
+      {TOK_LPAREN, 5},              //
+      {TOK_RPAREN, 6},              //
+      {TOK_COLON, 7},               //
+      {TOK_NEWLINE_INDENT_4, 8},    //
+      {TOK_IF, 13},                 //
+      {TOK_IDENT_VAR, 16},          //
+      {TOK_COLON, 17},              //
+      {TOK_NEWLINE_INDENT_8, 18},   //
+      {TOK_PRINT, 27},              //
+      {TOK_IDENT_VAR, 33},          //
+      {TOK_NEWLINE_INDENT_4, 35},   //
+      {TOK_ELIF, 40},               //
+      {TOK_COLON, 44},              //
+      {TOK_NEWLINE_INDENT_8, 45},   //
+      {TOK_IDENT_VAR, 54},          //
+      {TOK_NEWLINE_INDENT_8, 59},   //
+      {TOK_IF, 68},                 //
+      {TOK_IDENT_VAR, 71},          //
+      {TOK_COLON, 72},              //
+      {TOK_NEWLINE_INDENT_12, 73},  //
+      {TOK_PASS, 86},               //
+      {TOK_NEWLINE_INDENT_0, 90},   //
+      {TOK_EOF, 91},                //
   };
   const char input[] =
       "def a():\n"
@@ -201,26 +184,22 @@ TEST(Lex, IndentDedent) {
 
 TEST(Lex, SuccessiveBlocksDedent) {
   KindAndOffset expected[] = {
-      {TOK_STRUCT, 0},       //
-      {TOK_IDENT_TYPE, 7},   //
-      {TOK_COLON, 8},        //
-      {TOK_NEWLINE, 9},      //
-      {TOK_INDENT, 10},      //
-      {TOK_INT, 14},         //
-      {TOK_IDENT_VAR, 18},   //
-      {TOK_NEWLINE, 19},     //
-      {TOK_NEWLINE, 20},     //
-      {TOK_DEDENT, 21},      //
-      {TOK_STRUCT, 21},      //
-      {TOK_IDENT_TYPE, 28},  //
-      {TOK_COLON, 29},       //
-      {TOK_NEWLINE, 30},     //
-      {TOK_INDENT, 31},      //
-      {TOK_INT, 35},         //
-      {TOK_IDENT_VAR, 39},   //
-      {TOK_NEWLINE, 40},     //
-      {TOK_DEDENT, 41},      //
-      {TOK_EOF, 41},         //
+      {TOK_STRUCT, 0},             //
+      {TOK_IDENT_TYPE, 7},         //
+      {TOK_COLON, 8},              //
+      {TOK_NEWLINE_INDENT_4, 9},   //
+      {TOK_INT, 14},               //
+      {TOK_IDENT_VAR, 18},         //
+      {TOK_NEWLINE_BLANK, 19},     //
+      {TOK_NEWLINE_INDENT_0, 20},  //
+      {TOK_STRUCT, 21},            //
+      {TOK_IDENT_TYPE, 28},        //
+      {TOK_COLON, 29},             //
+      {TOK_NEWLINE_INDENT_4, 30},  //
+      {TOK_INT, 35},               //
+      {TOK_IDENT_VAR, 39},         //
+      {TOK_NEWLINE_INDENT_0, 40},  //
+      {TOK_EOF, 41},               //
   };
   const char input[] =
       "struct A:\n"
@@ -233,30 +212,26 @@ TEST(Lex, SuccessiveBlocksDedent) {
 
 TEST(Lex, SuccessiveBlocksStillIndented) {
   KindAndOffset expected[] = {
-      {TOK_DEF, 0},           //
-      {TOK_IDENT_VAR, 4},     //
-      {TOK_LPAREN, 5},        //
-      {TOK_RPAREN, 6},        //
-      {TOK_COLON, 7},         //
-      {TOK_NEWLINE, 8},       //
-      {TOK_INDENT, 9},        //
-      {TOK_INT, 13},          //
-      {TOK_IDENT_VAR, 17},    //
-      {TOK_NEWLINE, 18},      //
-      {TOK_NEWLINE, 19},      //
-      {TOK_DEF, 24},          //
-      {TOK_IDENT_VAR, 28},    //
-      {TOK_LPAREN, 29},       //
-      {TOK_RPAREN, 30},       //
-      {TOK_COLON, 31},        //
-      {TOK_NEWLINE, 32},      //
-      {TOK_INDENT, 33},       //
-      {TOK_RETURN, 41},       //
-      {TOK_INT_LITERAL, 48},  //
-      {TOK_NEWLINE, 49},      //
-      {TOK_DEDENT, 50},       //
-      {TOK_DEDENT, 50},       //
-      {TOK_EOF, 50},          //
+      {TOK_DEF, 0},                //
+      {TOK_IDENT_VAR, 4},          //
+      {TOK_LPAREN, 5},             //
+      {TOK_RPAREN, 6},             //
+      {TOK_COLON, 7},              //
+      {TOK_NEWLINE_INDENT_4, 8},   //
+      {TOK_INT, 13},               //
+      {TOK_IDENT_VAR, 17},         //
+      {TOK_NEWLINE_BLANK, 18},     //
+      {TOK_NEWLINE_INDENT_4, 19},  //
+      {TOK_DEF, 24},               //
+      {TOK_IDENT_VAR, 28},         //
+      {TOK_LPAREN, 29},            //
+      {TOK_RPAREN, 30},            //
+      {TOK_COLON, 31},             //
+      {TOK_NEWLINE_INDENT_8, 32},  //
+      {TOK_RETURN, 41},            //
+      {TOK_INT_LITERAL, 48},       //
+      {TOK_NEWLINE_INDENT_0, 49},  //
+      {TOK_EOF, 50},               //
   };
   const char input[] =
       "def a():\n"
@@ -316,43 +291,35 @@ TEST(Lex, InterpString) {
 
 TEST(Lex, NestedIndent) {
   KindAndOffset expected[] = {
-      {TOK_DEF, 0},            //
-      {TOK_IDENT_VAR, 4},      //
-      {TOK_LPAREN, 8},         //
-      {TOK_RPAREN, 9},         //
-      {TOK_COLON, 10},         //
-      {TOK_NEWLINE, 11},       //
-      {TOK_INDENT, 12},        //
-      {TOK_IF, 16},            //
-      {TOK_TRUE, 19},          //
-      {TOK_COLON, 23},         //
-      {TOK_NEWLINE, 24},       //
-      {TOK_INDENT, 25},        //
-      {TOK_IF, 33},            //
-      {TOK_TRUE, 36},          //
-      {TOK_COLON, 40},         //
-      {TOK_NEWLINE, 41},       //
-      {TOK_INDENT, 42},        //
-      {TOK_RETURN, 54},        //
-      {TOK_NEWLINE, 60},       //
-      {TOK_NEWLINE, 61},       //
-      {TOK_DEDENT, 62},        //
-      {TOK_DEDENT, 62},        //
-      {TOK_IF, 66},            //
-      {TOK_FALSE, 69},         //
-      {TOK_COLON, 74},         //
-      {TOK_NEWLINE, 75},       //
-      {TOK_INDENT, 76},        //
-      {TOK_PRINT, 84},         //
-      {TOK_INT_LITERAL, 90},   //
-      {TOK_NEWLINE, 91},       //
-      {TOK_NEWLINE, 92},       //
-      {TOK_DEDENT, 93},        //
-      {TOK_PRINT, 97},         //
-      {TOK_INT_LITERAL, 103},  //
-      {TOK_NEWLINE, 104},      //
-      {TOK_DEDENT, 105},       //
-      {TOK_EOF, 105},          //
+      {TOK_DEF, 0},                 //
+      {TOK_IDENT_VAR, 4},           //
+      {TOK_LPAREN, 8},              //
+      {TOK_RPAREN, 9},              //
+      {TOK_COLON, 10},              //
+      {TOK_NEWLINE_INDENT_4, 11},   //
+      {TOK_IF, 16},                 //
+      {TOK_TRUE, 19},               //
+      {TOK_COLON, 23},              //
+      {TOK_NEWLINE_INDENT_8, 24},   //
+      {TOK_IF, 33},                 //
+      {TOK_TRUE, 36},               //
+      {TOK_COLON, 40},              //
+      {TOK_NEWLINE_INDENT_12, 41},  //
+      {TOK_RETURN, 54},             //
+      {TOK_NEWLINE_BLANK, 60},      //
+      {TOK_NEWLINE_INDENT_4, 61},   //
+      {TOK_IF, 66},                 //
+      {TOK_FALSE, 69},              //
+      {TOK_COLON, 74},              //
+      {TOK_NEWLINE_INDENT_8, 75},   //
+      {TOK_PRINT, 84},              //
+      {TOK_INT_LITERAL, 90},        //
+      {TOK_NEWLINE_BLANK, 91},      //
+      {TOK_NEWLINE_INDENT_4, 92},   //
+      {TOK_PRINT, 97},              //
+      {TOK_INT_LITERAL, 103},       //
+      {TOK_NEWLINE_INDENT_0, 104},  //
+      {TOK_EOF, 105},               //
   };
   const char input[] =
       "def func():\n"
@@ -369,19 +336,17 @@ TEST(Lex, NestedIndent) {
 
 TEST(Lex, Decorator) {
   KindAndOffset expected[] = {
-      {TOK_IDENT_DECORATOR, 0},  //
-      {TOK_NEWLINE, 6},          //
-      {TOK_DEF, 7},              //
-      {TOK_IDENT_VAR, 11},       //
-      {TOK_LPAREN, 15},          //
-      {TOK_RPAREN, 16},          //
-      {TOK_COLON, 17},           //
-      {TOK_NEWLINE, 18},         //
-      {TOK_INDENT, 19},          //
-      {TOK_PASS, 23},            //
-      {TOK_NEWLINE, 27},         //
-      {TOK_DEDENT, 28},          //
-      {TOK_EOF, 28},             //
+      {TOK_IDENT_DECORATOR, 0},    //
+      {TOK_NEWLINE_INDENT_0, 6},   //
+      {TOK_DEF, 7},                //
+      {TOK_IDENT_VAR, 11},         //
+      {TOK_LPAREN, 15},            //
+      {TOK_RPAREN, 16},            //
+      {TOK_COLON, 17},             //
+      {TOK_NEWLINE_INDENT_4, 18},  //
+      {TOK_PASS, 23},              //
+      {TOK_NEWLINE_INDENT_0, 27},  //
+      {TOK_EOF, 28},               //
   };
   const char input[] =
       "@stuff\n"
@@ -392,25 +357,23 @@ TEST(Lex, Decorator) {
 
 TEST(Lex, Continuation) {
   KindAndOffset expected[] = {
-      {TOK_DEF, 0},           //
-      {TOK_IDENT_VAR, 4},     //
-      {TOK_LPAREN, 8},        //
-      {TOK_RPAREN, 9},        //
-      {TOK_COLON, 10},        //
-      {TOK_NEWLINE, 11},      //
-      {TOK_INDENT, 12},       //
-      {TOK_IDENT_VAR, 16},    //
-      {TOK_EQ, 18},           //
-      {TOK_LSQUARE, 20},      //
-      {TOK_NL, 21},           //
-      {TOK_NL, 22},           //
-      {TOK_INT_LITERAL, 25},  //
-      {TOK_NL, 26},           //
-      {TOK_NL, 27},           //
-      {TOK_RSQUARE, 28},      //
-      {TOK_NEWLINE, 29},      //
-      {TOK_DEDENT, 30},       //
-      {TOK_EOF, 30},          //
+      {TOK_DEF, 0},                //
+      {TOK_IDENT_VAR, 4},          //
+      {TOK_LPAREN, 8},             //
+      {TOK_RPAREN, 9},             //
+      {TOK_COLON, 10},             //
+      {TOK_NEWLINE_INDENT_4, 11},  //
+      {TOK_IDENT_VAR, 16},         //
+      {TOK_EQ, 18},                //
+      {TOK_LSQUARE, 20},           //
+      {TOK_NL, 21},                //
+      {TOK_NL, 22},                //
+      {TOK_INT_LITERAL, 25},       //
+      {TOK_NL, 26},                //
+      {TOK_NL, 27},                //
+      {TOK_RSQUARE, 28},           //
+      {TOK_NEWLINE_INDENT_0, 29},  //
+      {TOK_EOF, 30},               //
   };
   const char input[] =
       "def func():\n"
