@@ -142,7 +142,7 @@ NORETURN static void error_offset(uint32_t offset, const char* message) {
 }
 
 NORETURN static void error(const char* message) {
-  error_offset(parser.cur_offset, message);
+  error_offset(parser.prev_offset, message);
 }
 
 NORETURN static void errorf(const char* fmt, ...) {
