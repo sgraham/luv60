@@ -78,12 +78,12 @@ decorator = '@' [a-z_][a-zA-Z0-9_]*;
   "u8"        { return TOK_U8; }
   "uint"      { return TOK_UINT; }
   "with"      { return TOK_WITH; }
-  "{"         { ++continuation_paren_level_; return TOK_LBRACE; }
-  "}"         { --continuation_paren_level_; return TOK_RBRACE; }
-  "("         { ++continuation_paren_level_; return TOK_LPAREN; }
-  ")"         { --continuation_paren_level_; return TOK_RPAREN; }
-  "["         { ++continuation_paren_level_; return TOK_LSQUARE; }
-  "]"         { --continuation_paren_level_; return TOK_RSQUARE; }
+  "{"         { ++token_continuation_paren_level; return TOK_LBRACE; }
+  "}"         { --token_continuation_paren_level; return TOK_RBRACE; }
+  "("         { ++token_continuation_paren_level; return TOK_LPAREN; }
+  ")"         { --token_continuation_paren_level; return TOK_RPAREN; }
+  "["         { ++token_continuation_paren_level; return TOK_LSQUARE; }
+  "]"         { --token_continuation_paren_level; return TOK_RSQUARE; }
   "=="        { return TOK_EQEQ; }
   "!="        { return TOK_BANGEQ; }
   "<<"        { return TOK_LSHIFT; }
@@ -109,8 +109,8 @@ decorator = '@' [a-z_][a-zA-Z0-9_]*;
   // Because the indexer determines where we look next, the next token will
   // start at the ending newline, even though it looks like it's being
   // "consumed" here.
-  "\n"[ ]*"#.*\n" { return continuation_paren_level_ ? TOK_NL : TOK_NEWLINE_BLANK; }
-  "\n"[ ]*"\n" { return continuation_paren_level_ ? TOK_NL : TOK_NEWLINE_BLANK; }
+  "\n"[ ]*"#.*\n" { return token_continuation_paren_level ? TOK_NL : TOK_NEWLINE_BLANK; }
+  "\n"[ ]*"\n" { return token_continuation_paren_level ? TOK_NL : TOK_NEWLINE_BLANK; }
 
   "\n                                            "    { return TOK_ERROR; }
   "\n                                        "    { NEWLINE_INDENT_ADJUST(40); }

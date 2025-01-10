@@ -59,14 +59,14 @@ struct VarScope {
 typedef struct Parser {
   const char* cur_filename;
 
-  uint8_t token_kinds[128];
-  uint32_t token_offsets[128];
-  int cur_token_index;
+  const char* file_contents;
+  uint32_t num_tokens;
+  uint32_t* token_offsets;
+  uint32_t cur_token_index;
 
   TokenKind cur_kind;
-  uint32_t cur_offset;
   TokenKind prev_kind;
-  uint32_t prev_offset;
+  int continuation_paren_level;
 
   FuncData funcdatas[MAX_FUNC_NESTING];
   int num_funcdatas;
@@ -78,6 +78,45 @@ typedef struct Parser {
 } Parser;
 
 static Parser parser;
+
+static inline uint32_t cur_offset(void) {
+  return parser.token_offsets[parser.cur_token_index];
+}
+
+static inline uint32_t prev_offset(void) {
+  return parser.token_offsets[parser.cur_token_index - 1];
+}
+
+static StrView get_strview_for_offsets(uint32_t from, uint32_t to) {
+  return (StrView){(const char*)&parser.file_contents[from], to - from};
+}
+
+static void get_location_and_line_slow(uint32_t offset,
+                                       uint32_t* loc_line,
+                                       uint32_t* loc_column,
+                                       StrView* contents) {
+  const char* line_start = (const char*)&parser.file_contents[0];
+  uint32_t line = 1;
+  uint32_t col = 1;
+  const char* find = (const char*)&parser.file_contents[offset];
+  for (const char* p = (const char*)&parser.file_contents[0];; ++p) {
+    ASSERT(*p != 0);
+    if (p == find) {
+      const char* line_end = strchr(p, '\n');  // TODO: error on file w/o newline
+      *loc_line = line;
+      *loc_column = col;
+      *contents = (StrView){line_start, line_end - line_start};
+      return;
+    }
+    if (*p == '\n') {
+      line += 1;
+      col = 1;
+      line_start = p + 1;
+    } else {
+      col += 1;
+    }
+  }
+}
 
 typedef struct NameSymPair {
   Str name;
@@ -100,14 +139,12 @@ static bool namesym_eq_func(void* void_nsp_a, void* void_nsp_b) {
 // Returns pointer into dict where Sym is stored by value, probably bad idea.
 static Sym* sym_new(SymKind kind, Str name, Type type) {
   ASSERT(parser.cur_var_scope);
-  NameSymPair nsp = {
-    .name = name,
-    .sym = {
-      .kind = kind,
-      .name = name,
-      .type = type,
-    }
-  };
+  NameSymPair nsp = {.name = name,
+                     .sym = {
+                         .kind = kind,
+                         .name = name,
+                         .type = type,
+                     }};
   DictInsert res = dict_insert(&parser.cur_var_scope->sym_dict, &nsp, namesym_hash_func,
                                namesym_eq_func, sizeof(NameSymPair), _Alignof(NameSymPair));
   return &((NameSymPair*)dict_rawiter_get(&res.iter))->sym;
@@ -132,7 +169,7 @@ NORETURN static void error_offset(uint32_t offset, const char* message) {
   uint32_t loc_line;
   uint32_t loc_column;
   StrView line;
-  lex_get_location_and_line_slow(offset, &loc_line, &loc_column, &line);
+  get_location_and_line_slow(offset, &loc_line, &loc_column, &line);
   int indent = base_writef_stderr("%s:%d:%d:", parser.cur_filename, loc_line, loc_column);
   base_writef_stderr("%.*s\n", (int)line.size, line.data);
   base_writef_stderr("%*s", indent + loc_column - 1, "");
@@ -141,7 +178,7 @@ NORETURN static void error_offset(uint32_t offset, const char* message) {
 }
 
 NORETURN static void error(const char* message) {
-  error_offset(parser.prev_offset, message);
+  error_offset(prev_offset(), message);
 }
 
 NORETURN static void errorf(const char* fmt, ...) {
@@ -200,8 +237,8 @@ static IRRef enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS]) {
 }
 
 static void leave_function(void) {
-  //gen_resolve_label(done);
-  //gen_func_exit_and_patch_func_entry(&cur_func.func_exit_cont, cur_func.return_type);
+  // gen_resolve_label(done);
+  // gen_func_exit_and_patch_func_entry(&cur_func.func_exit_cont, cur_func.return_type);
   gen_ssa_end_function();
 
   --parser.num_funcdatas;
@@ -224,21 +261,17 @@ static Type make_type_array(uint32_t offset, uint64_t count, Type subtype) {
 
 static void advance(void) {
   ++parser.cur_token_index;
-  while (!parser.token_kinds[parser.cur_token_index]) {
-    parser.cur_token_index = 0;
-    lex_next_block(parser.token_kinds, parser.token_offsets);
-  }
+  ASSERT(parser.cur_token_index < parser.num_tokens);
   do {
     parser.prev_kind = parser.cur_kind;
-    parser.prev_offset = parser.cur_offset;
-    parser.cur_kind = parser.token_kinds[parser.cur_token_index];
-    parser.cur_offset = parser.token_offsets[parser.cur_token_index];
+    parser.cur_kind = token_categorize(parser.token_offsets[parser.cur_token_index]);
   } while (parser.cur_kind == TOK_COMMENT || parser.cur_kind == TOK_NL);
 }
 
 static bool match(TokenKind tok_kind) {
-  if (parser.cur_kind != tok_kind)
+  if (parser.cur_kind != tok_kind) {
     return false;
+  }
   advance();
   return true;
 }
@@ -282,7 +315,7 @@ static Type basic_tok_to_type[NUM_TOKEN_KINDS] = {
 
 static Type parse_type(void) {
   if (match(TOK_STAR)) {
-    return make_type_ptr(parser.cur_offset, parse_type());
+    return make_type_ptr(cur_offset(), parse_type());
   }
   if (match(TOK_LSQUARE)) {
     int count = 0;
@@ -294,7 +327,7 @@ static Type parse_type(void) {
     if (type_is_none(elem)) {
       error("Expecting type of array or slice.");
     }
-    return make_type_array(parser.cur_offset, count, elem);
+    return make_type_array(cur_offset(), count, elem);
   }
 
   if (match(TOK_LBRACE)) {
@@ -316,7 +349,7 @@ static Type parse_type(void) {
 }
 
 static Str str_from_previous(void) {
-  StrView view = lex_get_strview(parser.prev_offset, parser.cur_offset);
+  StrView view = get_strview_for_offsets(prev_offset(), cur_offset());
   ASSERT(view.size > 0);
   while (view.data[view.size - 1] == ' ') {
     --view.size;
@@ -590,11 +623,16 @@ typedef enum Precedence {
 
 static bool match_assignment(void) {
   const TokenKind tok = parser.cur_kind;
+  if (tok != TOK_EQ) {
+    return false;
+  }
+#if 0
   if (!(tok == TOK_EQ || tok == TOK_PLUSEQ || tok == TOK_MINUSEQ || tok == TOK_STAREQ ||
         tok == TOK_SLASHEQ || tok == TOK_PERCENTEQ || tok == TOK_CARETEQ || tok == TOK_PIPEEQ ||
         tok == TOK_AMPERSANDEQ || tok == TOK_LSHIFTEQ || tok == TOK_RSHIFTEQ)) {
     return false;
   }
+#endif
   advance();
   return true;
 }
@@ -611,8 +649,14 @@ typedef struct Rule {
 static Rule* get_rule(TokenKind tok_kind);
 static Operand parse_precedence(Precedence precedence);
 
-static Operand parse_alignof(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
-static Operand parse_and(Operand left, bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_alignof(bool can_assign) {
+  ASSERT(false && "not implemented");
+  return operand_null;
+}
+static Operand parse_and(Operand left, bool can_assign) {
+  ASSERT(false && "not implemented");
+  return operand_null;
+}
 
 static Operand parse_binary(Operand left, bool can_assign) {
   // Remember the operator.
@@ -666,7 +710,7 @@ static Operand parse_call(Operand left, bool can_assign) {
         errorf("Passing >= %d arguments to function, but it expects %d.", num_args + 1,
                type_func_num_params(left.type));
       }
-      uint32_t arg_offset = parser.cur_offset;
+      uint32_t arg_offset = cur_offset();
       Type param_type = type_func_param(left.type, num_args);
       Operand arg = parse_precedence(PREC_OR);
       if (!convert_operand(&arg, param_type)) {
@@ -687,24 +731,54 @@ static Operand parse_call(Operand left, bool can_assign) {
       gen_ssa_call(type_func_return_type(left.type), left.irref, num_args, arg_types, arg_values));
 }
 
-static Operand parse_compound_literal(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
-static Operand parse_dict_literal(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
-static Operand parse_dot(Operand left, bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
-static Operand parse_grouping(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
-static Operand parse_in_or_not_in(Operand left, bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
-static Operand parse_len(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
-static Operand parse_list_literal_or_compr(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
-static Operand parse_null_literal(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_compound_literal(bool can_assign) {
+  ASSERT(false && "not implemented");
+  return operand_null;
+}
+static Operand parse_dict_literal(bool can_assign) {
+  ASSERT(false && "not implemented");
+  return operand_null;
+}
+static Operand parse_dot(Operand left, bool can_assign) {
+  ASSERT(false && "not implemented");
+  return operand_null;
+}
+static Operand parse_grouping(bool can_assign) {
+  ASSERT(false && "not implemented");
+  return operand_null;
+}
+static Operand parse_in_or_not_in(Operand left, bool can_assign) {
+  ASSERT(false && "not implemented");
+  return operand_null;
+}
+static Operand parse_len(bool can_assign) {
+  ASSERT(false && "not implemented");
+  return operand_null;
+}
+static Operand parse_list_literal_or_compr(bool can_assign) {
+  ASSERT(false && "not implemented");
+  return operand_null;
+}
+static Operand parse_null_literal(bool can_assign) {
+  ASSERT(false && "not implemented");
+  return operand_null;
+}
 
 static Operand parse_number(bool can_assign) {
   Type suffix = {0};
-  uint64_t val = scan_int(lex_get_strview(parser.prev_offset, parser.cur_offset), &suffix);
+  uint64_t val = scan_int(get_strview_for_offsets(prev_offset(), cur_offset()), &suffix);
   Type type = type_is_none(suffix) ? type_u64 : suffix;
   return operand_const(type, gen_ssa_const(val, type));
 }
 
-static Operand parse_offsetof(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
-static Operand parse_or(Operand left, bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_offsetof(bool can_assign) {
+  ASSERT(false && "not implemented");
+  return operand_null;
+}
+static Operand parse_or(Operand left, bool can_assign) {
+  ASSERT(false && "not implemented");
+  return operand_null;
+}
 
 static Operand parse_range(bool can_assign) {
   consume(TOK_LPAREN, "Expect '(' after range.");
@@ -748,10 +822,13 @@ static Operand parse_range(bool can_assign) {
   return operand_rvalue(type_range, range);
 }
 
-static Operand parse_sizeof(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_sizeof(bool can_assign) {
+  ASSERT(false && "not implemented");
+  return operand_null;
+}
 
 static Operand parse_string(bool can_assign) {
-  StrView strview = lex_get_strview(parser.prev_offset, parser.cur_offset);
+  StrView strview = get_strview_for_offsets(prev_offset(), cur_offset());
   if (memchr(strview.data, '\\', strview.size) != NULL) {
     Str str = str_process_escapes(strview.data + 1, strview.size - 2);
     if (str.i == 0) {
@@ -764,9 +841,18 @@ static Operand parse_string(bool can_assign) {
   }
 }
 
-static Operand parse_string_interpolate(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
-static Operand parse_subscript(Operand left, bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
-static Operand parse_typeid(bool can_assign) { ASSERT(false && "not implemented"); return operand_null; }
+static Operand parse_string_interpolate(bool can_assign) {
+  ASSERT(false && "not implemented");
+  return operand_null;
+}
+static Operand parse_subscript(Operand left, bool can_assign) {
+  ASSERT(false && "not implemented");
+  return operand_null;
+}
+static Operand parse_typeid(bool can_assign) {
+  ASSERT(false && "not implemented");
+  return operand_null;
+}
 
 static Operand parse_unary(bool can_assign) {
   TokenKind op_kind = parser.prev_kind;
@@ -829,7 +915,7 @@ static ScopeResult scope_lookup(Str name, Sym** sym, SymScopeDecl* scope_decl) {
         *sym = found_sym;
         if (cur_scope->is_module) {
           return SCOPE_RESULT_GLOBAL;
-        } else if (crossed_function)  {
+        } else if (crossed_function) {
           return SCOPE_RESULT_UPVALUE;
         } else {
           return SCOPE_RESULT_LOCAL;
@@ -859,7 +945,7 @@ static Operand parse_variable(bool can_assign) {
   ScopeResult scope_result = scope_lookup(target, &sym, &scope_decl);
   if (can_assign && match_assignment()) {
     TokenKind eq_kind = parser.prev_kind;
-    TokenKind eq_offset = parser.prev_offset;
+    TokenKind eq_offset = prev_offset();
     if (scope_result == SCOPE_RESULT_UNDEFINED && scope_decl == SSD_ASSUMED_GLOBAL) {
       errorf("Local variable '%s' referenced before assignment.", cstr(target));
     } else if (scope_result == SCOPE_RESULT_LOCAL) {
@@ -871,9 +957,11 @@ static Operand parse_variable(bool can_assign) {
       if (eq_kind == TOK_EQ) {
         ///| store sym->irref, i64, op.irref
         gen_ssa_store(sym->irref, op.type, op.irref);
+#if 0
       } else if (eq_kind == TOK_PLUSEQ) {
         gen_ssa_store(sym->irref, op.type,
                       gen_ssa_add(gen_ssa_load(sym->irref, op.type), op.irref));
+#endif
       } else {
         error_offset(eq_offset, "Unhandled assignment type.");
       }
@@ -1119,7 +1207,7 @@ static void for_statement(void) {
 
   if (check(TOK_COLON)) {
     // Nothing, case 1:
-  } else { // if (check(TOK_IDENT_VAR) && peek(2, TOK_IN)) {
+  } else {  // if (check(TOK_IDENT_VAR) && peek(2, TOK_IN)) {
     // Case 3.
     Str it_name = parse_name("Expect iterator name.");
     consume(TOK_IN, "Expect 'in'.");
@@ -1188,8 +1276,8 @@ static bool parse_func_body_only_statement(LastStatementType* lst) {
   *lst = LST_NON_RETURN;
 
   if (match(TOK_IF)) {
-     if_statement();
-     return true;
+    if_statement();
+    return true;
   }
   if (match(TOK_FOR)) {
     for_statement();
@@ -1234,7 +1322,7 @@ static void parse_def_statement(void) {
   if (type_is_none(return_type)) {
     return_type = type_void;
   }
-  uint32_t function_start_offset = parser.cur_offset;
+  uint32_t function_start_offset = cur_offset();
   Str name = parse_name("Expect function name.");
   consume(TOK_LPAREN, "Expect '(' after function name.");
 
@@ -1314,18 +1402,21 @@ static LastStatementType parse_statement(bool toplevel) {
 void parse(const char* filename, ReadFileResult file) {
   type_init();
 
+  // In the case of "a.a." the worst case for offsets is the same as the number
+  // of characters in the buffer.
+  parser.token_offsets = (uint32_t*)base_large_alloc_rw(file.allocated_size * sizeof(uint32_t));
+  parser.file_contents = (const char*)file.buffer;
   parser.cur_filename = filename;
   parser.cur_token_index = 0;
   parser.num_funcdatas = 0;
   parser.num_varscopes = 0;
   parser.cur_func = NULL;
   parser.cur_var_scope = NULL;
+  parser.cur_token_index = -1;
   enter_scope(/*is_module=*/true, /*is_function=*/false);
 
-  abort();
-#if 0
-  lex_start(file.buffer, file.allocated_size);
-#endif
+  parser.num_tokens = lex_indexer(file.buffer, file.allocated_size, parser.token_offsets);
+  token_init(file.buffer);
   advance();
 
   while (parser.cur_kind != TOK_EOF) {

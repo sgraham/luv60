@@ -5,7 +5,7 @@ int main(int argc, char** argv) {
   base_writef_stderr("warning: this is a debug build, probably not a useful benchmark binary.\n");
 #endif
 
-  const char* filename = "a.luv";//FILENAME;
+  const char* filename = FILENAME;
   ReadFileResult file = base_read_file(filename);
   if (!file.buffer) {
     base_writef_stderr("Couldn't read '%s'\n", filename);
@@ -22,8 +22,8 @@ int main(int argc, char** argv) {
 
 #if 0
   for (uint32_t i = 0; i < count; ++i) {
-    TokenKind kind = lex_categorize(file.buffer, token_offsets[i], token_offsets[i + 1]);
-    if (kind == EOF) {
+    TokenKind kind = lex_categorize(file.buffer, token_offsets[i]);
+    if (kind == TOK_EOF) {
       break;
     }
   }

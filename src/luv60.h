@@ -67,15 +67,13 @@ typedef enum TokenKind {
 } TokenKind;
 
 uint32_t lex_indexer(const uint8_t* buf, uint32_t byte_count_rounded_up, uint32_t* token_offsets);
-TokenKind lex_categorize(const unsigned char* buf, uint32_t offset);
 
-void lex_start(const uint8_t* buf, size_t byte_count_rounded_up);
-void lex_next_block(uint8_t token_kinds[128], uint32_t token_offsets[128]);
-StrView lex_get_strview(uint32_t from, uint32_t to);
-void lex_get_location_and_line_slow(uint32_t offset,
-                                    uint32_t* loc_line,
-                                    uint32_t* loc_column,
-                                    StrView* contents);
+
+// token.c
+
+void token_init(const unsigned char* file_contents);
+TokenKind token_categorize(uint32_t offset);
+
 
 // type.c
 

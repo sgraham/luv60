@@ -14,6 +14,7 @@ COMMON_FILELIST = [
     "lex.c",
     "parse.c",
     "str.c",
+    "token.c",
     "type.c",
 ]
 
@@ -170,7 +171,7 @@ def generate(platform, config, settings, cmdlines, tests):
             common_objs.append(obj)
             extra_deps = ""
             extra_deps = " | snippets.c" if src == "gen.c" else extra_deps
-            extra_deps = " | categorizer.c" if src == "lex.c" else extra_deps
+            extra_deps = " | categorizer.c" if src == "token.c" else extra_deps
             f.write("build %s: cc $src/%s%s\n" % (obj, src, extra_deps))
 
         if config == "p":

@@ -20,10 +20,11 @@ static bool lex_test(const char* buf, KindAndOffset* exp, size_t num_exp) {
 
   uint32_t* token_offsets = (uint32_t*)base_large_alloc_rw(alloc_size * sizeof(uint32_t));
   lex_indexer(padded_copy, alloc_size, token_offsets);
+  token_init((const unsigned char*)padded_copy);
 
   bool ok = true;
   for (size_t i = 0; i < num_exp; ++i) {
-    TokenKind kind = lex_categorize(padded_copy, token_offsets[i]);
+    TokenKind kind = token_categorize(token_offsets[i]);
 
     if (kind != exp[i].kind) {
       base_writef_stderr("\nindex %zd: got %s, wanted %s\n", i, token_names[kind],
@@ -59,22 +60,24 @@ TEST(Lex, Basic) {
 
 TEST(Lex, Punctuation) {
   KindAndOffset expected[] = {
-      {TOK_LBRACE, 0},    //
-      {TOK_RBRACE, 2},    //
-      {TOK_LSQUARE, 4},   //
-      {TOK_RSQUARE, 6},   //
-      {TOK_DOT, 8},       //
-      {TOK_LEQ, 10},      //
-      {TOK_GEQ, 13},      //
-      {TOK_LT, 16},       //
-      {TOK_GT, 18},       //
-      {TOK_PLUS, 20},     //
-      {TOK_MINUS, 22},    //
-      {TOK_STAR, 24},     //
-      {TOK_SLASH, 26},    //
-      {TOK_EOF, 27},      //
+      {TOK_LBRACE, 0},   //
+      {TOK_RBRACE, 2},   //
+      {TOK_LSQUARE, 4},  //
+      {TOK_RSQUARE, 6},  //
+      {TOK_DOT, 8},      //
+      {TOK_LEQ, 10},     //
+      {TOK_GEQ, 13},     //
+      {TOK_LT, 16},      //
+      {TOK_GT, 18},      //
+      {TOK_PLUS, 20},    //
+      {TOK_MINUS, 22},   //
+      {TOK_STAR, 24},    //
+      {TOK_SLASH, 26},   //
+      {TOK_LSHIFT, 28},  //
+      {TOK_RSHIFT, 31},  //
+      {TOK_EOF, 33},     //
   };
-  EXPECT_TRUE(lex_test("{ } [ ] . <= >= < > + - * /", expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test("{ } [ ] . <= >= < > + - * / << >>", expected, COUNTOF(expected)));
 }
 
 TEST(Lex, Keywords) {
@@ -382,5 +385,61 @@ TEST(Lex, Continuation) {
       "  3\n"
       "\n"
       "]\n";
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+}
+
+TEST(Lex, ChunkCrossDoubleTokensLeftShift) {
+  KindAndOffset expected[] = {
+      {TOK_LSHIFT, 63},  //
+      {TOK_EOF, 65},     //
+  };
+  const char input[] =
+      "                                                               <"
+      "<";
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+}
+
+TEST(Lex, ChunkCrossDoubleTokensRightShift) {
+  KindAndOffset expected[] = {
+      {TOK_RSHIFT, 63},  //
+      {TOK_EOF, 65},     //
+  };
+  const char input[] =
+      "                                                               >"
+      ">";
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+}
+
+TEST(Lex, ChunkCrossDoubleTokensEquals) {
+  KindAndOffset expected[] = {
+      {TOK_EQEQ, 63},  //
+      {TOK_EOF, 65},   //
+  };
+  const char input[] =
+      "                                                               ="
+      "=";
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+}
+
+TEST(Lex, ChunkCrossDoubleTokensNotEquals) {
+  KindAndOffset expected[] = {
+      {TOK_BANGEQ, 63},  //
+      {TOK_EOF, 65},     //
+  };
+  const char input[] =
+      "                                                               !"
+      "=";
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+}
+
+TEST(Lex, ChunkCrossDoubleTokensSomethingElseAfter) {
+  KindAndOffset expected[] = {
+      {TOK_EQ, 63},         //
+      {TOK_IDENT_VAR, 64},  //
+      {TOK_EOF, 65},        //
+  };
+  const char input[] =
+      "                                                               ="
+      "a";
   EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
 }
