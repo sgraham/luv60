@@ -205,7 +205,7 @@ typedef struct IRBlock {
   uint32_t i;
 } IRBlock;
 
-void gen_ssa_init(const char* filename);
+void gen_ssa_init(void);
 
 IRRef gen_ssa_start_function(Str name, Type return_type, int num_params, IRRef* params);
 void gen_ssa_end_function(void);
@@ -257,4 +257,4 @@ typedef enum IRIntCmp {
 
 IRRef gen_ssa_int_comparison(IRIntCmp cmp, IRRef a, IRRef b);
 
-void gen_ssa_finish(void);
+void gen_ssa_finish(const char* filename);

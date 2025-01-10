@@ -19,10 +19,10 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  gen_ssa_init(argv[2]);
+  gen_ssa_init();
 
   parse(filename, file);
 
-  gen_ssa_finish();
+  gen_ssa_finish(argv[2]);
   return 0;
 }
