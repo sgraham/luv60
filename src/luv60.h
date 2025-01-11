@@ -161,15 +161,37 @@ void parse(const char* filename, ReadFileResult file);
 
 
 // gen_mir.c
-typedef struct IRItem* IRItem;
+typedef struct IRModuleItem* IRModuleItem;
+typedef struct IRFunc {
+  IRModuleItem func;
+  IRModuleItem proto;
+} IRFunc;
+typedef struct IRReg { uint32_t u; } IRReg;
+typedef struct IROp { uint8_t data[56]; } IROp;
+typedef struct IRInstr* IRInstr;
 
-void gen_mir_init(void);
-IRItem gen_mir_start_function(Str name,
+void gen_mir_init(bool verbose);
+IRFunc gen_mir_start_function(Str name,
                               Type return_type,
                               int num_args,
                               Type* param_types,
                               Str* param_names);
 void gen_mir_end_current_function(void);
+
+IRReg gen_mir_make_temp(Str name, Type type);
+IRReg gen_mir_get_func_param(Str name, Type type);
+
+IROp gen_mir_op_const(uint64_t val, Type type);
+IROp gen_mir_op_str_const(Str str);
+IROp gen_mir_op_reg(IRReg reg);
+
+void gen_mir_instr_store(IRReg lhs, Type type, IROp val);
+void gen_mir_instr_call(IRFunc func,
+                        Type return_type,
+                        IRReg retreg,
+                        uint32_t num_args,
+                        IROp* arg_values);
+void gen_mir_instr_return(IROp val, Type type);
 
 int gen_mir_finish(void);
 

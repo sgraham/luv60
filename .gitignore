@@ -4,12 +4,6 @@ dumbbench.luv
 out/
 scratch/
 tags
-x.luv
-x.ssa
-x.s
-x.asm
-x.bat
-x.com.dbg
-x.com
+x.*
 z.bat
 third_party/tracy
