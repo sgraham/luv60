@@ -66,7 +66,11 @@ typedef struct Parser {
 
   TokenKind cur_kind;
   TokenKind prev_kind;
+  TokenKind token_buffer[16];
+  int num_buffered_tokens;
   int continuation_paren_level;
+  int indent_levels[12];  // This is the maximum possible in lexer.
+  int num_indents;
 
   FuncData funcdatas[MAX_FUNC_NESTING];
   int num_funcdatas;
@@ -260,12 +264,40 @@ static Type make_type_array(uint32_t offset, uint64_t count, Type subtype) {
 }
 
 static void advance(void) {
-  ++parser.cur_token_index;
-  ASSERT(parser.cur_token_index < parser.num_tokens);
-  do {
-    parser.prev_kind = parser.cur_kind;
+again:
+  parser.prev_kind = parser.cur_kind;
+  if (parser.num_buffered_tokens > 0) {
+    parser.cur_kind = parser.token_buffer[--parser.num_buffered_tokens];
+    // TODO: will need to revisit if we add peek().
+    ASSERT(parser.cur_kind == TOK_INDENT || parser.cur_kind == TOK_DEDENT);
+    return;
+  } else {
+    ++parser.cur_token_index;
+    ASSERT(parser.cur_token_index < parser.num_tokens);
     parser.cur_kind = token_categorize(parser.token_offsets[parser.cur_token_index]);
-  } while (parser.cur_kind == TOK_COMMENT || parser.cur_kind == TOK_NL);
+  }
+
+  if (parser.cur_kind == TOK_NL) {
+    goto again;
+  }
+  if (parser.cur_kind == TOK_NEWLINE_BLANK) {
+    parser.cur_kind = TOK_NEWLINE;
+  } else if (parser.cur_kind >= TOK_NEWLINE_INDENT_0 && parser.cur_kind <= TOK_NEWLINE_INDENT_40) {
+    int n = (parser.cur_kind - TOK_NEWLINE_INDENT_0) * 4;
+    if (n > parser.indent_levels[parser.num_indents - 1]) {
+      parser.cur_kind = TOK_NEWLINE;
+      parser.indent_levels[parser.num_indents++] = n;
+      parser.token_buffer[parser.num_buffered_tokens++] = TOK_INDENT;
+    } else if (n < parser.indent_levels[parser.num_indents - 1]) {
+      parser.cur_kind = TOK_NEWLINE;
+      while (parser.num_indents > 1 && parser.indent_levels[parser.num_indents - 1] > n) {
+        parser.token_buffer[parser.num_buffered_tokens++] = TOK_DEDENT;
+        --parser.num_indents;
+      }
+    } else {
+      parser.cur_kind = TOK_NEWLINE;
+    }
+  }
 }
 
 static bool match(TokenKind tok_kind) {
@@ -285,7 +317,7 @@ static void consume(TokenKind tok_kind, const char* message) {
     advance();
     return;
   }
-  error(message);
+  error_offset(cur_offset(), message);
 }
 
 static uint64_t const_expression(void) {
@@ -1005,13 +1037,25 @@ static Operand parse_variable(bool can_assign) {
 static Rule rules[NUM_TOKEN_KINDS] = {
     {NULL, NULL, PREC_NONE},  // TOK_INVALID
     {NULL, NULL, PREC_NONE},  // TOK_EOF
-    {NULL, NULL, PREC_NONE},  // TOK_NEWLINE_AND_INDENT
+    {NULL, NULL, PREC_NONE},  // TOK_INDENT
     {NULL, NULL, PREC_NONE},  // TOK_DEDENT
     {NULL, NULL, PREC_NONE},  // TOK_NEWLINE
+
+    {NULL, NULL, PREC_NONE},  // TOK_NEWLINE_BLANK
+    {NULL, NULL, PREC_NONE},  // TOK_NEWLINE_INDENT_0
+    {NULL, NULL, PREC_NONE},  // TOK_NEWLINE_INDENT_4
+    {NULL, NULL, PREC_NONE},  // TOK_NEWLINE_INDENT_8
+    {NULL, NULL, PREC_NONE},  // TOK_NEWLINE_INDENT_12
+    {NULL, NULL, PREC_NONE},  // TOK_NEWLINE_INDENT_16
+    {NULL, NULL, PREC_NONE},  // TOK_NEWLINE_INDENT_20
+    {NULL, NULL, PREC_NONE},  // TOK_NEWLINE_INDENT_24
+    {NULL, NULL, PREC_NONE},  // TOK_NEWLINE_INDENT_28
+    {NULL, NULL, PREC_NONE},  // TOK_NEWLINE_INDENT_32
+    {NULL, NULL, PREC_NONE},  // TOK_NEWLINE_INDENT_36
+    {NULL, NULL, PREC_NONE},  // TOK_NEWLINE_INDENT_40
     {NULL, NULL, PREC_NONE},  // TOK_NL
 
     {parse_unary, parse_binary, PREC_BITS},                     // TOK_AMPERSAND
-    {NULL, NULL, PREC_ASSIGNMENT},                              // TOK_AMPERSANDEQ
     {parse_alignof, NULL, PREC_NONE},                           // TOK_ALIGNOF
     {parse_unary, NULL, PREC_NONE},                             // TOK_ALLOC
     {NULL, parse_and, PREC_AND},                                // TOK_AND
@@ -1019,12 +1063,10 @@ static Rule rules[NUM_TOKEN_KINDS] = {
     {NULL, parse_binary, PREC_EQUALITY},                        // TOK_BANGEQ
     {NULL, NULL, PREC_NONE},                                    // TOK_BREAK
     {NULL, parse_binary, PREC_BITS},                            // TOK_CARET
-    {NULL, NULL, PREC_ASSIGNMENT},                              // TOK_CARETEQ
     {parse_unary, NULL, PREC_NONE},                             // TOK_CAST
     {NULL, NULL, PREC_NONE},                                    // TOK_CHECK
     {NULL, NULL, PREC_NONE},                                    // TOK_COLON
     {NULL, NULL, PREC_NONE},                                    // TOK_COMMA
-    {NULL, NULL, PREC_NONE},                                    // TOK_COMMENT
     {NULL, NULL, PREC_NONE},                                    // TOK_CONST
     {NULL, NULL, PREC_NONE},                                    // TOK_CONTINUE
     {NULL, NULL, PREC_NONE},                                    // TOK_DEF
@@ -1041,7 +1083,6 @@ static Rule rules[NUM_TOKEN_KINDS] = {
     {NULL, parse_binary, PREC_COMPARISON},                      // TOK_GEQ
     {NULL, NULL, PREC_NONE},                                    // TOK_GLOBAL
     {NULL, parse_binary, PREC_COMPARISON},                      // TOK_GT
-    {NULL, NULL, PREC_NONE},                                    // TOK_HASH
     {parse_variable, NULL, PREC_NONE},                          // TOK_IDENT_VAR
     {parse_compound_literal, NULL, PREC_NONE},                  // TOK_IDENT_TYPE
     {parse_variable, NULL, PREC_NONE},                          // TOK_IDENT_CONST
@@ -1055,11 +1096,9 @@ static Rule rules[NUM_TOKEN_KINDS] = {
     {NULL, parse_binary, PREC_COMPARISON},                      // TOK_LEQ
     {parse_grouping, parse_call, PREC_CALL},                    // TOK_LPAREN
     {NULL, parse_binary, PREC_SHIFT},                           // TOK_LSHIFT
-    {NULL, NULL, PREC_ASSIGNMENT},                              // TOK_LSHIFTEQ
     {parse_list_literal_or_compr, parse_subscript, PREC_CALL},  // TOK_LSQUARE
     {NULL, parse_binary, PREC_COMPARISON},                      // TOK_LT
     {parse_unary, parse_binary, PREC_TERM},                     // TOK_MINUS
-    {NULL, NULL, PREC_NONE},                                    // TOK_MINUSEQ
     {NULL, NULL, PREC_NONE},                                    // TOK_NONLOCAL
     {parse_unary, parse_in_or_not_in, PREC_COMPARISON},         // TOK_NOT
     {parse_null_literal, NULL, PREC_NONE},                      // TOK_NULL
@@ -1068,11 +1107,8 @@ static Rule rules[NUM_TOKEN_KINDS] = {
     {NULL, parse_or, PREC_OR},                                  // TOK_OR
     {NULL, NULL, PREC_NONE},                                    // TOK_PASS
     {NULL, parse_binary, PREC_FACTOR},                          // TOK_PERCENT
-    {NULL, NULL, PREC_ASSIGNMENT},                              // TOK_PERCENTEQ
     {NULL, parse_binary, PREC_BITS},                            // TOK_PIPE
-    {NULL, NULL, PREC_ASSIGNMENT},                              // TOK_PIPEEQ
     {NULL, parse_binary, PREC_TERM},                            // TOK_PLUS
-    {NULL, NULL, PREC_NONE},                                    // TOK_PLUSEQ
     {NULL, NULL, PREC_NONE},                                    // TOK_PRINT
     {parse_range, NULL, PREC_NONE},                             // TOK_RANGE
     {NULL, NULL, PREC_NONE},                                    // TOK_RBRACE
@@ -1080,13 +1116,10 @@ static Rule rules[NUM_TOKEN_KINDS] = {
     {NULL, NULL, PREC_NONE},                                    // TOK_RETURN
     {NULL, NULL, PREC_NONE},                                    // TOK_RPAREN
     {NULL, parse_binary, PREC_SHIFT},                           // TOK_RSHIFT
-    {NULL, NULL, PREC_ASSIGNMENT},                              // TOK_RSHIFTEQ
     {NULL, NULL, PREC_NONE},                                    // TOK_RSQUARE
     {parse_sizeof, NULL, PREC_NONE},                            // TOK_SIZEOF
     {NULL, parse_binary, PREC_FACTOR},                          // TOK_SLASH
-    {NULL, NULL, PREC_NONE},                                    // TOK_SLASHEQ
     {NULL, parse_binary, PREC_FACTOR},                          // TOK_STAR
-    {NULL, NULL, PREC_NONE},                                    // TOK_STAREQ
     {parse_string_interpolate, NULL, PREC_NONE},                // TOK_STRING_INTERP
     {parse_string, NULL, PREC_NONE},                            // TOK_STRING_QUOTED
     {parse_string, NULL, PREC_NONE},                            // TOK_STRING_RAW
@@ -1154,13 +1187,20 @@ static Operand parse_expression(void) {
   return parse_precedence(PREC_LOWEST);
 }
 
+static void expect_end_of_statement(const char* after_what) {
+  if (!match(TOK_NEWLINE)) {
+    errorf("Expect newline after %s statement.", after_what);
+  }
+}
+
 static Operand if_statement_cond_helper(void) {
   Operand cond = parse_expression();
   if (!is_condition_type(cond.type)) {
     errorf("Result of condition expression cannot be type %s.", type_as_str(cond.type));
   }
   consume(TOK_COLON, "Expect ':' to start if/elif.");
-  consume(TOK_NEWLINE_AND_INDENT, "Expect newline and indent after ':' to start if/elif.");
+  consume(TOK_NEWLINE, "Expect newline after ':' to start if/elif.");
+  consume(TOK_INDENT, "Expect indent to start if/elif.");
   return cond;
 }
 
@@ -1182,7 +1222,8 @@ static void if_statement(void) {
 
   if (match(TOK_ELSE)) {
     consume(TOK_COLON, "Expect ':' to start else.");
-    consume(TOK_NEWLINE_AND_INDENT, "Expect newline and indent after ':' to start else.");
+    consume(TOK_NEWLINE, "Expect newline after ':' to start else.");
+    consume(TOK_INDENT, "Expect indent to start else.");
     if (parse_block() == LST_NON_RETURN) {
       gen_ssa_jump(after);
     }
@@ -1252,7 +1293,8 @@ static void for_statement(void) {
   }
 
   consume(TOK_COLON, "Expect ':' to start for.");
-  consume(TOK_NEWLINE_AND_INDENT, "Expect newline and indent after ':' to start for.");
+  consume(TOK_NEWLINE, "Expect newline after ':' to start for.");
+  consume(TOK_INDENT, "Expect indent to start for.");
   gen_ssa_start_block(body);
   parse_block();
   gen_ssa_jump(tail);
@@ -1269,7 +1311,7 @@ static void print_statement(void) {
   } else if (convert_operand(&val, type_i32)) {
     gen_ssa_print_i32(val.irref);
   }
-  consume(TOK_NEWLINE, "Expect newline after print.");
+  expect_end_of_statement("print");
 }
 
 static bool parse_func_body_only_statement(LastStatementType* lst) {
@@ -1308,7 +1350,7 @@ static bool parse_func_body_only_statement(LastStatementType* lst) {
 
 static LastStatementType parse_block(void) {
   LastStatementType lst = LST_NON_RETURN;
-  while (!check(TOK_DEDENT) && !check(TOK_EOF)) {
+  while (!check(TOK_DEDENT)) {
     lst = parse_statement(/*toplevel=*/false);
     skip_newlines();
   }
@@ -1331,8 +1373,8 @@ static void parse_def_statement(void) {
   uint32_t num_params = parse_func_params(param_types, param_names);
 
   consume(TOK_COLON, "Expect ':' before function body.");
-  consume(TOK_NEWLINE_AND_INDENT,
-          "Expect newline and indent before function body. (TODO: single line)");
+  consume(TOK_NEWLINE, "Expect newline before function body. (TODO: single line)");
+  consume(TOK_INDENT, "Expect indent before function body. (TODO: single line)");
   skip_newlines();
 
   Type functype = type_function(param_types, num_params, return_type);
@@ -1365,7 +1407,7 @@ static void parse_variable_statement(Type type) {
     gen_ssa_store(new->irref, op.type, op.irref);
   }
 
-  consume(TOK_NEWLINE, "Expect newline after variable declaration.");
+  expect_end_of_statement("variable declaration");
 }
 
 static bool parse_anywhere_statement(void) {
@@ -1381,7 +1423,7 @@ static bool parse_anywhere_statement(void) {
   }
 
   parse_expression();
-  consume(TOK_NEWLINE, "Expect newline.");
+  expect_end_of_statement("top level");
   return true;
 }
 
@@ -1413,6 +1455,9 @@ void parse(const char* filename, ReadFileResult file) {
   parser.cur_func = NULL;
   parser.cur_var_scope = NULL;
   parser.cur_token_index = -1;
+  parser.indent_levels[0] = 0;
+  parser.num_indents = 1;
+  parser.num_buffered_tokens = 0;
   enter_scope(/*is_module=*/true, /*is_function=*/false);
 
   parser.num_tokens = lex_indexer(file.buffer, file.allocated_size, parser.token_offsets);
