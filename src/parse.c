@@ -227,7 +227,7 @@ static void leave_scope(void) {
   }
 }
 
-static IRRef enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS]) {
+static IRRef enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS], Type param_types[MAX_FUNC_PARAMS]) {
   parser.cur_func = &parser.funcdatas[parser.num_funcdatas++];
   parser.cur_func->sym = sym;
   enter_scope(/*is_module=*/false, /*is_function=*/true);
@@ -237,12 +237,15 @@ static IRRef enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS]) {
   for (uint32_t i = 0; i < num_params; ++i) {
     refs[i] = make_param(param_names[i], type_func_param(sym->type, i))->irref;
   }
+  gen_mir_start_function(sym->name, type_func_return_type(sym->type), num_params, param_types,
+                       param_names);
   return gen_ssa_start_function(sym->name, type_func_return_type(sym->type), num_params, refs);
 }
 
 static void leave_function(void) {
   // gen_resolve_label(done);
   // gen_func_exit_and_patch_func_entry(&cur_func.func_exit_cont, cur_func.return_type);
+  gen_mir_end_current_function();
   gen_ssa_end_function();
 
   --parser.num_funcdatas;
@@ -1380,7 +1383,7 @@ static void parse_def_statement(void) {
   Type functype = type_function(param_types, num_params, return_type);
 
   Sym* funcsym = sym_new(SYM_FUNC, name, functype);
-  funcsym->irref = enter_function(funcsym, param_names);
+  funcsym->irref = enter_function(funcsym, param_names, param_types);
   LastStatementType lst = parse_block();
   if (lst == LST_NON_RETURN && !type_eq(type_void, type_func_return_type(functype))) {
     errorf_offset(function_start_offset,

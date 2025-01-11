@@ -160,6 +160,20 @@ Type type_func_param(Type type, uint32_t i);
 void parse(const char* filename, ReadFileResult file);
 
 
+// gen_mir.c
+typedef struct IRItem* IRItem;
+
+void gen_mir_init(void);
+IRItem gen_mir_start_function(Str name,
+                              Type return_type,
+                              int num_args,
+                              Type* param_types,
+                              Str* param_names);
+void gen_mir_end_current_function(void);
+
+int gen_mir_finish(void);
+
+
 // gen.c
 typedef struct ContFixup {
   unsigned char* func_base;

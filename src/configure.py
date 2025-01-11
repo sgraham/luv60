@@ -10,6 +10,7 @@ ROOT_DIR = os.path.normpath(
 
 COMMON_FILELIST = [
     "base_win.c",
+    "gen_mir.c",
     "gen_ssa.c",
     "lex.c",
     "parse.c",
@@ -165,7 +166,7 @@ def generate(platform, config, settings, cmdlines, tests):
         )
 
         def getobj(src):
-            return os.path.splitext(src)[0].replace('..', '__') + obj_ext
+            return os.path.splitext(src)[0].replace("..", "__") + obj_ext
 
         common_objs = []
         for src in COMMON_FILELIST:
@@ -176,7 +177,9 @@ def generate(platform, config, settings, cmdlines, tests):
             extra_deps = " | categorizer.c" if src == "token.c" else extra_deps
             f.write("build %s: cc $src/%s%s\n" % (obj, src, extra_deps))
             if "/mir/" in src:
-                f.write("  extra=-Wno-missing-field-initializers -Wno-sign-compare -Wno-unused-variable -Wno-unused-function -Wno-unused-but-set-variable\n")
+                f.write(
+                    "  extra=-Wno-missing-field-initializers -Wno-sign-compare -Wno-unused-variable -Wno-unused-function -Wno-unused-but-set-variable\n"
+                )
 
         if config == "p":
             tracy_cpp = "../third_party/tracy/public/TracyClient.cpp"
@@ -237,7 +240,10 @@ def generate(platform, config, settings, cmdlines, tests):
         common_without_higher_level = [
             x
             for x in common_objs
-            if "parse." not in x and "gen_ssa." not in x and "type." not in x
+            if "parse." not in x
+            and "gen_ssa." not in x
+            and "type." not in x
+            and "gen_mir." not in x
         ]
         f.write(
             "build %s: link %s | dumbbench.luv\n"
