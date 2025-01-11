@@ -45,15 +45,15 @@ Str str_intern(const char* str);
 Str str_internf(const char* fmt, ...);
 Str str_process_escapes(const char* str, uint32_t len);
 
-static inline FORCEINLINE const char* cstr(Str str) {
+static inline FORCE_INLINE const char* cstr(Str str) {
   return &str_intern_pool[str.i];
 }
 
-static inline FORCEINLINE uint32_t str_len(Str str) {
+static inline FORCE_INLINE uint32_t str_len(Str str) {
   return *(uint32_t*)&str_intern_pool[str.i - sizeof(uint32_t)];
 }
 
-static inline FORCEINLINE bool str_eq(Str a, Str b) {
+static inline FORCE_INLINE bool str_eq(Str a, Str b) {
   return a.i == b.i;
 }
 
@@ -146,9 +146,9 @@ size_t type_align(Type type);
 
 Type type_function(Type* params, size_t num_params, Type return_type);
 
-static inline FORCEINLINE bool type_is_none(Type a) { return a.u == 0; }
-static inline FORCEINLINE bool type_eq(Type a, Type b) { return a.u == b.u; }
-static inline FORCEINLINE TypeKind type_kind(Type a) { return (TypeKind)(a.u & 0xff); }
+static inline FORCE_INLINE bool type_is_none(Type a) { return a.u == 0; }
+static inline FORCE_INLINE bool type_eq(Type a, Type b) { return a.u == b.u; }
+static inline FORCE_INLINE TypeKind type_kind(Type a) { return (TypeKind)(a.u & 0xff); }
 
 uint32_t type_func_num_params(Type type);
 Type type_func_return_type(Type type);

@@ -8,9 +8,9 @@
 #include <string.h>
 
 #if COMPILER_MSVC
-#  define FORCEINLINE __forceinline
+#  define FORCE_INLINE __forceinline
 #elif COMPILER_CLANG || COMPILER_GCC
-#  define FORCEINLINE __attribute__((always_inline))
+#  define FORCE_INLINE __attribute__((always_inline))
 #endif
 
 #if COMPILER_CLANG

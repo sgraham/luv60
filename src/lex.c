@@ -38,15 +38,15 @@ typedef struct Classes {
   uint64_t punct;
 } Classes;
 
-#define EQ_CHAR(name, ch)                                                                       \
-  __attribute__((nonnull)) static FORCEINLINE uint64_t eq_##name(const Simd64* __restrict in) { \
-    const __m256i splat = _mm256_set1_epi8(ch);                                                 \
-    const Simd64 cmp = {_mm256_cmpeq_epi8(in->chunks[0], splat),                                \
-                        _mm256_cmpeq_epi8(in->chunks[1], splat)};                               \
-    const uint64_t bitmask_lo = ((uint32_t)_mm256_movemask_epi8(cmp.chunks[0]));                \
-    const uint64_t bitmask_hi = ((uint32_t)_mm256_movemask_epi8(cmp.chunks[1]));                \
-    const uint64_t bitmask = (bitmask_hi << 32) | bitmask_lo;                                   \
-    return bitmask;                                                                             \
+#define EQ_CHAR(name, ch)                                                                        \
+  __attribute__((nonnull)) static FORCE_INLINE uint64_t eq_##name(const Simd64* __restrict in) { \
+    const __m256i splat = _mm256_set1_epi8(ch);                                                  \
+    const Simd64 cmp = {_mm256_cmpeq_epi8(in->chunks[0], splat),                                 \
+                        _mm256_cmpeq_epi8(in->chunks[1], splat)};                                \
+    const uint64_t bitmask_lo = ((uint32_t)_mm256_movemask_epi8(cmp.chunks[0]));                 \
+    const uint64_t bitmask_hi = ((uint32_t)_mm256_movemask_epi8(cmp.chunks[1]));                 \
+    const uint64_t bitmask = (bitmask_hi << 32) | bitmask_lo;                                    \
+    return bitmask;                                                                              \
   }
 
 EQ_CHAR(backslash, '\\')
@@ -60,7 +60,7 @@ EQ_CHAR(equal, '=')
 EQ_CHAR(bang, '!')
 
 #define HAS_BIT(n)                                                               \
-  static FORCEINLINE uint64_t has_bit_##n(const Simd64* __restrict in) {         \
+  static FORCE_INLINE uint64_t has_bit_##n(const Simd64* __restrict in) {        \
     const __m256i splat = _mm256_set1_epi8(1 << n);                              \
     const Simd64 and = {_mm256_and_si256(in->chunks[0], splat),                  \
                         _mm256_and_si256(in->chunks[1], splat)};                 \
@@ -77,7 +77,7 @@ HAS_BIT(1)
 // "cumulative bitwise xor," flipping bits each time a 1 is encountered.
 //
 // e.g. prefix_xor(00100100) == 00011100
-static FORCEINLINE uint64_t prefix_xor(const uint64_t bitmask) {
+static FORCE_INLINE uint64_t prefix_xor(const uint64_t bitmask) {
   const __m128i all_ones = _mm_set1_epi8('\xFF');
   const __m128i result = _mm_clmulepi64_si128(_mm_set_epi64x(0ULL, bitmask), all_ones, 0);
   return _mm_cvtsi128_si64(result);
@@ -135,7 +135,7 @@ static FORCEINLINE uint64_t prefix_xor(const uint64_t bitmask) {
 //   e      0 |
 //   f      0 |
 
-static FORCEINLINE Classes classify(const Simd64* __restrict in) {
+static FORCE_INLINE Classes classify(const Simd64* __restrict in) {
   const __m256i low_lut =
       _mm256_setr_epi8(46, 56, 56, 56, 56, 56, 56, 56, 56, 56, 48, 16, 16, 16, 16, 20,  //
                        46, 56, 56, 56, 56, 56, 56, 56, 56, 56, 48, 16, 16, 16, 16, 20   //
@@ -176,7 +176,7 @@ static const uint64_t ODD_BITS = 0xAAAAAAAAAAAAAAAAull;
  * & the result with potential_escape to get just the escape characters.
  * ^ the result with (potential_escape | first_is_escaped) to get escaped characters.
  */
-static FORCEINLINE uint64_t next_escape_and_terminal_code(uint64_t potential_escape) {
+static FORCE_INLINE uint64_t next_escape_and_terminal_code(uint64_t potential_escape) {
   // Escaped characters are characters following an escape.
   const uint64_t maybe_escaped = potential_escape << 1;
 
@@ -200,7 +200,7 @@ static FORCEINLINE uint64_t next_escape_and_terminal_code(uint64_t potential_esc
 // |first_is_escaped| is the carry from block to block
 // return is the bitmask of the characters that are escaped.
 // This is taken straight from simdjson.
-__attribute__((nonnull)) static FORCEINLINE uint64_t
+__attribute__((nonnull)) static FORCE_INLINE uint64_t
 escapes_next_block(uint64_t backslash, uint64_t* first_is_escaped) {
   if (!backslash) {
     const uint64_t escaped = *first_is_escaped;
@@ -215,17 +215,17 @@ escapes_next_block(uint64_t backslash, uint64_t* first_is_escaped) {
   return escaped;
 }
 
-static FORCEINLINE uint64_t set_all_bits_if_high_bit_set(uint64_t input) {
+static FORCE_INLINE uint64_t set_all_bits_if_high_bit_set(uint64_t input) {
   return (uint64_t)((int64_t)input >> 63);
 }
 
-static FORCEINLINE void find_delimiters(uint64_t quotes,
-                                        uint64_t hashes,
-                                        uint64_t newlines,
-                                        uint64_t state_in_quoted,
-                                        uint64_t state_in_comment,
-                                        uint64_t* quotes_mask,
-                                        uint64_t* comments_mask) {
+static FORCE_INLINE void find_delimiters(uint64_t quotes,
+                                         uint64_t hashes,
+                                         uint64_t newlines,
+                                         uint64_t state_in_quoted,
+                                         uint64_t state_in_comment,
+                                         uint64_t* quotes_mask,
+                                         uint64_t* comments_mask) {
   uint64_t starts = quotes | hashes;
   uint64_t end = (newlines & state_in_comment) | (quotes & state_in_quoted);
   end &= -end;
@@ -252,11 +252,11 @@ static FORCEINLINE void find_delimiters(uint64_t quotes,
   *comments_mask = delimiters & ~quotes;
 }
 
-static FORCEINLINE uint32_t trailing_zeros(uint64_t input) {
+static FORCE_INLINE uint32_t trailing_zeros(uint64_t input) {
   return __builtin_ctzll(input);
 }
 
-static FORCEINLINE uint64_t clear_lowest_bit(uint64_t input) {
+static FORCE_INLINE uint64_t clear_lowest_bit(uint64_t input) {
   return input & (input - 1);
 }
 

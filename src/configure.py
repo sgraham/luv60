@@ -16,6 +16,8 @@ COMMON_FILELIST = [
     "str.c",
     "token.c",
     "type.c",
+    "../third_party/mir/mir.c",
+    "../third_party/mir/mir-gen.c",
 ]
 
 LUVC_FILELIST = [
@@ -163,7 +165,7 @@ def generate(platform, config, settings, cmdlines, tests):
         )
 
         def getobj(src):
-            return os.path.splitext(src)[0] + obj_ext
+            return os.path.splitext(src)[0].replace('..', '__') + obj_ext
 
         common_objs = []
         for src in COMMON_FILELIST:
@@ -173,6 +175,8 @@ def generate(platform, config, settings, cmdlines, tests):
             extra_deps = " | snippets.c" if src == "gen.c" else extra_deps
             extra_deps = " | categorizer.c" if src == "token.c" else extra_deps
             f.write("build %s: cc $src/%s%s\n" % (obj, src, extra_deps))
+            if "/mir/" in src:
+                f.write("  extra=-Wno-missing-field-initializers -Wno-sign-compare -Wno-unused-variable -Wno-unused-function -Wno-unused-but-set-variable\n")
 
         if config == "p":
             tracy_cpp = "../third_party/tracy/public/TracyClient.cpp"
@@ -237,7 +241,10 @@ def generate(platform, config, settings, cmdlines, tests):
         ]
         f.write(
             "build %s: link %s | dumbbench.luv\n"
-            % ("lexbench" + exe_ext, " ".join(common_without_higher_level + lexbench_objs))
+            % (
+                "lexbench" + exe_ext,
+                " ".join(common_without_higher_level + lexbench_objs),
+            )
         )
 
         f.write("\nbuild test: phony " + " ".join(alltests) + "\n")
