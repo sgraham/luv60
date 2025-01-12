@@ -156,7 +156,7 @@ Type type_func_param(Type type, uint32_t i);
 
 
 // parse.c
-
+NORETURN void parse_errorf(const char* fmt, ...);
 void parse(const char* filename, ReadFileResult file);
 
 
@@ -207,6 +207,10 @@ void gen_mir_instr_call(IRFunc func,
                         uint32_t num_args,
                         IROp* arg_values);
 void gen_mir_instr_return(IROp val, Type type);
+
+void gen_mir_helper_print_int(IROp val);
+void gen_mir_helper_print_str(IROp val);
+void gen_mir_helper_print_range(IROp val);
 
 int gen_mir_finish(void);
 

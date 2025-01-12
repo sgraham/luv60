@@ -187,7 +187,8 @@ NORETURN static void error(const char* message) {
   error_offset(prev_offset(), message);
 }
 
-NORETURN static void errorf(const char* fmt, ...) {
+#define errorf(...) parse_errorf(__VA_ARGS__)
+NORETURN void parse_errorf(const char* fmt, ...) {
   va_list args;
   va_start(args, fmt);
   size_t n = 1 + vsnprintf(NULL, 0, fmt, args);
@@ -996,9 +997,9 @@ static Operand parse_variable(bool can_assign) {
   ScopeResult scope_result = scope_lookup(target, &sym, &scope_decl);
   if (can_assign && match_assignment()) {
     TokenKind eq_kind = parser.prev_kind;
-    TokenKind eq_offset = prev_offset();
-    (void)eq_kind;
-    (void)eq_offset;
+    if (eq_kind != TOK_EQ) {
+      errorf("Unhandled assignment type.");
+    }
     if (scope_result == SCOPE_RESULT_UNDEFINED && scope_decl == SSD_ASSUMED_GLOBAL) {
       errorf("Local variable '%s' referenced before assignment.", cstr(target));
     } else if (scope_result == SCOPE_RESULT_LOCAL) {
@@ -1007,35 +1008,17 @@ static Operand parse_variable(bool can_assign) {
       if (!convert_operand(&op, sym->type)) {
         errorf("Cannot assign type %s to type %s.", type_as_str(op.type), type_as_str(sym->type));
       }
-      abort();
-#if 0
-      if (eq_kind == TOK_EQ) {
-        ///| store sym->irref, i64, op.irref
-        gen_ssa_store(sym->irref, op.type, op.irref);
-#if 0
-      } else if (eq_kind == TOK_PLUSEQ) {
-        gen_ssa_store(sym->irref, op.type,
-                      gen_ssa_add(gen_ssa_load(sym->irref, op.type), op.irref));
-#endif
-      } else {
-        error_offset(eq_offset, "Unhandled assignment type.");
-      }
-#endif
+      gen_mir_instr_store(sym->ir_reg, op.type, op.ir_op);
       return operand_null;
     } else if (scope_result != SCOPE_RESULT_LOCAL && scope_decl == SSD_NONE) {
-      abort();
-#if 0
-      if (eq_kind == TOK_EQ) {
-        // Variable declaration without a type.
-        Operand op = parse_expression();
-        Sym* new = make_local_and_alloc(SYM_VAR, target, op.type);
-        gen_ssa_store(new->irref, op.type, op.irref);
-        return operand_null;
-      } else {
-        error_offset(eq_offset,
-                     "Cannot use an augmented assignment when implicitly declaring a local.");
+      if (eq_kind != TOK_EQ) {
+        errorf("Unhandled assignment type when declaring a local.");
       }
-#endif
+      // Variable declaration without a type.
+      Operand op = parse_expression();
+      Sym* new = make_local_and_alloc(SYM_VAR, target, op.type);
+      gen_mir_instr_store(new->ir_reg, op.type, op.ir_op);
+      return operand_null;
     }
   } else {
     if (scope_result == SCOPE_RESULT_LOCAL) {
@@ -1342,17 +1325,13 @@ static void for_statement(void) {
 
 static void print_statement(void) {
   Operand val = parse_expression();
-  (void)val;
-  abort();
-#if 0
   if (type_eq(val.type, type_str)) {
-    gen_ssa_print_str(val.irref);
+    gen_mir_helper_print_str(val.ir_op);
   } else if (type_eq(val.type, type_range)) {
-    gen_ssa_print_range(val.irref);
+    gen_mir_helper_print_range(val.ir_op);
   } else if (convert_operand(&val, type_i32)) {
-    gen_ssa_print_i32(val.irref);
+    gen_mir_helper_print_int(val.ir_op);
   }
-#endif
   expect_end_of_statement("print");
 }
 

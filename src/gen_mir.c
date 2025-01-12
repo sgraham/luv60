@@ -11,65 +11,26 @@ static Str entry_point_str;
 static MIR_item_t current_func;
 static MIR_item_t entry_point;
 static bool verbose_;
+static MIR_item_t printf_proto;
+static MIR_item_t printf_import;
+static int gensym_counter;
 
 _Static_assert(sizeof(IROp) == sizeof(MIR_op_t), "opaque size wrong");
 
-static void do_mir_test() {
-  double start_time;
-  const int64_t n_iter = 10000000;
+static void NORETURN error_function(MIR_error_type_t error_type, const char *fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  size_t n = 1 + vsnprintf(NULL, 0, fmt, args);
+  va_end(args);
+  char* str = malloc(n);  // just a simple malloc because we're going to base_exit() momentarily.
+  va_start(args, fmt);
+  vsnprintf(str, n, fmt, args);
+  va_end(args);
+  parse_errorf("somewhere near here, mir reported backend error `%s` (err %d)\n", str, error_type);
+}
 
-  MIR_item_t func;
-  MIR_label_t fin, cont;
-  MIR_reg_t ARG1, R2;
-  MIR_type_t res_type;
-
-  res_type = MIR_T_I64;
-  func = MIR_new_func(ctx, "loop", 1, &res_type, 1, MIR_T_I64, "arg1");
-  R2 = MIR_new_func_reg(ctx, func->u.func, MIR_T_I64, "count");
-  ARG1 = MIR_reg(ctx, "arg1", func->u.func);
-  fin = MIR_new_label(ctx);
-  cont = MIR_new_label(ctx);
-  MIR_append_insn(ctx, func,
-                  MIR_new_insn(ctx, MIR_MOV, MIR_new_reg_op(ctx, R2), MIR_new_int_op(ctx, 0)));
-  MIR_append_insn(ctx, func,
-                  MIR_new_insn(ctx, MIR_BGE, MIR_new_label_op(ctx, fin), MIR_new_reg_op(ctx, R2),
-                               MIR_new_reg_op(ctx, ARG1)));
-  MIR_append_insn(ctx, func, cont);
-  MIR_append_insn(ctx, func,
-                  MIR_new_insn(ctx, MIR_ADD, MIR_new_reg_op(ctx, R2), MIR_new_reg_op(ctx, R2),
-                               MIR_new_int_op(ctx, 1)));
-  MIR_append_insn(ctx, func,
-                  MIR_new_insn(ctx, MIR_BLT, MIR_new_label_op(ctx, cont), MIR_new_reg_op(ctx, R2),
-                               MIR_new_reg_op(ctx, ARG1)));
-  MIR_append_insn(ctx, func, fin);
-  MIR_append_insn(ctx, func, MIR_new_ret_insn(ctx, 1, MIR_new_reg_op(ctx, R2)));
-  MIR_finish_func(ctx);
-  if (main_module != NULL) {
-    MIR_finish_module(ctx);
-  }
-
-  fprintf(stderr, "++++++ Loop before simplification:\n");
-  MIR_output(ctx, stderr);
-
-  MIR_gen_init(ctx);
-  MIR_gen_set_optimize_level(ctx, 1);
-  MIR_gen_set_debug_file(ctx, NULL);
-  MIR_gen_set_debug_level(ctx, 0);
-
-  MIR_load_module(ctx, main_module);
-  // MIR_link(ctx, MIR_set_gen_interface, NULL);
-
-  fprintf(stderr, "++++++ Loop after simplification:\n");
-  MIR_output(ctx, stderr);
-
-  //start_time = real_sec_time();
-  typedef int64_t (*loop_func)(int64_t);
-  start_time = real_sec_time();
-  void* p = MIR_gen(ctx, func);
-  int64_t res = ((loop_func)p)(n_iter);
-  fprintf(stderr, "C interface test (%" PRId64 ") -> %" PRId64 ": %.3f sec\n", n_iter, res,
-          real_sec_time() - start_time);
-  MIR_finish(ctx);
+static const char* gensym(void) {
+  return cstr(str_internf("$s%d", gensym_counter++));
 }
 
 void gen_mir_init(bool verbose) {
@@ -86,9 +47,13 @@ void gen_mir_init(bool verbose) {
     MIR_gen_set_debug_file(ctx, NULL);
     MIR_gen_set_debug_level(ctx, -1);
   }
+  MIR_set_error_func(ctx, error_function);
+
+  MIR_type_t ret_type = MIR_T_I32;
+  printf_proto = MIR_new_vararg_proto(ctx, "printf$proto", 1, &ret_type, 0);
+  printf_import = MIR_new_import(ctx, "printf");
 
   entry_point_str = str_intern("main");
-  (void)do_mir_test;
 }
 
 static MIR_type_t type_to_mir_type(Type type) {
@@ -98,7 +63,6 @@ static MIR_type_t type_to_mir_type(Type type) {
     case TYPE_U16:
     case TYPE_U8:
     case TYPE_BOOL:
-      return MIR_T_U64;
     case TYPE_I64:
     case TYPE_I32:
     case TYPE_I16:
@@ -204,23 +168,14 @@ IROp gen_mir_op_const(uint64_t val, Type type) {
 }
 
 IROp gen_mir_op_str_const(Str str) {
-  ASSERT(false && "str const");
-  abort();
+  MIR_item_t str_item = MIR_new_string_data(ctx, gensym(), (MIR_str_t){str_len(str), cstr(str)});
+  MIR_op_t str_op = MIR_new_ref_op(ctx, str_item);
+  return OP_MIR_TO_OPAQUE(str_op);
 }
 
 IROp gen_mir_op_reg(IRReg reg) {
   MIR_op_t mret = MIR_new_reg_op(ctx, REG_OPAQUE_TO_MIR(reg));
   return OP_MIR_TO_OPAQUE(mret);
-}
-
-void gen_mir_instr_return(IROp val, Type type) {
-  MIR_insn_t insn;
-  if (type_eq(type, type_void)) {
-    insn = MIR_new_ret_insn(ctx, 0);
-  } else {
-    insn = MIR_new_ret_insn(ctx, 1, val);
-  }
-  MIR_append_insn(ctx, current_func, insn);
 }
 
 void gen_mir_instr_store(IRReg lhs, Type type, IROp val) {
@@ -248,6 +203,36 @@ void gen_mir_instr_call(IRFunc func,
   MIR_append_insn(ctx, current_func, insn);
 }
 
+void gen_mir_instr_return(IROp val, Type type) {
+  MIR_insn_t insn;
+  if (type_eq(type, type_void)) {
+    insn = MIR_new_ret_insn(ctx, 0);
+  } else {
+    insn = MIR_new_ret_insn(ctx, 1, val);
+  }
+  MIR_append_insn(ctx, current_func, insn);
+}
+
+void gen_mir_helper_print_int(IROp val) {
+  MIR_reg_t ret = MIR_new_func_reg(ctx, current_func->u.func, MIR_T_I64, gensym());
+  MIR_append_insn(ctx, current_func,
+                  MIR_new_call_insn(ctx, 5, MIR_new_ref_op(ctx, printf_proto),
+                                    MIR_new_ref_op(ctx, printf_import), MIR_new_reg_op(ctx, ret),
+                                    MIR_new_str_op(ctx, (MIR_str_t){3, "%d\n"}), val));
+}
+
+void gen_mir_helper_print_range(IROp val) {
+  abort();
+}
+
+void gen_mir_helper_print_str(IROp val) {
+  MIR_reg_t ret = MIR_new_func_reg(ctx, current_func->u.func, MIR_T_I64, gensym());
+  MIR_append_insn(ctx, current_func,
+                  MIR_new_call_insn(ctx, 5, MIR_new_ref_op(ctx, printf_proto),
+                                    MIR_new_ref_op(ctx, printf_import), MIR_new_reg_op(ctx, ret),
+                                    MIR_new_str_op(ctx, (MIR_str_t){3, "%s\n"}), val));
+}
+
 void gen_mir_end_current_function(void) {
   ASSERT(current_func);
   if (verbose_) {
@@ -257,14 +242,21 @@ void gen_mir_end_current_function(void) {
   current_func = NULL;
 }
 
+void* import_resolver(const char* name) {
+  if (strcmp(name, "printf") == 0) {
+    return (void*)&printf;
+  }
+  return NULL;
+}
+
 int gen_mir_finish(void) {
   MIR_load_module(ctx, main_module);
-  MIR_link(ctx, MIR_set_gen_interface, NULL);
+  MIR_link(ctx, MIR_set_gen_interface, import_resolver);
 
   if (!entry_point) {
     base_writef_stderr("No 'main' defined.");
     base_exit(1);
   }
-  int rc = ((int(*)())entry_point->addr)();
+  int rc = ((int (*)())entry_point->addr)();
   return rc;
 }
