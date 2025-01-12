@@ -13,6 +13,8 @@ static MIR_item_t entry_point;
 static bool verbose_;
 static MIR_item_t printf_proto;
 static MIR_item_t printf_import;
+static MIR_item_t memcpy_proto;
+static MIR_item_t memcpy_import;
 static int gensym_counter;
 
 _Static_assert(sizeof(IROp) == sizeof(MIR_op_t), "opaque size wrong");
@@ -35,7 +37,7 @@ static const char* gensym(void) {
 
 void gen_mir_init(bool verbose) {
   ctx = MIR_init();
-  main_module = MIR_new_module(ctx, "main");
+  main_module = MIR_new_module(ctx, "home");
 
   verbose_ = verbose;
   MIR_gen_init(ctx);
@@ -49,9 +51,13 @@ void gen_mir_init(bool verbose) {
   }
   MIR_set_error_func(ctx, error_function);
 
-  MIR_type_t ret_type = MIR_T_I32;
-  printf_proto = MIR_new_vararg_proto(ctx, "printf$proto", 1, &ret_type, 0);
+  MIR_type_t printf_ret_type = MIR_T_I32;
+  printf_proto = MIR_new_vararg_proto(ctx, "printf$proto", 1, &printf_ret_type, 0);
   printf_import = MIR_new_import(ctx, "printf");
+  MIR_type_t memcpy_ret_type = MIR_T_P;
+  memcpy_proto = MIR_new_proto(ctx, "memcpy$proto", 1, &memcpy_ret_type, 3, MIR_T_P, "dest",
+                               MIR_T_P, "src", MIR_T_U64, "count");
+  memcpy_import = MIR_new_import(ctx, "memcpy");
 
   entry_point_str = str_intern("main");
 }
@@ -104,6 +110,8 @@ static bool is_aggregate_type(Type type) {
 #define REG_OPAQUE_TO_MIR(o) ((MIR_reg_t)o.u)
 #define REG_MIR_TO_OPAQUE(m) ((IRReg){m})
 
+#define RET_ADDR_NAME "Ret_Addr"
+
 IRFunc gen_mir_start_function(Str name,
                               Type return_type,
                               int num_args,
@@ -111,13 +119,29 @@ IRFunc gen_mir_start_function(Str name,
                               Str* param_names) {
   ASSERT(!current_func);
 
-  MIR_var_t* vars = alloca(sizeof(MIR_var_t) * num_args);
+  int extra = 0;
+  if (is_aggregate_type(return_type)) {
+    extra = 1;
+  }
+
+  MIR_var_t* vars = alloca(sizeof(MIR_var_t) * (num_args + extra));
   for (int i = 0; i < num_args; ++i) {
     vars[i].type = type_to_mir_type(param_types[i]);
     vars[i].name = cstr(param_names[i]);
   }
-  MIR_type_t rettype = type_to_mir_type(return_type);
-  MIR_item_t func = MIR_new_func_arr(ctx, cstr(name), 1, &rettype, num_args, vars);
+
+  // Aggregate returns go in the args, not the rets.
+  size_t nrets = 0;
+  MIR_type_t rettype = {0};
+  if (extra) {
+    vars[num_args].type = MIR_T_RBLK;
+    vars[num_args].name = RET_ADDR_NAME;
+    vars[num_args].size = type_size(return_type);
+  } else {
+    rettype = type_to_mir_type(return_type);
+  }
+
+  MIR_item_t func = MIR_new_func_arr(ctx, cstr(name), nrets, &rettype, num_args + extra, vars);
 
   current_func = func;
   if (str_eq(name, entry_point_str)) {
@@ -125,15 +149,19 @@ IRFunc gen_mir_start_function(Str name,
   }
 
   Str proto_name = str_internf("%s$proto", cstr(name));
-  MIR_item_t proto = MIR_new_proto_arr(ctx, cstr(proto_name), 1, &rettype, num_args, vars);
+  MIR_item_t proto =
+      MIR_new_proto_arr(ctx, cstr(proto_name), nrets, &rettype, num_args + extra, vars);
   return (IRFunc){(IRModuleItem)func, (IRModuleItem)proto};
 }
 
 IRReg gen_mir_make_temp(Str name, Type type) {
   // TODO: check that it doesn't match t%d as apparently those are reserved?
   if (is_aggregate_type(type)) {
-    ASSERT(false && "todo; aggregate");
-    abort();
+    MIR_reg_t reg = MIR_new_func_reg(ctx, current_func->u.func, MIR_T_I64, cstr(name));
+    MIR_append_insn(ctx, current_func,
+                    MIR_new_insn(ctx, MIR_ALLOCA, MIR_new_reg_op(ctx, reg),
+                                 MIR_new_uint_op(ctx, type_size(type))));
+    return REG_MIR_TO_OPAQUE(reg);
   } else {
     MIR_reg_t reg = MIR_new_func_reg(ctx, current_func->u.func, type_to_mir_type(type), cstr(name));
     return REG_MIR_TO_OPAQUE(reg);
@@ -194,7 +222,10 @@ void gen_mir_instr_call(IRFunc func,
   all_ops[0] = MIR_new_ref_op(ctx, (MIR_item_t)func.proto);
   all_ops[1] = MIR_new_ref_op(ctx, (MIR_item_t)func.func);
   if (!is_void) {
-    all_ops[2] = MIR_new_reg_op(ctx, REG_OPAQUE_TO_MIR(retreg));
+    if (is_aggregate_type(return_type)) {
+    } else {
+      all_ops[2] = MIR_new_reg_op(ctx, REG_OPAQUE_TO_MIR(retreg));
+    }
   }
   for (uint32_t i = 0; i < num_args; ++i) {
     all_ops[i + extra] = OP_OPAQUE_TO_MIR(arg_values[i]);
@@ -203,10 +234,28 @@ void gen_mir_instr_call(IRFunc func,
   MIR_append_insn(ctx, current_func, insn);
 }
 
+void gen_mir_helper_memcpy(IROp dest, IROp src, size_t size) {
+  MIR_op_t args[6];
+  args[0] = MIR_new_ref_op(ctx, memcpy_proto);
+  args[1] = MIR_new_ref_op(ctx, memcpy_import);
+  MIR_reg_t memcpy_return = MIR_new_func_reg(ctx, current_func->u.func, MIR_T_I64, gensym());
+  args[2] = MIR_new_reg_op(ctx, memcpy_return);
+  args[3] = OP_OPAQUE_TO_MIR(dest);
+  args[4] = OP_OPAQUE_TO_MIR(src);
+  args[5] = MIR_new_uint_op(ctx, size);
+  MIR_append_insn(ctx, current_func, MIR_new_insn_arr(ctx, MIR_CALL, 6, args));
+}
+
 void gen_mir_instr_return(IROp val, Type type) {
   MIR_insn_t insn;
-  if (type_eq(type, type_void)) {
+  bool is_agg = is_aggregate_type(type);
+  if (type_eq(type, type_void) || is_agg) {
     insn = MIR_new_ret_insn(ctx, 0);
+    if (is_agg) {
+      MIR_reg_t ret_addr_reg = MIR_reg(ctx, RET_ADDR_NAME, current_func->u.func);
+      MIR_op_t ret_op = MIR_new_mem_op(ctx, MIR_T_I8, 0, ret_addr_reg, 0, 1);
+      gen_mir_helper_memcpy(OP_MIR_TO_OPAQUE(ret_op), OP_MIR_TO_OPAQUE(val), type_size(type));
+    }
   } else {
     insn = MIR_new_ret_insn(ctx, 1, val);
   }
@@ -245,6 +294,9 @@ void gen_mir_end_current_function(void) {
 void* import_resolver(const char* name) {
   if (strcmp(name, "printf") == 0) {
     return (void*)&printf;
+  }
+  if (strcmp(name, "memcpy") == 0) {
+    return (void*)&memcpy;
   }
   return NULL;
 }
