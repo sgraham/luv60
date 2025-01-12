@@ -36,32 +36,57 @@ LEXBENCH_FILELIST = [
     "lex_bench.c",
 ]
 
-CLANG_CL = "C:\\Program Files\\LLVM\\bin\\clang-cl.exe"
-LLD_LINK = "C:\\Program Files\\LLVM\\bin\\lld-link.exe"
+CLANG_CL_WIN = "C:\\Program Files\\LLVM\\bin\\clang-cl.exe"
+LLD_LINK_WIN = "C:\\Program Files\\LLVM\\bin\\lld-link.exe"
+CLANG = "clang"
 
 CONFIGS = {
     "w": {
         "d": {
-            "COMPILE": CLANG_CL
+            "COMPILE": CLANG_CL_WIN
             + " /showIncludes -std:c11 /nologo /TC /FS /Od /Zi /D_DEBUG /DBUILD_DEBUG=1 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo:$out /Fd:$out.pdb",
-            "LINK": LLD_LINK
+            "LINK": LLD_LINK_WIN
             + " /nologo /dynamicbase:no /DEBUG $in /out:$out /pdb:$out.pdb",
         },
         "r": {
-            "COMPILE": CLANG_CL
+            "COMPILE": CLANG_CL_WIN
             + " /showIncludes -std:c11 /nologo -flto -fuse-ld=lld /FS /O2 /Zi /DNDEBUG /DBUILD_DEBUG=0 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb",
-            "LINK": LLD_LINK
+            "LINK": LLD_LINK_WIN
             + " /nologo /dynamicbase:no /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb",
         },
         "p": {
-            "COMPILE": CLANG_CL
+            "COMPILE": CLANG_CL_WIN
             + " /showIncludes /nologo -flto -fuse-ld=lld /FS /O2 /Zi /DTRACY_ENABLE=1 /DNDEBUG /DBUILD_DEBUG=0 /D_CRT_SECURE_NO_DEPRECATE /I$src/../third_party/tracy/public/tracy /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb",
-            "LINK": LLD_LINK
+            "LINK": LLD_LINK_WIN
             + " /nologo /dynamicbase:no /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb",
         },
         "__": {
             "exe_ext": ".exe",
             "obj_ext": ".obj",
+        },
+    },
+    "m": {
+        "d": {
+            "COMPILE": CLANG
+            + " -std=c11 -O0 -g -D_DEBUG -DBUILD_DEBUG=1 -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            "LINK": CLANG
+            + " -g $in -o $out",
+        },
+        "r": {
+            "COMPILE": CLANG
+            + " /showIncludes -std:c11 /nologo -flto -fuse-ld=lld /FS /O2 /Zi /DNDEBUG /DBUILD_DEBUG=0 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb",
+            "LINK": CLANG
+            + " /nologo /dynamicbase:no /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb",
+        },
+        "p": {
+            "COMPILE": CLANG
+            + " /showIncludes /nologo -flto -fuse-ld=lld /FS /O2 /Zi /DTRACY_ENABLE=1 /DNDEBUG /DBUILD_DEBUG=0 /D_CRT_SECURE_NO_DEPRECATE /I$src/../third_party/tracy/public/tracy /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb",
+            "LINK": CLANG
+            + " /nologo /dynamicbase:no /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb",
+        },
+        "__": {
+            "exe_ext": "",
+            "obj_ext": ".o",
         },
     },
 }
@@ -275,8 +300,8 @@ def main():
     tests = get_tests()
     for platform, pdata in CONFIGS.items():
         if (sys.platform == "win32" and platform == "w") or (
-            sys.platform == "linux" and platform == "l"
-        ):
+            sys.platform == "linux" and platform == "l") or (
+            sys.platform == "darwin" and platform == "m"):
             for config, cmdlines in pdata.items():
                 if config == "__":
                     continue

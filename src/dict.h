@@ -509,8 +509,11 @@ static inline void dict_reset_growth_left(DictImpl* self) {
 
 static inline void dict_initialize_slots(DictImpl* self, size_t slot_size, size_t slot_align) {
   ASSERT(self->capacity > 0);
-  // TODO: alloc
+#if OS_WINDOWS
   void* mem = _aligned_malloc(dict_alloc_size(self->capacity, slot_size, slot_align), slot_align);
+#else
+  void* mem = aligned_alloc(slot_align, dict_alloc_size(self->capacity, slot_size, slot_align));
+#endif
   self->ctrl = mem;
   self->slots = mem + dict_slot_offset(self->capacity, slot_align);
   dict_reset_ctrl(self->capacity, self->ctrl, self->slots, slot_size);
@@ -530,8 +533,11 @@ static inline void dict_destroy(DictImpl* self) {
   if (self->capacity == 0) {
     return;
   }
-  // TODO: alloc
+#if OS_WINDOWS
   _aligned_free(self->ctrl);
+#else
+  free(self->ctrl);
+#endif
   *self = (DictImpl){0};
 }
 
@@ -613,7 +619,11 @@ static inline void dict_resize(DictImpl* self,
   }
 
   if (old_capacity) {
+#if OS_WINDOWS
     _aligned_free(old_ctrl);
+#else
+    free(old_ctrl);
+#endif
   }
 }
 

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+OS="$(uname -s)"
+THIS_DIR="$(dirname "${0}")"
+
+case "$OS" in
+  Darwin)    exec "${THIS_DIR}/ninja-mac" "$@";;
+  Linux)     exec "${THIS_DIR}/ninja-linux" "$@";;
+  *)         echo "Unsupported OS ${OS}"
+             exit 1;;
+esac

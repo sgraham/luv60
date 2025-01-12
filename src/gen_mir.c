@@ -193,9 +193,10 @@ IROp gen_mir_op_const(uint64_t val, Type type) {
     case TYPE_I16:
     case TYPE_U8:
     case TYPE_I8:
-    case TYPE_BOOL:
+    case TYPE_BOOL: {
       MIR_op_t mret = MIR_new_uint_op(ctx, val);
       return OP_MIR_TO_OPAQUE(mret);
+    }
     default:
       ASSERT(false && "todo");
       abort();

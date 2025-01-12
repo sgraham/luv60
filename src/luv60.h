@@ -167,8 +167,23 @@ typedef struct IRFunc {
   IRModuleItem proto;
 } IRFunc;
 typedef struct IRReg { uint32_t u; } IRReg;
-typedef struct IROp { uint8_t data[56]; } IROp;
 typedef struct IRInstr* IRInstr;
+
+#if OS_WINDOWS
+typedef struct IROp {
+  uint8_t data[56];
+} IROp;
+#elif OS_MAC
+typedef struct IROp {
+  uint8_t data[48];
+} IROp;
+#elif OS_LINUX
+typedef struct IROp {
+  uint8_t data[56];
+} IROp;
+#else
+#  error port
+#endif
 
 void gen_mir_init(bool verbose);
 IRFunc gen_mir_start_function(Str name,
