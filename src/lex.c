@@ -1,14 +1,17 @@
 #include "luv60.h"
 
-#ifdef TRACY_ENABLE
-#include "TracyC.h"
-#else
-#define TracyCZoneN(...)
-#define TracyCZoneEnd(...)
-#endif
+// SIMD lex indexing is Windows SSE2+ only. Should be easy to port to other x64,
+// moderately involved to port to ARM, etc.
+#if ARCH_X64 && OS_WINDOWS
 
-#define DO_PRINTS 0
+#  ifdef TRACY_ENABLE
+#    include "TracyC.h"
+#  else
+#    define TracyCZoneN(...)
+#    define TracyCZoneEnd(...)
+#  endif
 
+#  define DO_PRINTS 0
 
 // This is based on https://arxiv.org/pdf/1902.08318.pdf which is the
 // paper about simdjson.org.
@@ -38,16 +41,16 @@ typedef struct Classes {
   uint64_t punct;
 } Classes;
 
-#define EQ_CHAR(name, ch)                                                                        \
-  __attribute__((nonnull)) static FORCE_INLINE uint64_t eq_##name(const Simd64* __restrict in) { \
-    const __m256i splat = _mm256_set1_epi8(ch);                                                  \
-    const Simd64 cmp = {_mm256_cmpeq_epi8(in->chunks[0], splat),                                 \
-                        _mm256_cmpeq_epi8(in->chunks[1], splat)};                                \
-    const uint64_t bitmask_lo = ((uint32_t)_mm256_movemask_epi8(cmp.chunks[0]));                 \
-    const uint64_t bitmask_hi = ((uint32_t)_mm256_movemask_epi8(cmp.chunks[1]));                 \
-    const uint64_t bitmask = (bitmask_hi << 32) | bitmask_lo;                                    \
-    return bitmask;                                                                              \
-  }
+#  define EQ_CHAR(name, ch)                                                                        \
+    __attribute__((nonnull)) static FORCE_INLINE uint64_t eq_##name(const Simd64* __restrict in) { \
+      const __m256i splat = _mm256_set1_epi8(ch);                                                  \
+      const Simd64 cmp = {_mm256_cmpeq_epi8(in->chunks[0], splat),                                 \
+                          _mm256_cmpeq_epi8(in->chunks[1], splat)};                                \
+      const uint64_t bitmask_lo = ((uint32_t)_mm256_movemask_epi8(cmp.chunks[0]));                 \
+      const uint64_t bitmask_hi = ((uint32_t)_mm256_movemask_epi8(cmp.chunks[1]));                 \
+      const uint64_t bitmask = (bitmask_hi << 32) | bitmask_lo;                                    \
+      return bitmask;                                                                              \
+    }
 
 EQ_CHAR(backslash, '\\')
 EQ_CHAR(double_quote, '"')
@@ -59,18 +62,18 @@ EQ_CHAR(greater_than, '>')
 EQ_CHAR(equal, '=')
 EQ_CHAR(bang, '!')
 
-#define HAS_BIT(n)                                                               \
-  static FORCE_INLINE uint64_t has_bit_##n(const Simd64* __restrict in) {        \
-    const __m256i splat = _mm256_set1_epi8(1 << n);                              \
-    const Simd64 and = {_mm256_and_si256(in->chunks[0], splat),                  \
-                        _mm256_and_si256(in->chunks[1], splat)};                 \
-    const Simd64 cmp = {_mm256_cmpeq_epi8(and.chunks[0], splat),                 \
-                        _mm256_cmpeq_epi8(and.chunks[1], splat)};                \
-    const uint64_t bitmask_lo = ((uint32_t)_mm256_movemask_epi8(cmp.chunks[0])); \
-    const uint64_t bitmask_hi = ((uint32_t)_mm256_movemask_epi8(cmp.chunks[1])); \
-    const uint64_t backslash_bitmask = (bitmask_hi << 32) | bitmask_lo;          \
-    return backslash_bitmask;                                                    \
-  }
+#  define HAS_BIT(n)                                                               \
+    static FORCE_INLINE uint64_t has_bit_##n(const Simd64* __restrict in) {        \
+      const __m256i splat = _mm256_set1_epi8(1 << n);                              \
+      const Simd64 and = {_mm256_and_si256(in->chunks[0], splat),                  \
+                          _mm256_and_si256(in->chunks[1], splat)};                 \
+      const Simd64 cmp = {_mm256_cmpeq_epi8(and.chunks[0], splat),                 \
+                          _mm256_cmpeq_epi8(and.chunks[1], splat)};                \
+      const uint64_t bitmask_lo = ((uint32_t)_mm256_movemask_epi8(cmp.chunks[0])); \
+      const uint64_t bitmask_hi = ((uint32_t)_mm256_movemask_epi8(cmp.chunks[1])); \
+      const uint64_t backslash_bitmask = (bitmask_hi << 32) | bitmask_lo;          \
+      return backslash_bitmask;                                                    \
+    }
 
 HAS_BIT(1)
 
@@ -260,7 +263,7 @@ static FORCE_INLINE uint64_t clear_lowest_bit(uint64_t input) {
   return input & (input - 1);
 }
 
-#if DO_PRINTS
+#  if DO_PRINTS
 static void print_with_visible_unprintable(char ch) {
   if (ch == '\n') {
     printf("↵");
@@ -288,13 +291,15 @@ static void print_with_coloured_bits(char* label, uint64_t bitmask, char* commen
   printf("\033[0m");
   printf("\n");
 }
-#endif
+#  endif
 
-uint32_t lex_indexer(const uint8_t* buf, uint32_t byte_count_rounded_up, uint32_t* token_offsets) {
-#if DO_PRINTS
+uint32_t lex_indexer_simd(const uint8_t* buf,
+                          uint32_t byte_count_rounded_up,
+                          uint32_t* token_offsets) {
+#  if DO_PRINTS
   extern __stdcall bool SetConsoleOutputCP(int);
   SetConsoleOutputCP(65001);
-#endif
+#  endif
   // The first attempt at this lexer followed simdjson's lexing. Their
   // double quote mask finding is very clever. But, in the presence of
   // comments I wasn't able to find a way to create a mask that handled
@@ -320,10 +325,10 @@ uint32_t lex_indexer(const uint8_t* buf, uint32_t byte_count_rounded_up, uint32_
   for (uint32_t offset = 0; offset < byte_count_rounded_up; offset += 64) {
     Simd64 data = {_mm256_loadu_si256((const __m256i*)&buf[offset]),
                    _mm256_loadu_si256((const __m256i*)&buf[offset + 32])};
-#if DO_PRINTS
+#  if DO_PRINTS
     printf("\n");
-  print_buf_ptr = (char*)&buf[offset];
-#endif
+    print_buf_ptr = (char*)&buf[offset];
+#  endif
 
     const uint64_t backslash = eq_backslash(&data);
 
@@ -352,7 +357,7 @@ uint32_t lex_indexer(const uint8_t* buf, uint32_t byte_count_rounded_up, uint32_
 
     // For double character tokens, we don't want indexes at both of them for
     // <<, >>, <=, >=, ==, !=.
-    // 
+    //
     // We use the same categorization helper as backslashes, and handle
     // 'carries' across blocks (i.e. < and the end of the block followed by
     // another < at the beginning of the next.)
@@ -370,7 +375,7 @@ uint32_t lex_indexer(const uint8_t* buf, uint32_t byte_count_rounded_up, uint32_
     Classes classes = classify(&data);
 
     uint64_t S = classes.punct & ~(quotes_mask | comments_mask);
-#if DO_PRINTS
+#  if DO_PRINTS
     print_with_coloured_bits("S", S, "");
 #  endif
 
@@ -388,9 +393,9 @@ uint32_t lex_indexer(const uint8_t* buf, uint32_t byte_count_rounded_up, uint32_
 
     uint64_t indexes = S & ~(quotes & ~quotes_mask) & ~double_mask;
 
-#if DO_PRINTS
-  print_with_coloured_bits("final", indexes, "");
-#endif
+#  if DO_PRINTS
+    print_with_coloured_bits("final", indexes, "");
+#  endif
 
     int64_t rel_offset;
     if (state_start_rel_offset == 0) {
@@ -409,4 +414,26 @@ uint32_t lex_indexer(const uint8_t* buf, uint32_t byte_count_rounded_up, uint32_
   }
 
   return to - token_offsets;
+}
+
+uint32_t lex_indexer(const uint8_t* buf, uint32_t byte_count_rounded_up, uint32_t* token_offsets) {
+  return lex_indexer_simd(buf, byte_count_rounded_up, token_offsets);
+}
+
+#else
+
+uint32_t lex_indexer_fallback(const uint8_t* buf,
+                              uint32_t byte_count_rounded_up,
+                              uint32_t* token_offsets);
+uint32_t lex_indexer(const uint8_t* buf, uint32_t byte_count_rounded_up, uint32_t* token_offsets) {
+  return lex_indexer_fallback(buf, byte_count_rounded_up, token_offsets);
+}
+
+#endif  // ^^^ ARCH_X64 && OS_WINDOWS
+
+// We also compile this on Windows so test code can compare _simd and _fallback.
+uint32_t lex_indexer_fallback(const uint8_t* buf,
+                              uint32_t byte_count_rounded_up,
+                              uint32_t* token_offsets) {
+  return 0;
 }
