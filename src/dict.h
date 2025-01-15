@@ -1,5 +1,3 @@
-#include <stdlib.h>  // TODO: Only for aligned_alloc/free
-
 // SwissTable-like implementation for dicts. See
 //   https://abseil.io/about/design/swisstables
 //   https://github.com/abseil/abseil-cpp/blob/master/absl/container/internal/raw_hash_set.h
@@ -509,11 +507,9 @@ static inline void dict_reset_growth_left(DictImpl* self) {
 
 static inline void dict_initialize_slots(DictImpl* self, size_t slot_size, size_t slot_align) {
   ASSERT(self->capacity > 0);
-#if OS_WINDOWS
-  void* mem = _aligned_malloc(dict_alloc_size(self->capacity, slot_size, slot_align), slot_align);
-#else
-  void* mem = aligned_alloc(slot_align, dict_alloc_size(self->capacity, slot_size, slot_align));
-#endif
+  ASSERT(slot_align <= 64);  // This is what base_large_alloc_rw ensures.
+  void* mem = base_large_alloc_rw(dict_alloc_size(self->capacity, slot_size, slot_align));
+  ASSERT(mem);
   self->ctrl = mem;
   self->slots = mem + dict_slot_offset(self->capacity, slot_align);
   dict_reset_ctrl(self->capacity, self->ctrl, self->slots, slot_size);
@@ -533,11 +529,7 @@ static inline void dict_destroy(DictImpl* self) {
   if (self->capacity == 0) {
     return;
   }
-#if OS_WINDOWS
-  _aligned_free(self->ctrl);
-#else
-  free(self->ctrl);
-#endif
+  base_large_alloc_free(self->ctrl);
   *self = (DictImpl){0};
 }
 
@@ -619,11 +611,7 @@ static inline void dict_resize(DictImpl* self,
   }
 
   if (old_capacity) {
-#if OS_WINDOWS
-    _aligned_free(old_ctrl);
-#else
-    free(old_ctrl);
-#endif
+    base_large_alloc_free(old_ctrl);
   }
 }
 

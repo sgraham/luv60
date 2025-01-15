@@ -9,6 +9,9 @@ ROOT_DIR = os.path.normpath(
 )
 
 COMMON_FILELIST = [
+    "../third_party/mir/mir-gen.c",
+    "../third_party/mir/mir.c",
+    "base_mac.c",
     "base_win.c",
     "gen_mir.c",
     "gen_ssa.c",
@@ -17,8 +20,6 @@ COMMON_FILELIST = [
     "str.c",
     "token.c",
     "type.c",
-    "../third_party/mir/mir.c",
-    "../third_party/mir/mir-gen.c",
 ]
 
 LUVC_FILELIST = [
@@ -68,21 +69,15 @@ CONFIGS = {
     "m": {
         "d": {
             "COMPILE": CLANG
-            + " -std=c11 -O0 -g -D_DEBUG -DBUILD_DEBUG=1 -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            + " -MMD -MF $out.d -std=c11 -O0 -g -D_DEBUG -DBUILD_DEBUG=1 -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
             "LINK": CLANG
             + " -g $in -o $out",
         },
         "r": {
             "COMPILE": CLANG
-            + " /showIncludes -std:c11 /nologo -flto -fuse-ld=lld /FS /O2 /Zi /DNDEBUG /DBUILD_DEBUG=0 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb",
+            + " -MMD -MF $out.d -std:c11 -flto -fuse-ld=lld -O3 -g /DNDEBUG /DBUILD_DEBUG=0 -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
             "LINK": CLANG
-            + " /nologo /dynamicbase:no /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb",
-        },
-        "p": {
-            "COMPILE": CLANG
-            + " /showIncludes /nologo -flto -fuse-ld=lld /FS /O2 /Zi /DTRACY_ENABLE=1 /DNDEBUG /DBUILD_DEBUG=0 /D_CRT_SECURE_NO_DEPRECATE /I$src/../third_party/tracy/public/tracy /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb",
-            "LINK": CLANG
-            + " /nologo /dynamicbase:no /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb",
+            + " -g $in -o $out",
         },
         "__": {
             "exe_ext": "",

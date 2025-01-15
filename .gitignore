@@ -1,9 +1,10 @@
+.vscode/
 a.luv
 code.raw
 dumbbench.luv
 out/
 scratch/
 tags
+third_party/tracy
 x.*
 z.bat
-third_party/tracy

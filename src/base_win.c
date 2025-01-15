@@ -15,11 +15,15 @@ int base_writef_stderr(const char* fmt, ...) {
 }
 
 unsigned char* base_large_alloc_rw(size_t size) {
-  return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+  void* p = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+  ASSERT(ALIGN_UP(p, 64) == p);
+  return p;
 }
 
 unsigned char* base_large_alloc_rwx(size_t size) {
-  return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+  void *p = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+  ASSERT(ALIGN_UP(p, 64) == p);
+  return p;
 }
 
 void base_set_protection_rx(unsigned char* ptr, size_t size) {
@@ -44,6 +48,7 @@ ReadFileResult base_read_file(const char* filename) {
   size_t to_alloc = ALIGN_UP(size.QuadPart + 64, PAGE_SIZE);
   unsigned char* read_buf = base_large_alloc_rw(to_alloc);
   if (!read_buf) {
+    CloseHandle(file);
     return (ReadFileResult){0};
   }
 
@@ -52,11 +57,12 @@ ReadFileResult base_read_file(const char* filename) {
     base_large_alloc_free(read_buf);
     return (ReadFileResult){0};
   }
+  CloseHandle(file);
+
   if (bytes_read != size.QuadPart) {
     base_large_alloc_free(read_buf);
     return (ReadFileResult){0};
   }
-  CloseHandle(file);
 
   return (ReadFileResult){read_buf, size.QuadPart, to_alloc};
 }
