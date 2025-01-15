@@ -1,5 +1,12 @@
 #include "luv60.h"
 
+#include <stdlib.h>
+
+#ifdef _MSC_VER
+#define strdup _strdup
+#endif
+
+
 typedef struct BufHdr {
   size_t len;
   size_t cap;
@@ -174,13 +181,13 @@ static const char* irref_as_str(IRRef ref) {
       buf[1] = 0;
       ASSERT(false && "unhandled ref kind");
   }
-  return _strdup(buf);
+  return strdup(buf);
 }
 
 static const char* irblock_as_str(IRBlock block) {
   char buf[128];
   sprintf(buf, "@b%d", block.i);
-  return _strdup(buf);
+  return strdup(buf);
 }
 
 void gen_ssa_init(void) {

@@ -195,6 +195,8 @@ def generate(platform, config, settings, cmdlines, tests):
 
         common_objs = []
         for src in COMMON_FILELIST:
+            if sys.platform == 'darwin' and '_win.' in src: continue
+            elif sys.platform == 'win32' and '_mac.' in src: continue
             obj = getobj(src)
             common_objs.append(obj)
             extra_deps = ""
@@ -232,10 +234,11 @@ def generate(platform, config, settings, cmdlines, tests):
             obj = getobj(src)
             lexbench_objs.append(obj)
             f.write("build %s: cc $src/%s\n" % (obj, src))
-            f.write(
-                '  extra=-DFILENAME="""%s"""\n'
-                % os.path.join(root_dir, "dumbbench.luv").replace("\\", "/")
-            )
+            fn = os.path.join(root_dir, "dumbbench.luv").replace("\\", "/")
+            if sys.platform == 'win32':
+                f.write('  extra=-DFILENAME="""%s"""\n' % fn)
+            else:
+                f.write('  extra=-DFILENAME=\\"%s\\"\n' % fn)
 
         alltests = []
         for testf, cmds in tests.items():
