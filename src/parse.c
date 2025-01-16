@@ -334,8 +334,11 @@ static void init_module_globals(void) {
 
 static void print_i32(Operand* op) {
   LqRef printf_func = lq_extern("printf");
-  lq_i_call_varargs(lq_type_word, printf_func, lq_type_long,
-                    lq_ref_for_symbol(parser.lqsym_fmt_print_i32), lq_type_word, value_of(op));
+  lq_i_call3(lq_type_word, printf_func,
+             (LqCallArg){lq_type_long, lq_ref_for_symbol(parser.lqsym_fmt_print_i32)},  //
+             lq_varargs_begin,                                                          //
+             (LqCallArg){lq_type_word, value_of(op)}                                    //
+  );
 }
 
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {

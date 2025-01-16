@@ -60,7 +60,7 @@ def main():
     input_name = cmds["run"].split(" ")
     assert len(input_name) == 1  # TODO: ssa hacks
     s_name = os.path.join(out_dir, input_name[0] + ".s")
-    luvc_cmd = [ccbin] + [input_name[0]] + [s_name]
+    luvc_cmd = [ccbin] + [input_name[0]] + ["-o", s_name]
     luvcres = subprocess.run(
         luvc_cmd, cwd=root, universal_newlines=True, env=env, capture_output=True
     )
