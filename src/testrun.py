@@ -79,6 +79,19 @@ def main():
         )
         return 1
 
+    output_name = os.path.join(out_dir, input_name[0] + ".exe")
+    clangres = subprocess.run(
+        [
+            "clang",
+            "-g",
+            "-o",
+            output_name,
+            s_name,
+        ]
+    )
+    if clangres.returncode != 0:
+        return 1
+    '''
     com_dbg_name = os.path.join(out_dir, input_name[0] + ".com.dbg")
     gccres = subprocess.run(
         [
@@ -126,10 +139,11 @@ def main():
     )
     if objcopyres.returncode != 0:
         return 1
+        '''
 
     if cmds["txt"]:
         res = subprocess.run(
-            [com_name], cwd=root, universal_newlines=True, capture_output=True, env=env
+            [output_name], cwd=root, universal_newlines=True, capture_output=True, env=env
         )
         out = res.stdout
         if out != cmds["txt"]:
@@ -141,7 +155,7 @@ def main():
             print(hexdump(bytes(cmds["txt"], encoding='utf-8')))
             return 1
     else:
-        res = subprocess.run(com_name, cwd=root, env=env)
+        res = subprocess.run(output_name, cwd=root, env=env)
 
     if cmds["ret"] == "NOCRASH":
         if res.returncode >= 0 and res.returncode <= 255 and res.returncode != 117:
@@ -150,9 +164,7 @@ def main():
         # Linux is always in the range 0..255, so pick 117 arbitrarily for an ASAN signal.
         return 2
     else:
-        # Not sure what, but something in the unholy qbe/cosmo/ape mess is <<8
-        # the number we put in eax from main.
-        if res.returncode >> 8 != cmds["ret"]:
+        if res.returncode != cmds["ret"]:
             print("got return code %d, but expected %d" % (res.returncode, cmds["ret"]))
             return 2
 
