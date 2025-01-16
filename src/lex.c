@@ -435,5 +435,80 @@ uint32_t lex_indexer(const uint8_t* buf, uint32_t byte_count_rounded_up, uint32_
 uint32_t lex_indexer_fallback(const uint8_t* buf,
                               uint32_t byte_count_rounded_up,
                               uint32_t* token_offsets) {
-  return 0;
+  uint32_t* to = token_offsets;
+
+  // Corresponds to classify() in SSE version.
+  static bool is_identifierish[256] = {
+      ['_'] = true, ['@'] = true, ['0'] = true, ['1'] = true, ['2'] = true, ['3'] = true,
+      ['4'] = true, ['5'] = true, ['6'] = true, ['7'] = true, ['8'] = true, ['9'] = true,
+      ['A'] = true, ['B'] = true, ['C'] = true, ['D'] = true, ['E'] = true, ['F'] = true,
+      ['G'] = true, ['H'] = true, ['I'] = true, ['J'] = true, ['K'] = true, ['L'] = true,
+      ['M'] = true, ['N'] = true, ['O'] = true, ['P'] = true, ['Q'] = true, ['R'] = true,
+      ['S'] = true, ['T'] = true, ['U'] = true, ['V'] = true, ['W'] = true, ['X'] = true,
+      ['Y'] = true, ['Z'] = true, ['a'] = true, ['b'] = true, ['c'] = true, ['d'] = true,
+      ['e'] = true, ['f'] = true, ['g'] = true, ['h'] = true, ['i'] = true, ['j'] = true,
+      ['k'] = true, ['l'] = true, ['m'] = true, ['n'] = true, ['o'] = true, ['p'] = true,
+      ['q'] = true, ['r'] = true, ['s'] = true, ['t'] = true, ['u'] = true, ['v'] = true,
+      ['w'] = true, ['x'] = true, ['y'] = true, ['z'] = true,
+  };
+
+  uint32_t i = 0;
+  for (;;) {
+    char c = buf[i];
+
+    // Strings and others we want the start of, comments just get dropped.
+    switch (c) {
+      case 0:
+        goto done;
+      case '#':
+        for (;;) {
+          c = buf[++i];
+          if (c == '\n') break;
+        }
+        // We don't want the comment indexed, but we do want tbe newline at
+        // terminates the comment as its own thing.
+        *to++ = i++;
+        break;
+      case '"':
+        *to++ = i;
+        for (;;) {
+          c = buf[++i];
+          if (c == '\\' && buf[i+1] == '"') {
+            i += 2;
+          } else if (c == '"') {
+            break;
+          }
+        }
+        ++i;
+        break;
+      case ' ':
+        ++i;
+        break;
+      default:
+        if (is_identifierish[(int)c]) {
+          *to++ = i;
+          for (;;) {
+            c = buf[++i];
+            if (!is_identifierish[(int)c]) {
+              break;
+            }
+          }
+          break;
+        } else {
+          // punct
+          *to++ = i++;
+          if ((c == '<' && buf[i] == '<') ||  //
+              (c == '<' && buf[i] == '=') ||  //
+              (c == '>' && buf[i] == '>') ||  //
+              (c == '>' && buf[i] == '=') ||  //
+              (c == '!' && buf[i] == '=') ||  //
+              (c == '=' && buf[i] == '=')) {
+            ++i;
+          }
+        }
+    }
+  }
+done:
+  *to++ = i;
+  return to - token_offsets;
 }
