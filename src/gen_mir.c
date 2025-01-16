@@ -44,7 +44,7 @@ void gen_mir_init(bool verbose) {
   MIR_gen_set_optimize_level(ctx, 1);
   if (verbose) {
     MIR_gen_set_debug_file(ctx, stderr);
-    MIR_gen_set_debug_level(ctx, 0);
+    MIR_gen_set_debug_level(ctx, 100);
   } else {
     MIR_gen_set_debug_file(ctx, NULL);
     MIR_gen_set_debug_level(ctx, -1);
@@ -139,6 +139,7 @@ IRFunc gen_mir_start_function(Str name,
     vars[num_args].size = type_size(return_type);
   } else {
     rettype = type_to_mir_type(return_type);
+    nrets = 1;
   }
 
   MIR_item_t func = MIR_new_func_arr(ctx, cstr(name), nrets, &rettype, num_args + extra, vars);
@@ -196,8 +197,12 @@ IROp gen_mir_op_const(uint64_t val, Type type) {
 }
 
 IROp gen_mir_op_str_const(Str str) {
-  MIR_item_t str_item = MIR_new_string_data(ctx, gensym(), (MIR_str_t){str_len(str), cstr(str)});
-  MIR_op_t str_op = MIR_new_ref_op(ctx, str_item);
+  // TODO: want +1 for nul? not sure if needed
+  MIR_item_t str_bytes = MIR_new_string_data(ctx, gensym(), (MIR_str_t){str_len(str), cstr(str)});
+  MIR_item_t str_obj = MIR_new_ref_data(ctx, gensym(), str_bytes, /*disp=*/0);
+  int64_t len = str_len(str);
+  MIR_new_data(ctx, NULL, MIR_T_I64, 1, &len);
+  MIR_op_t str_op = MIR_new_ref_op(ctx, str_obj);
   return OP_MIR_TO_OPAQUE(str_op);
 }
 
@@ -279,7 +284,7 @@ void gen_mir_helper_print_str(IROp val) {
   MIR_append_insn(ctx, current_func,
                   MIR_new_call_insn(ctx, 5, MIR_new_ref_op(ctx, printf_proto),
                                     MIR_new_ref_op(ctx, printf_import), MIR_new_reg_op(ctx, ret),
-                                    MIR_new_str_op(ctx, (MIR_str_t){3, "%s\n"}), val));
+                                    MIR_new_str_op(ctx, (MIR_str_t){3, "%.*s\n"}), val));
 }
 
 void gen_mir_end_current_function(void) {
