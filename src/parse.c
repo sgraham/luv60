@@ -125,6 +125,45 @@ static void get_location_and_line_slow(uint32_t offset,
   }
 }
 
+NORETURN static void error_offset(uint32_t offset, const char* message) {
+  uint32_t loc_line;
+  uint32_t loc_column;
+  StrView line;
+  get_location_and_line_slow(offset, &loc_line, &loc_column, &line);
+  int indent = base_writef_stderr("%s:%d:%d:", parser.cur_filename, loc_line, loc_column);
+  base_writef_stderr("%.*s\n", (int)line.size, line.data);
+  base_writef_stderr("%*s", indent + loc_column - 1, "");
+  base_writef_stderr("^ error: %s\n", message);
+  base_exit(1);
+}
+
+NORETURN static void error(const char* message) {
+  error_offset(prev_offset(), message);
+}
+
+NORETURN static void errorf(const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  size_t n = 1 + vsnprintf(NULL, 0, fmt, args);
+  va_end(args);
+  char* str = malloc(n);  // just a simple malloc because we're going to base_exit() momentarily.
+  va_start(args, fmt);
+  vsnprintf(str, n, fmt, args);
+  va_end(args);
+  error(str);
+}
+
+NORETURN static void errorf_offset(uint32_t offset, const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  size_t n = 1 + vsnprintf(NULL, 0, fmt, args);
+  va_end(args);
+  char* str = malloc(n);  // just a simple malloc because we're going to base_exit() momentarily.
+  va_start(args, fmt);
+  vsnprintf(str, n, fmt, args);
+  va_end(args);
+  error_offset(offset, str);
+}
 typedef struct NameSymPair {
   Str name;
   Sym sym;
@@ -183,14 +222,82 @@ static LqType type_to_lq_type(Type type) {
   }
 }
 
+static LqRef alloc_for_type(Type type) {
+  switch (type_align(type)) {
+    case 1:
+    case 2:
+    case 4:
+      return lq_i_alloc4(lq_const_int(type_size(type)));
+    case 8:
+      return lq_i_alloc8(lq_const_int(type_size(type)));
+    case 16:
+      return lq_i_alloc8(lq_const_int(type_size(type)));
+    default:
+      errorf("internal error: unexpected alignment %d", type_align(type));
+  }
+}
+
+static void store_for_type(LqRef into, Type type, LqRef val) {
+  switch (type_kind(type)) {
+    case TYPE_U8:
+    case TYPE_I8:
+      lq_i_storeb(val, into);
+      break;
+    case TYPE_U16:
+    case TYPE_I16:
+      lq_i_storeh(val, into);
+      break;
+    case TYPE_U32:
+    case TYPE_I32:
+      lq_i_storew(val, into);
+      break;
+    case TYPE_U64:
+    case TYPE_I64:
+      lq_i_storel(val, into);
+      break;
+    case TYPE_FLOAT:
+      lq_i_stores(val, into);
+      break;
+    case TYPE_DOUBLE:
+      lq_i_stored(val, into);
+      break;
+    default:
+      ASSERT(false && "todo");
+  }
+}
+
+static LqRef load_for_type(Type type, LqRef val) {
+  switch (type_kind(type)) {
+    case TYPE_U8:
+      return lq_i_loadub(lq_type_word, val);
+    case TYPE_I8:
+      return lq_i_loadsb(lq_type_word, val);
+    case TYPE_U16:
+      return lq_i_loaduh(lq_type_word, val);
+    case TYPE_I16:
+      return lq_i_loadsh(lq_type_word, val);
+    case TYPE_U32:
+      return lq_i_loaduw(lq_type_word, val);
+    case TYPE_I32:
+      return lq_i_loadsw(lq_type_word, val);
+    case TYPE_U64:
+    case TYPE_I64:
+      return lq_i_load(lq_type_long, val);
+    case TYPE_FLOAT:
+      return lq_i_load(lq_type_single, val);
+    case TYPE_DOUBLE:
+      return lq_i_load(lq_type_double, val);
+      break;
+    default:
+      ASSERT(false && "todo");
+  }
+}
+
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
-#if 0
   Sym* new = sym_new(kind, name, type);
-  new->ir_reg = gen_mir_make_temp(name, type);
+  new->lqref = alloc_for_type(type);
   new->scope_decl = SSD_DECLARED_LOCAL;
   return new;
-#endif
-  ASSERT(false); abort();
 }
 
 static Sym* make_param(Str name, Type type) {
@@ -198,46 +305,6 @@ static Sym* make_param(Str name, Type type) {
   new->lqref = lq_func_param_named(type_to_lq_type(type), cstr(name));
   new->scope_decl = SSD_DECLARED_PARAMETER;
   return new;
-}
-
-NORETURN static void error_offset(uint32_t offset, const char* message) {
-  uint32_t loc_line;
-  uint32_t loc_column;
-  StrView line;
-  get_location_and_line_slow(offset, &loc_line, &loc_column, &line);
-  int indent = base_writef_stderr("%s:%d:%d:", parser.cur_filename, loc_line, loc_column);
-  base_writef_stderr("%.*s\n", (int)line.size, line.data);
-  base_writef_stderr("%*s", indent + loc_column - 1, "");
-  base_writef_stderr("^ error: %s\n", message);
-  base_exit(1);
-}
-
-NORETURN static void error(const char* message) {
-  error_offset(prev_offset(), message);
-}
-
-NORETURN static void errorf(const char* fmt, ...) {
-  va_list args;
-  va_start(args, fmt);
-  size_t n = 1 + vsnprintf(NULL, 0, fmt, args);
-  va_end(args);
-  char* str = malloc(n);  // just a simple malloc because we're going to base_exit() momentarily.
-  va_start(args, fmt);
-  vsnprintf(str, n, fmt, args);
-  va_end(args);
-  error(str);
-}
-
-NORETURN static void errorf_offset(uint32_t offset, const char* fmt, ...) {
-  va_list args;
-  va_start(args, fmt);
-  size_t n = 1 + vsnprintf(NULL, 0, fmt, args);
-  va_end(args);
-  char* str = malloc(n);  // just a simple malloc because we're going to base_exit() momentarily.
-  va_start(args, fmt);
-  vsnprintf(str, n, fmt, args);
-  va_end(args);
-  error_offset(offset, str);
 }
 
 static void enter_scope(bool is_module, bool is_function) {
@@ -569,6 +636,14 @@ static bool convert_operand(Operand* operand, Type type) {
     return true;
   }
   return false;
+}
+
+static LqRef get_val(Operand op) {
+  if (op.is_lvalue) {
+    return load_for_type(op.type, op.lqref);
+  } else {
+    return op.lqref;
+  }
 }
 
 typedef enum LastStatementType {
@@ -1080,10 +1155,7 @@ static Operand parse_variable(bool can_assign) {
     }
   } else {
     if (scope_result == SCOPE_RESULT_LOCAL) {
-      ASSERT(false); abort();
-#if 0
-      return operand_lvalue(sym->type, gen_mir_op_reg(sym->ir_reg));
-#endif
+      return operand_lvalue(sym->type, sym->lqref);
     } else if (scope_result == SCOPE_RESULT_PARAMETER) {
       ASSERT(false); abort();
 #if 0
@@ -1429,7 +1501,7 @@ static bool parse_func_body_only_statement(LastStatementType* lst) {
     if (!type_eq(func_ret, type_void)) {
       op = parse_expression();
       *lst = LST_RETURN_VALUE;
-      lq_i_ret(op.lqref);
+      lq_i_ret(get_val((op)));
     } else {
       *lst = LST_RETURN_VOID;
       lq_i_ret_void();
@@ -1496,11 +1568,7 @@ static void parse_variable_statement(Type type) {
              type_as_str(op.type), type_as_str(type));
     }
     Sym* new = make_local_and_alloc(SYM_VAR, name, op.type);
-    ASSERT(false); abort();
-    (void)new;
-#if 0
-    gen_mir_instr_store(new->ir_reg, op.type, op.ir_op);
-#endif
+    store_for_type(new->lqref, op.type, op.lqref);
   }
 
   expect_end_of_statement("variable declaration");
