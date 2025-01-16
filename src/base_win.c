@@ -16,13 +16,13 @@ int base_writef_stderr(const char* fmt, ...) {
 
 unsigned char* base_large_alloc_rw(size_t size) {
   void* p = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-  ASSERT(ALIGN_UP(p, 64) == p);
+  ASSERT(ALIGN_UP((uintptr_t)p, 64) == (uintptr_t)p);
   return p;
 }
 
 unsigned char* base_large_alloc_rwx(size_t size) {
   void *p = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-  ASSERT(ALIGN_UP(p, 64) == p);
+  ASSERT(ALIGN_UP((uintptr_t)p, 64) == (uintptr_t)p);
   return p;
 }
 

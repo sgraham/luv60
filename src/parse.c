@@ -38,8 +38,8 @@ typedef struct Sym {
   Str name;
   Type type;
   union {
-    IRFunc ir_func;
-    IRReg ir_reg;
+    LqSymbol lqsym;
+    LqRef lqref;
   };
   SymScopeDecl scope_decl;
 } Sym;
@@ -157,16 +157,45 @@ static Sym* sym_new(SymKind kind, Str name, Type type) {
   return &((NameSymPair*)dict_rawiter_get(&res.iter))->sym;
 }
 
+static LqType type_to_lq_type(Type type) {
+  switch (type_kind(type)) {
+    case TYPE_U8:
+      return lq_type_ubyte;
+    case TYPE_I8:
+      return lq_type_sbyte;
+    case TYPE_U16:
+      return lq_type_uhalf;
+    case TYPE_I16:
+      return lq_type_shalf;
+    case TYPE_U32:
+      return lq_type_word;
+    case TYPE_I32:
+      return lq_type_word;
+    case TYPE_U64:
+      return lq_type_long;
+    case TYPE_I64:
+      return lq_type_long;
+    case TYPE_FLOAT: return lq_type_single;
+    case TYPE_DOUBLE:
+      return lq_type_double;
+    default:
+      ASSERT(false && "todo");
+  }
+}
+
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
+#if 0
   Sym* new = sym_new(kind, name, type);
   new->ir_reg = gen_mir_make_temp(name, type);
   new->scope_decl = SSD_DECLARED_LOCAL;
   return new;
+#endif
+  ASSERT(false); abort();
 }
 
 static Sym* make_param(Str name, Type type) {
   Sym* new = sym_new(SYM_VAR, name, type);
-  new->ir_reg = gen_mir_get_func_param(name, type);
+  new->lqref = lq_func_param_named(type_to_lq_type(type), cstr(name));
   new->scope_decl = SSD_DECLARED_PARAMETER;
   return new;
 }
@@ -234,18 +263,18 @@ static void enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS], Type para
   parser.cur_func->sym = sym;
   enter_scope(/*is_module=*/false, /*is_function=*/true);
 
+  LqLinkage linkage =
+      str_eq(sym->name, str_intern("main")) ? lq_linkage_export : lq_linkage_default;
+  lq_func_start(linkage, type_to_lq_type(type_func_return_type(sym->type)), cstr(sym->name));
+
   uint32_t num_params = type_func_num_params(sym->type);
   for (uint32_t i = 0; i < num_params; ++i) {
     make_param(param_names[i], type_func_param(sym->type, i));
   }
-  sym->ir_func = gen_mir_start_function(sym->name, type_func_return_type(sym->type), num_params,
-                                        param_types, param_names);
 }
 
 static void leave_function(void) {
-  // gen_resolve_label(done);
-  // gen_func_exit_and_patch_func_entry(&cur_func.func_exit_cont, cur_func.return_type);
-  gen_mir_end_current_function();
+  parser.cur_func->sym->lqsym = lq_func_end();
 
   --parser.num_funcdatas;
   ASSERT(parser.num_funcdatas >= 0);
@@ -365,11 +394,11 @@ static Type parse_type(void) {
   }
 
   if (match(TOK_LBRACE)) {
-    abort();
+    ASSERT(false); abort();
   }
 
   if (match(TOK_DEF)) {
-    abort();
+    ASSERT(false); abort();
   }
 
   if (parser.cur_kind >= TOK_BOOL && parser.cur_kind <= TOK_UINT) {
@@ -430,8 +459,8 @@ static void skip_newlines(void) {
 typedef struct Operand {
   Type type;
   union {
-    IRFunc ir_func;
-    IROp ir_op;
+    LqSymbol lqsym;
+    LqRef lqref;
   };
   bool is_lvalue;
   bool is_const;
@@ -439,21 +468,21 @@ typedef struct Operand {
 
 static Operand operand_null;
 
-static Operand operand_lvalue(Type type, IROp op) {
-  return (Operand){.type = type, .ir_op = op, .is_lvalue = true};
+static Operand operand_lvalue(Type type, LqRef ref) {
+  return (Operand){.type = type, .lqref = ref, .is_lvalue = true};
 }
 
-static Operand operand_lvalue_func(Type type, IRFunc func) {
+static Operand operand_lvalue_sym(Type type, LqSymbol lqsym) {
   ASSERT(type_kind(type) == TYPE_FUNC);
-  return (Operand){.type = type, .ir_func = func, .is_lvalue = true};
+  return (Operand){.type = type, .lqsym = lqsym, .is_lvalue = true};
 }
 
-static Operand operand_rvalue(Type type, IROp op) {
-  return (Operand){.type = type, .ir_op = op};
+static Operand operand_rvalue(Type type, LqRef ref) {
+  return (Operand){.type = type, .lqref = ref};
 }
 
-static Operand operand_const(Type type, IROp op) {
-  return (Operand){.type = type, .ir_op = op, .is_const = true};
+static Operand operand_const(Type type, LqRef ref) {
+  return (Operand){.type = type, .lqref = ref, .is_const = true};
 }
 
 static bool is_arithmetic_type(Type type) {
@@ -731,13 +760,16 @@ static Operand parse_binary(Operand left, bool can_assign) {
     return operand_null;
   }
 #endif
-  abort();
+  ASSERT(false); abort();
 }
 
 static Operand parse_bool_literal(bool can_assign) {
   ASSERT(parser.prev_kind == TOK_FALSE || parser.prev_kind == TOK_TRUE);
+#if 0
   return operand_const(type_bool,
                        gen_mir_op_const(parser.prev_kind == TOK_FALSE ? 0 : 1, type_bool));
+#endif
+  ASSERT(false); abort();
 }
 
 static Operand parse_call(Operand left, bool can_assign) {
@@ -747,7 +779,7 @@ static Operand parse_call(Operand left, bool can_assign) {
   if (type_kind(left.type) != TYPE_FUNC) {
     errorf("Expected function type, but type is %s.", type_as_str(left.type));
   }
-  IROp arg_values[MAX_FUNC_PARAMS];
+  LqRef arg_values[MAX_FUNC_PARAMS];
   uint32_t num_args = 0;
   if (!check(TOK_RPAREN)) {
     for (;;) {
@@ -762,7 +794,7 @@ static Operand parse_call(Operand left, bool can_assign) {
         errorf_offset(arg_offset, "Call argument %d is type %s, but function expects type %s.",
                       num_args + 1, type_as_str(arg.type), type_as_str(param_type));
       }
-      arg_values[num_args] = arg.ir_op;
+      arg_values[num_args] = arg.lqref;
       ++num_args;
       if (!match(TOK_COMMA)) {
         break;
@@ -770,10 +802,13 @@ static Operand parse_call(Operand left, bool can_assign) {
     }
   }
   consume(TOK_RPAREN, "Expect ')' after arguments.");
+  ASSERT(false); abort();
+#if 0
   IRReg result = gen_mir_make_temp(str_intern("$ret"), type_func_return_type(left.type));
   ASSERT(type_kind(left.type) == TYPE_FUNC);
   gen_mir_instr_call(left.ir_func, type_func_return_type(left.type), result, num_args, arg_values);
   return operand_rvalue(type_func_return_type(left.type), gen_mir_op_reg(result));
+#endif
 }
 
 static Operand parse_compound_literal(bool can_assign) {
@@ -813,7 +848,7 @@ static Operand parse_number(bool can_assign) {
   Type suffix = {0};
   uint64_t val = scan_int(get_strview_for_offsets(prev_offset(), cur_offset()), &suffix);
   Type type = type_is_none(suffix) ? type_u64 : suffix;
-  return operand_const(type, gen_mir_op_const(val, type));
+  return operand_const(type, lq_const_int(val));
 }
 
 static Operand parse_offsetof(bool can_assign) {
@@ -867,7 +902,7 @@ static Operand parse_range(bool can_assign) {
   }
   return operand_rvalue(type_range, range);
 #endif
-  abort();
+  ASSERT(false);
 }
 
 static Operand parse_sizeof(bool can_assign) {
@@ -882,10 +917,16 @@ static Operand parse_string(bool can_assign) {
     if (str.i == 0) {
       error("Invalid string escape.");
     }
+    ASSERT(false); abort();
+#if 0
     return operand_const(type_str, gen_mir_op_str_const(str));
+#endif
   } else {
+    ASSERT(false); abort();
+#if 0
     return operand_const(type_str,
                          gen_mir_op_str_const(str_intern_len(strview.data + 1, strview.size - 2)));
+#endif
   }
 }
 
@@ -912,7 +953,7 @@ static Operand parse_unary(bool can_assign) {
     error("unary operator not implemented");
   }
 #endif
-  abort();
+  ASSERT(false);
 }
 
 typedef enum ScopeResult {
@@ -949,7 +990,7 @@ static ScopeResult scope_lookup(Str name, Sym** sym, SymScopeDecl* scope_decl) {
         return SCOPE_RESULT_UNDEFINED;
       } else if (sd == SSD_DECLARED_NONLOCAL) {
         *scope_decl = sd;
-        abort();
+        ASSERT(false); abort();
         return SCOPE_RESULT_UPVALUE;
       } else if (sd == SSD_DECLARED_GLOBAL) {
         *scope_decl = sd;
@@ -1007,7 +1048,7 @@ static Operand parse_variable(bool can_assign) {
       if (!convert_operand(&op, sym->type)) {
         errorf("Cannot assign type %s to type %s.", type_as_str(op.type), type_as_str(sym->type));
       }
-      abort();
+      ASSERT(false); abort();
 #if 0
       if (eq_kind == TOK_EQ) {
         ///| store sym->irref, i64, op.irref
@@ -1023,7 +1064,7 @@ static Operand parse_variable(bool can_assign) {
 #endif
       return operand_null;
     } else if (scope_result != SCOPE_RESULT_LOCAL && scope_decl == SSD_NONE) {
-      abort();
+      ASSERT(false); abort();
 #if 0
       if (eq_kind == TOK_EQ) {
         // Variable declaration without a type.
@@ -1039,16 +1080,25 @@ static Operand parse_variable(bool can_assign) {
     }
   } else {
     if (scope_result == SCOPE_RESULT_LOCAL) {
+      ASSERT(false); abort();
+#if 0
       return operand_lvalue(sym->type, gen_mir_op_reg(sym->ir_reg));
+#endif
     } else if (scope_result == SCOPE_RESULT_PARAMETER) {
+      ASSERT(false); abort();
+#if 0
       return operand_rvalue(sym->type, gen_mir_op_reg(sym->ir_reg));
+#endif
     } else if (scope_result == SCOPE_RESULT_GLOBAL) {
+      ASSERT(false); abort();
+#if 0
       // TODO: This can't be right
       if (type_kind(sym->type) == TYPE_FUNC) {
-        return operand_lvalue_func(sym->type, sym->ir_func);
+        return operand_lvalue_sym(sym->type, sym->ir_func);
       } else {
         return operand_lvalue(sym->type, gen_mir_op_reg(sym->ir_reg));
       }
+#endif
     } else if (scope_result == SCOPE_RESULT_UPVALUE) {
       // identify upvals
       // figure out how many up into parents
@@ -1237,7 +1287,7 @@ static Operand if_statement_cond_helper(void) {
 
 static void if_statement(void) {
   (void)if_statement_cond_helper;
-  abort();
+  ASSERT(false); abort();
 #if 0
   IRBlock after = gen_ssa_make_block_name();
 
@@ -1276,7 +1326,7 @@ static void for_statement(void) {
   // 5. index, iter enumerate expr
   // 6. index, *ptr enumerate expr
 
-  abort();
+  ASSERT(false); abort();
 #if 0
   IRBlock after = gen_ssa_make_block_name();
   IRBlock top = gen_ssa_make_block_name();
@@ -1343,7 +1393,7 @@ static void for_statement(void) {
 static void print_statement(void) {
   Operand val = parse_expression();
   (void)val;
-  abort();
+  ASSERT(false); abort();
 #if 0
   if (type_eq(val.type, type_str)) {
     gen_ssa_print_str(val.irref);
@@ -1379,11 +1429,11 @@ static bool parse_func_body_only_statement(LastStatementType* lst) {
     if (!type_eq(func_ret, type_void)) {
       op = parse_expression();
       *lst = LST_RETURN_VALUE;
+      lq_i_ret(op.lqref);
     } else {
       *lst = LST_RETURN_VOID;
+      lq_i_ret_void();
     }
-
-    gen_mir_instr_return(op.ir_op, func_ret);
     return true;
   }
 
@@ -1446,7 +1496,11 @@ static void parse_variable_statement(Type type) {
              type_as_str(op.type), type_as_str(type));
     }
     Sym* new = make_local_and_alloc(SYM_VAR, name, op.type);
+    ASSERT(false); abort();
+    (void)new;
+#if 0
     gen_mir_instr_store(new->ir_reg, op.type, op.ir_op);
+#endif
   }
 
   expect_end_of_statement("variable declaration");
@@ -1509,4 +1563,9 @@ void parse(const char* filename, ReadFileResult file) {
   while (parser.cur_kind != TOK_EOF) {
     parse_statement(/*toplevel=*/true);
   }
+
+  (void)operand_lvalue;
+  (void)operand_lvalue_sym;
+  (void)operand_rvalue;
+  (void)operand_const;
 }

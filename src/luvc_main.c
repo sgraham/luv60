@@ -1,12 +1,12 @@
 #include "luv60.h"
 
 static void usage(void) {
-  base_writef_stderr("usage: luvc [-v] file.luv\n");
+  base_writef_stderr("usage: luvc [-v] file.luv file.s\n");
   base_exit(1);
 }
 
 int main(int argc, char** argv) {
-  if (argc < 2) {
+  if (argc < 3) {
     usage();
   }
 
@@ -21,13 +21,16 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  gen_mir_init(verbose);
+  const char* output_name = argv[verbose ? 3 : 2];
+  FILE* into = fopen(output_name, "wb");
+  if (!into) {
+    base_writef_stderr("Couldn't open '%s'\n", output_name);
+    return 1;
+  }
+  lq_init(LQ_TARGET_AMD64_SYSV, into, "");
 
   parse(filename, file);
 
-  int rc = gen_mir_finish();
-  if (verbose) {
-    printf("main() returned %d\n", rc);
-  }
-  return rc;
+  lq_shutdown();
+  return 0;
 }

@@ -9,12 +9,9 @@ ROOT_DIR = os.path.normpath(
 )
 
 COMMON_FILELIST = [
-    "../third_party/mir/mir-gen.c",
-    "../third_party/mir/mir.c",
+    "../third_party/libqbe/libqbe.c",
     "base_mac.c",
     "base_win.c",
-    "gen_mir.c",
-    "gen_ssa.c",
     "lex.c",
     "parse.c",
     "str.c",
