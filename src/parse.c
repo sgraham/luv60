@@ -39,10 +39,7 @@ typedef struct Sym {
   Type type;
   union {
     LqSymbol lqsym;
-    struct {
-      LqRef lqref;
-      bool in_mem;
-    };
+    LqRef lqref;
   };
   SymScopeDecl scope_decl;
 } Sym;
@@ -88,22 +85,47 @@ typedef struct Parser {
 
   LqSymbol lqsym_fmt_print_i32;
   LqSymbol lqsym_fmt_print_str;
+  int string_gensym_counter;
 } Parser;
 
 static Parser parser;
 
+typedef enum OperandKind {
+  OpKindSymbol,
+  OpKindLocal,
+  OpKindValue,
+} OperandKind;
+
 typedef struct Operand {
   Type type;
+  OperandKind opkind;
   union {
     LqSymbol lqsym;
     LqRef lqref;
   };
   bool is_lvalue;
   bool is_const;
-  bool in_mem;
 } Operand;
 
 static Operand operand_null;
+
+static Operand operand_lvalue(Type type, OperandKind opkind, LqRef ref) {
+  return (Operand){
+      .type = type, .opkind = opkind, .lqref = ref, .is_lvalue = true, .is_const = false};
+}
+
+static Operand operand_rvalue(Type type, OperandKind opkind, LqRef ref) {
+  return (Operand){
+      .type = type, .opkind = opkind, .lqref = ref, .is_lvalue = false, .is_const = false};
+}
+
+static Operand operand_const(Type type, OperandKind opkind, LqRef ref) {
+  return (Operand){.type = type, .opkind = opkind, .lqref = ref, .is_const = true};
+}
+
+static Operand operand_sym(Type type, LqSymbol lqsym) {
+  return (Operand){.type = type, .opkind = OpKindSymbol, .lqsym = lqsym};
+}
 
 static inline uint32_t cur_offset(void) {
   return parser.token_offsets[parser.cur_token_index];
@@ -313,10 +335,16 @@ static LqRef load_for_type(Type type, LqRef val) {
 }
 
 static LqRef value_of(Operand* op) {
-  if (op->in_mem) {
-    return load_for_type(op->type, op->lqref);
-  } else {
-    return op->lqref;
+  switch (op->opkind) {
+    case OpKindSymbol:
+      return lq_ref_for_symbol(op->lqsym);
+    case OpKindLocal:
+      return load_for_type(op->type, op->lqref);
+    case OpKindValue:
+      return op->lqref;
+    default:
+      ASSERT(false && "unhandled");
+      TRAP();
   }
 }
 
@@ -341,10 +369,23 @@ static void print_i32(Operand* op) {
   );
 }
 
+static void print_str(Operand* op) {
+  LqRef printf_func = lq_extern("printf");
+  ASSERT(op->opkind == OpKindSymbol);
+  LqRef data = lq_i_load(lq_type_long, lq_ref_for_symbol(op->lqsym));
+  LqRef sizeptr = lq_i_add(lq_type_long, data, lq_const_int(8));
+  LqRef size = lq_i_load(lq_type_long, sizeptr);
+  lq_i_call4(lq_type_word, printf_func,
+             (LqCallArg){lq_type_long, lq_ref_for_symbol(parser.lqsym_fmt_print_str)},  //
+             lq_varargs_begin,                                                          //
+             (LqCallArg){lq_type_long, size},
+             (LqCallArg){lq_type_word, data}
+  );
+}
+
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
   Sym* new = sym_new(kind, name, type);
   new->lqref = alloc_for_type(type);
-  new->in_mem = true;
   new->scope_decl = SSD_DECLARED_LOCAL;
   return new;
 }
@@ -352,7 +393,6 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
 static Sym* make_param(Str name, Type type) {
   Sym* new = sym_new(SYM_VAR, name, type);
   new->lqref = lq_func_param_named(type_to_lq_type(type), cstr(name));
-  new->in_mem = false;
   new->scope_decl = SSD_DECLARED_PARAMETER;
   return new;
 }
@@ -573,23 +613,6 @@ static void skip_newlines(void) {
   }
 }
 
-static Operand operand_lvalue(Type type, LqRef ref, bool in_mem) {
-  return (Operand){.type = type, .lqref = ref, .in_mem = in_mem, .is_lvalue = true};
-}
-
-static Operand operand_lvalue_sym(Type type, LqSymbol lqsym) {
-  ASSERT(type_kind(type) == TYPE_FUNC);
-  return (Operand){.type = type, .lqsym = lqsym, .is_lvalue = true};
-}
-
-static Operand operand_rvalue(Type type, LqRef ref, bool in_mem) {
-  return (Operand){.type = type, .lqref = ref, .in_mem = in_mem};
-}
-
-static Operand operand_const(Type type, LqRef ref) {
-  return (Operand){.type = type, .lqref = ref, .is_const = true};
-}
-
 static bool is_arithmetic_type(Type type) {
   return type_kind(type) >= TYPE_U8 && type_kind(type) <= TYPE_DOUBLE;
 }
@@ -662,7 +685,9 @@ static bool cast_operand(Operand* operand, Type type) {
       // TODO: save val into op and convert here
     }
 
-    if (operand->in_mem) {
+    // Not sure about this, need to handle i16 being stored and then cast to
+    // i32, so there's a full proper i32 to load.
+    if (operand->opkind == OpKindLocal) {
       LqRef copy = alloc_for_type(type);
       store_for_type(copy, type, value_of(operand));
       operand->lqref = copy;
@@ -959,7 +984,7 @@ static Operand parse_number(bool can_assign, Type* expected) {
   Type suffix = {0};
   uint64_t val = scan_int(get_strview_for_offsets(prev_offset(), cur_offset()), &suffix);
   Type type = type_is_none(suffix) ? type_u64 : suffix;
-  return operand_const(type, lq_const_int(val));
+  return operand_const(type, OpKindValue, lq_const_int(val));
 }
 
 static Operand parse_offsetof(bool can_assign, Type* expected) {
@@ -1021,6 +1046,23 @@ static Operand parse_sizeof(bool can_assign, Type* expected) {
   return operand_null;
 }
 
+static LqSymbol emit_string_obj(const char* ptr, size_t size) {
+  lq_data_start(lq_linkage_default,
+                cstr(str_internf("str_bytes_%d", parser.string_gensym_counter++)));
+  // lq_data_string doesn't work because it assume nul-terminated.
+  for (size_t i = 0; i < size; ++i) {
+    lq_data_byte(ptr[i]);
+  }
+  lq_data_byte(0);
+  LqSymbol str_bytes = lq_data_end();
+
+  lq_data_start(lq_linkage_default,
+                cstr(str_internf("str_%d", parser.string_gensym_counter++)));
+  lq_data_ref(str_bytes, 0);
+  lq_data_long(size);
+  return lq_data_end();
+}
+
 static Operand parse_string(bool can_assign, Type* expected) {
   StrView strview = get_strview_for_offsets(prev_offset(), cur_offset());
   if (memchr(strview.data, '\\', strview.size) != NULL) {
@@ -1033,11 +1075,8 @@ static Operand parse_string(bool can_assign, Type* expected) {
     return operand_const(type_str, gen_mir_op_str_const(str));
 #endif
   } else {
-    ASSERT(false); abort();
-#if 0
-    return operand_const(type_str,
-                         gen_mir_op_str_const(str_intern_len(strview.data + 1, strview.size - 2)));
-#endif
+    LqSymbol str = emit_string_obj(strview.data + 1, strview.size - 2);
+    return operand_sym(type_str, str);
   }
 }
 
@@ -1182,11 +1221,9 @@ static Operand parse_variable(bool can_assign, Type* expected) {
     }
   } else {
     if (scope_result == SCOPE_RESULT_LOCAL) {
-      ASSERT(sym->in_mem);
-      return operand_lvalue(sym->type, sym->lqref, /*in_mem=*/true);
+      return operand_lvalue(sym->type, OpKindLocal, sym->lqref);
     } else if (scope_result == SCOPE_RESULT_PARAMETER) {
-      ASSERT(!sym->in_mem);
-      return operand_rvalue(sym->type, sym->lqref, /*in_mem=*/false);
+      return operand_rvalue(sym->type, OpKindValue, sym->lqref);
     } else if (scope_result == SCOPE_RESULT_GLOBAL) {
       ASSERT(false); abort();
 #if 0
@@ -1492,8 +1529,7 @@ static void print_statement(void) {
   Operand val = parse_expression(NULL);
   (void)val;
   if (type_eq(val.type, type_str)) {
-    //print_str(val.lqref);
-    ASSERT(false && "todo");
+    print_str(&val);
   } else if (type_eq(val.type, type_range)) {
     //print_range(val.lqref);
     ASSERT(false && "todo");
@@ -1661,9 +1697,4 @@ void parse(const char* filename, ReadFileResult file) {
   while (parser.cur_kind != TOK_EOF) {
     parse_statement(/*toplevel=*/true);
   }
-
-  (void)operand_lvalue;
-  (void)operand_lvalue_sym;
-  (void)operand_rvalue;
-  (void)operand_const;
 }
