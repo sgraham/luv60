@@ -39,7 +39,10 @@ typedef struct Sym {
   Type type;
   union {
     LqSymbol lqsym;
-    LqRef lqref;
+    struct {
+      LqRef lqref;
+      bool in_mem;
+    };
   };
   SymScopeDecl scope_decl;
 } Sym;
@@ -97,6 +100,7 @@ typedef struct Operand {
   };
   bool is_lvalue;
   bool is_const;
+  bool in_mem;
 } Operand;
 
 static Operand operand_null;
@@ -309,10 +313,10 @@ static LqRef load_for_type(Type type, LqRef val) {
 }
 
 static LqRef value_of(Operand* op) {
-  if (op->is_const) {
-    return op->lqref;
-  } else {
+  if (op->in_mem) {
     return load_for_type(op->type, op->lqref);
+  } else {
+    return op->lqref;
   }
 }
 
@@ -337,6 +341,7 @@ static void print_i32(Operand* op) {
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
   Sym* new = sym_new(kind, name, type);
   new->lqref = alloc_for_type(type);
+  new->in_mem = true;
   new->scope_decl = SSD_DECLARED_LOCAL;
   return new;
 }
@@ -344,6 +349,7 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
 static Sym* make_param(Str name, Type type) {
   Sym* new = sym_new(SYM_VAR, name, type);
   new->lqref = lq_func_param_named(type_to_lq_type(type), cstr(name));
+  new->in_mem = false;
   new->scope_decl = SSD_DECLARED_PARAMETER;
   return new;
 }
@@ -564,8 +570,8 @@ static void skip_newlines(void) {
   }
 }
 
-static Operand operand_lvalue(Type type, LqRef ref) {
-  return (Operand){.type = type, .lqref = ref, .is_lvalue = true};
+static Operand operand_lvalue(Type type, LqRef ref, bool in_mem) {
+  return (Operand){.type = type, .lqref = ref, .in_mem = in_mem, .is_lvalue = true};
 }
 
 static Operand operand_lvalue_sym(Type type, LqSymbol lqsym) {
@@ -573,8 +579,8 @@ static Operand operand_lvalue_sym(Type type, LqSymbol lqsym) {
   return (Operand){.type = type, .lqsym = lqsym, .is_lvalue = true};
 }
 
-static Operand operand_rvalue(Type type, LqRef ref) {
-  return (Operand){.type = type, .lqref = ref};
+static Operand operand_rvalue(Type type, LqRef ref, bool in_mem) {
+  return (Operand){.type = type, .lqref = ref, .in_mem = in_mem};
 }
 
 static Operand operand_const(Type type, LqRef ref) {
@@ -653,10 +659,11 @@ static bool cast_operand(Operand* operand, Type type) {
       // TODO: save val into op and convert here
     }
 
-    LqRef copy = alloc_for_type(type);
-    store_for_type(copy, type, value_of(operand));
-    operand->lqref = copy;
-    operand->is_lvalue = false;
+    if (operand->in_mem) {
+      LqRef copy = alloc_for_type(type);
+      store_for_type(copy, type, value_of(operand));
+      operand->lqref = copy;
+    }
   }
 
   operand->type = type;
@@ -666,6 +673,7 @@ static bool cast_operand(Operand* operand, Type type) {
 static bool convert_operand(Operand* operand, Type type) {
   if (is_convertible(operand, type)) {
     cast_operand(operand, type);
+    operand->is_lvalue = false;
     return true;
   }
   return false;
@@ -1171,12 +1179,11 @@ static Operand parse_variable(bool can_assign, Type* expected) {
     }
   } else {
     if (scope_result == SCOPE_RESULT_LOCAL) {
-      return operand_lvalue(sym->type, sym->lqref);
+      ASSERT(sym->in_mem);
+      return operand_lvalue(sym->type, sym->lqref, /*in_mem=*/true);
     } else if (scope_result == SCOPE_RESULT_PARAMETER) {
-      ASSERT(false); abort();
-#if 0
-      return operand_rvalue(sym->type, gen_mir_op_reg(sym->ir_reg));
-#endif
+      ASSERT(!sym->in_mem);
+      return operand_rvalue(sym->type, sym->lqref, /*in_mem=*/false);
     } else if (scope_result == SCOPE_RESULT_GLOBAL) {
       ASSERT(false); abort();
 #if 0

@@ -60,6 +60,10 @@ static inline FORCE_INLINE bool str_eq(Str a, Str b) {
   return a.i == b.i;
 }
 
+static inline FORCE_INLINE bool str_is_none(Str s) {
+  return s.i == 0;
+}
+
 // lex.c
 
 typedef enum TokenKind {

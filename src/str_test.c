@@ -1,6 +1,19 @@
 #include "luv60.h"
 #include "test.h"
 
+TEST(Str, NoneAndEmpty) {
+  str_intern_pool_init();
+
+  Str x = {0};
+  EXPECT_TRUE(str_is_none(x));
+
+  Str y = str_intern("");
+  EXPECT_TRUE(!str_is_none(y));
+  EXPECT_TRUE(!str_eq(x, y));
+
+  str_intern_pool_destroy_for_tests();
+}
+
 TEST(Str, Intern) {
   str_intern_pool_init();
 
