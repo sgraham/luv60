@@ -27,7 +27,7 @@ int main(int argc, char** argv) {
     base_writef_stderr("Couldn't open '%s'\n", output_name);
     return 1;
   }
-  lq_init(LQ_TARGET_DEFAULT, into, "");
+  lq_init(LQ_TARGET_DEFAULT, into, verbose ? "PMNCFAILSRT" : "");
 
   parse(filename, file);
 

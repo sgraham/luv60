@@ -89,6 +89,18 @@ typedef struct Parser {
 
 static Parser parser;
 
+typedef struct Operand {
+  Type type;
+  union {
+    LqSymbol lqsym;
+    LqRef lqref;
+  };
+  bool is_lvalue;
+  bool is_const;
+} Operand;
+
+static Operand operand_null;
+
 static inline uint32_t cur_offset(void) {
   return parser.token_offsets[parser.cur_token_index];
 }
@@ -296,6 +308,14 @@ static LqRef load_for_type(Type type, LqRef val) {
   }
 }
 
+static LqRef value_of(Operand* op) {
+  if (op->is_const) {
+    return op->lqref;
+  } else {
+    return load_for_type(op->type, op->lqref);
+  }
+}
+
 static void init_module_globals(void) {
   lq_data_start(lq_linkage_default, "fmt$print_i32");
   lq_data_string("%d\n");
@@ -308,10 +328,10 @@ static void init_module_globals(void) {
   parser.lqsym_fmt_print_str = lq_data_end();
 }
 
-static void print_i32(LqRef val) {
+static void print_i32(Operand* op) {
   LqRef printf_func = lq_extern("printf");
   lq_i_call_varargs(lq_type_word, printf_func, lq_type_long,
-                    lq_ref_for_symbol(parser.lqsym_fmt_print_i32), lq_type_word, val);
+                    lq_ref_for_symbol(parser.lqsym_fmt_print_i32), lq_type_word, value_of(op));
 }
 
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
@@ -544,18 +564,6 @@ static void skip_newlines(void) {
   }
 }
 
-typedef struct Operand {
-  Type type;
-  union {
-    LqSymbol lqsym;
-    LqRef lqref;
-  };
-  bool is_lvalue;
-  bool is_const;
-} Operand;
-
-static Operand operand_null;
-
 static Operand operand_lvalue(Type type, LqRef ref) {
   return (Operand){.type = type, .lqref = ref, .is_lvalue = true};
 }
@@ -644,6 +652,11 @@ static bool cast_operand(Operand* operand, Type type) {
     if (operand->is_const) {
       // TODO: save val into op and convert here
     }
+
+    LqRef copy = alloc_for_type(type);
+    store_for_type(copy, type, value_of(operand));
+    operand->lqref = copy;
+    operand->is_lvalue = false;
   }
 
   operand->type = type;
@@ -653,18 +666,9 @@ static bool cast_operand(Operand* operand, Type type) {
 static bool convert_operand(Operand* operand, Type type) {
   if (is_convertible(operand, type)) {
     cast_operand(operand, type);
-    operand->is_lvalue = false;
     return true;
   }
   return false;
-}
-
-static LqRef get_val(Operand op) {
-  if (op.is_lvalue) {
-    return load_for_type(op.type, op.lqref);
-  } else {
-    return op.lqref;
-  }
 }
 
 typedef enum LastStatementType {
@@ -674,7 +678,7 @@ typedef enum LastStatementType {
 } LastStatementType;
 
 static LastStatementType parse_statement(bool toplevel);
-static Operand parse_expression(void);
+static Operand parse_expression(Type* expected);
 static LastStatementType parse_block(void);
 
 // ~strtoull with slight differences:
@@ -804,8 +808,8 @@ static bool match_assignment(void) {
   return true;
 }
 
-typedef Operand (*PrefixFn)(bool can_assign);
-typedef Operand (*InfixFn)(Operand left, bool can_assign);
+typedef Operand (*PrefixFn)(bool can_assign, Type* expected);
+typedef Operand (*InfixFn)(Operand left, bool can_assign, Type* expected);
 
 typedef struct Rule {
   PrefixFn prefix;
@@ -814,18 +818,18 @@ typedef struct Rule {
 } Rule;
 
 static Rule* get_rule(TokenKind tok_kind);
-static Operand parse_precedence(Precedence precedence);
+static Operand parse_precedence(Precedence precedence, Type* expected);
 
-static Operand parse_alignof(bool can_assign) {
+static Operand parse_alignof(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
-static Operand parse_and(Operand left, bool can_assign) {
+static Operand parse_and(Operand left, bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
 
-static Operand parse_binary(Operand left, bool can_assign) {
+static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
 #if 0
   // Remember the operator.
   TokenKind op = parser.prev_kind;
@@ -859,7 +863,7 @@ static Operand parse_binary(Operand left, bool can_assign) {
   ASSERT(false); abort();
 }
 
-static Operand parse_bool_literal(bool can_assign) {
+static Operand parse_bool_literal(bool can_assign, Type* expected) {
   ASSERT(parser.prev_kind == TOK_FALSE || parser.prev_kind == TOK_TRUE);
 #if 0
   return operand_const(type_bool,
@@ -868,7 +872,7 @@ static Operand parse_bool_literal(bool can_assign) {
   ASSERT(false); abort();
 }
 
-static Operand parse_call(Operand left, bool can_assign) {
+static Operand parse_call(Operand left, bool can_assign, Type* expected) {
   if (can_assign && match_assignment()) {
     CHECK(false && "todo; returning address i think");
   }
@@ -885,7 +889,7 @@ static Operand parse_call(Operand left, bool can_assign) {
       }
       uint32_t arg_offset = cur_offset();
       Type param_type = type_func_param(left.type, num_args);
-      Operand arg = parse_precedence(PREC_OR);
+      Operand arg = parse_precedence(PREC_OR, &param_type);
       if (!convert_operand(&arg, param_type)) {
         errorf_offset(arg_offset, "Call argument %d is type %s, but function expects type %s.",
                       num_args + 1, type_as_str(arg.type), type_as_str(param_type));
@@ -907,56 +911,56 @@ static Operand parse_call(Operand left, bool can_assign) {
 #endif
 }
 
-static Operand parse_compound_literal(bool can_assign) {
+static Operand parse_compound_literal(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
-static Operand parse_dict_literal(bool can_assign) {
+static Operand parse_dict_literal(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
-static Operand parse_dot(Operand left, bool can_assign) {
+static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
-static Operand parse_grouping(bool can_assign) {
+static Operand parse_grouping(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
-static Operand parse_in_or_not_in(Operand left, bool can_assign) {
+static Operand parse_in_or_not_in(Operand left, bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
-static Operand parse_len(bool can_assign) {
+static Operand parse_len(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
-static Operand parse_list_literal_or_compr(bool can_assign) {
+static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
-static Operand parse_null_literal(bool can_assign) {
+static Operand parse_null_literal(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
 
-static Operand parse_number(bool can_assign) {
+static Operand parse_number(bool can_assign, Type* expected) {
   Type suffix = {0};
   uint64_t val = scan_int(get_strview_for_offsets(prev_offset(), cur_offset()), &suffix);
   Type type = type_is_none(suffix) ? type_u64 : suffix;
   return operand_const(type, lq_const_int(val));
 }
 
-static Operand parse_offsetof(bool can_assign) {
+static Operand parse_offsetof(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
-static Operand parse_or(Operand left, bool can_assign) {
+static Operand parse_or(Operand left, bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
 
-static Operand parse_range(bool can_assign) {
+static Operand parse_range(bool can_assign, Type* expected) {
 #if 0
   consume(TOK_LPAREN, "Expect '(' after range.");
   Operand first = parse_precedence(PREC_OR);
@@ -1001,12 +1005,12 @@ static Operand parse_range(bool can_assign) {
   ASSERT(false);
 }
 
-static Operand parse_sizeof(bool can_assign) {
+static Operand parse_sizeof(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
 
-static Operand parse_string(bool can_assign) {
+static Operand parse_string(bool can_assign, Type* expected) {
   StrView strview = get_strview_for_offsets(prev_offset(), cur_offset());
   if (memchr(strview.data, '\\', strview.size) != NULL) {
     Str str = str_process_escapes(strview.data + 1, strview.size - 2);
@@ -1026,20 +1030,20 @@ static Operand parse_string(bool can_assign) {
   }
 }
 
-static Operand parse_string_interpolate(bool can_assign) {
+static Operand parse_string_interpolate(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
-static Operand parse_subscript(Operand left, bool can_assign) {
+static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
-static Operand parse_typeid(bool can_assign) {
+static Operand parse_typeid(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
 
-static Operand parse_unary(bool can_assign) {
+static Operand parse_unary(bool can_assign, Type* expected) {
 #if 0
   TokenKind op_kind = parser.prev_kind;
   Operand expr = parse_precedence(PREC_UNARY);
@@ -1126,7 +1130,7 @@ static ScopeResult scope_lookup(Str name, Sym** sym, SymScopeDecl* scope_decl) {
   return SCOPE_RESULT_UNDEFINED;
 }
 
-static Operand parse_variable(bool can_assign) {
+static Operand parse_variable(bool can_assign, Type* expected) {
   Str target = str_from_previous();
   SymScopeDecl scope_decl = SSD_NONE;
   Sym* sym = NULL;
@@ -1140,7 +1144,7 @@ static Operand parse_variable(bool can_assign) {
       errorf("Local variable '%s' referenced before assignment.", cstr(target));
     } else if (scope_result == SCOPE_RESULT_LOCAL) {
       ASSERT(sym);
-      Operand op = parse_expression();
+      Operand op = parse_expression(NULL);
       if (!convert_operand(&op, sym->type)) {
         errorf("Cannot assign type %s to type %s.", type_as_str(op.type), type_as_str(sym->type));
       }
@@ -1155,7 +1159,7 @@ static Operand parse_variable(bool can_assign) {
 #if 0
       if (eq_kind == TOK_EQ) {
         // Variable declaration without a type.
-        Operand op = parse_expression();
+        Operand op = parse_expression(NULL);
         Sym* new = make_local_and_alloc(SYM_VAR, target, op.type);
         gen_ssa_store(new->irref, op.type, op.irref);
         return operand_null;
@@ -1325,7 +1329,7 @@ static Rule* get_rule(TokenKind tok_kind) {
   return &rules[tok_kind];
 }
 
-static Operand parse_precedence(Precedence precedence) {
+static Operand parse_precedence(Precedence precedence, Type* expected) {
   advance();
   PrefixFn prefix_rule = get_rule(parser.prev_kind)->prefix;
   if (!prefix_rule) {
@@ -1333,12 +1337,12 @@ static Operand parse_precedence(Precedence precedence) {
   }
 
   bool can_assign = precedence <= PREC_ASSIGNMENT;
-  Operand left = prefix_rule(can_assign);
+  Operand left = prefix_rule(can_assign, expected);
 
   while (precedence <= get_rule(parser.cur_kind)->prec_for_infix) {
     advance();
     InfixFn infix_rule = get_rule(parser.prev_kind)->infix;
-    left = infix_rule(left, can_assign);
+    left = infix_rule(left, can_assign, expected);
   }
 
   if (can_assign && match_assignment()) {
@@ -1348,8 +1352,8 @@ static Operand parse_precedence(Precedence precedence) {
   return left;
 }
 
-static Operand parse_expression(void) {
-  return parse_precedence(PREC_LOWEST);
+static Operand parse_expression(Type* expected) {
+  return parse_precedence(PREC_LOWEST, expected);
 }
 
 static void expect_end_of_statement(const char* after_what) {
@@ -1359,7 +1363,7 @@ static void expect_end_of_statement(const char* after_what) {
 }
 
 static Operand if_statement_cond_helper(void) {
-  Operand cond = parse_expression();
+  Operand cond = parse_expression(NULL);
   if (!is_condition_type(cond.type)) {
     errorf("Result of condition expression cannot be type %s.", type_as_str(cond.type));
   }
@@ -1423,7 +1427,7 @@ static void for_statement(void) {
     // Case 3.
     Str it_name = parse_name("Expect iterator name.");
     consume(TOK_IN, "Expect 'in'.");
-    Operand expr = parse_expression();
+    Operand expr = parse_expression(NULL);
     if (type_eq(expr.type, type_range)) {
       IRRef step = gen_ssa_load_field(expr.irref, 16 /*.step*/, type_i64);
       IRRef is_neg = gen_ssa_int_comparison(IIC_SLT, step, gen_ssa_const(0, type_i64));
@@ -1475,7 +1479,7 @@ static void for_statement(void) {
 }
 
 static void print_statement(void) {
-  Operand val = parse_expression();
+  Operand val = parse_expression(NULL);
   (void)val;
   if (type_eq(val.type, type_str)) {
     //print_str(val.lqref);
@@ -1484,7 +1488,7 @@ static void print_statement(void) {
     //print_range(val.lqref);
     ASSERT(false && "todo");
   } else if (convert_operand(&val, type_i32)) {
-    print_i32(val.lqref);
+    print_i32(&val);
   }
   expect_end_of_statement("print");
 }
@@ -1510,9 +1514,13 @@ static bool parse_func_body_only_statement(LastStatementType* lst) {
     ASSERT(!type_is_none(func_ret));
     Operand op = operand_null;
     if (!type_eq(func_ret, type_void)) {
-      op = parse_expression();
+      op = parse_expression(NULL);
       *lst = LST_RETURN_VALUE;
-      lq_i_ret(get_val((op)));
+      if (!convert_operand(&op, func_ret)) {
+        errorf("Cannot convert type %s to expected return type %s.", type_as_str(op.type),
+               type_as_str(func_ret));
+      }
+      lq_i_ret(value_of(&op));
     } else {
       *lst = LST_RETURN_VOID;
       lq_i_ret_void();
@@ -1573,7 +1581,7 @@ static void parse_variable_statement(Type type) {
   ASSERT(!type_is_none(type));
   have_init = match(TOK_EQ);
   if (have_init) {
-    Operand op = parse_expression();
+    Operand op = parse_expression(&type);
     if (!convert_operand(&op, type)) {
       errorf("Initializer cannot be converted from type %s to declared type %s.",
              type_as_str(op.type), type_as_str(type));
@@ -1597,7 +1605,7 @@ static bool parse_anywhere_statement(void) {
     return true;
   }
 
-  parse_expression();
+  parse_expression(NULL);
   expect_end_of_statement("top level");
   return true;
 }
