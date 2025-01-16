@@ -82,6 +82,9 @@ typedef struct Parser {
 
   FuncData* cur_func;
   VarScope* cur_var_scope;
+
+  LqSymbol lqsym_fmt_print_i32;
+  LqSymbol lqsym_fmt_print_str;
 } Parser;
 
 static Parser parser;
@@ -291,6 +294,24 @@ static LqRef load_for_type(Type type, LqRef val) {
     default:
       ASSERT(false && "todo");
   }
+}
+
+static void init_module_globals(void) {
+  lq_data_start(lq_linkage_default, "fmt$print_i32");
+  lq_data_string("%d\n");
+  lq_data_byte(0);
+  parser.lqsym_fmt_print_i32 = lq_data_end();
+
+  lq_data_start(lq_linkage_default, "fmt$print_str");
+  lq_data_string("%.*s\n");
+  lq_data_byte(0);
+  parser.lqsym_fmt_print_str = lq_data_end();
+}
+
+static void print_i32(LqRef val) {
+  LqRef printf_func = lq_extern("printf");
+  lq_i_call_varargs(lq_type_word, printf_func, lq_type_long,
+                    lq_ref_for_symbol(parser.lqsym_fmt_print_i32), lq_type_word, val);
 }
 
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
@@ -1123,20 +1144,11 @@ static Operand parse_variable(bool can_assign) {
       if (!convert_operand(&op, sym->type)) {
         errorf("Cannot assign type %s to type %s.", type_as_str(op.type), type_as_str(sym->type));
       }
-      ASSERT(false); abort();
-#if 0
       if (eq_kind == TOK_EQ) {
-        ///| store sym->irref, i64, op.irref
-        gen_ssa_store(sym->irref, op.type, op.irref);
-#if 0
-      } else if (eq_kind == TOK_PLUSEQ) {
-        gen_ssa_store(sym->irref, op.type,
-                      gen_ssa_add(gen_ssa_load(sym->irref, op.type), op.irref));
-#endif
+        store_for_type(sym->lqref, op.type, op.lqref);
       } else {
         error_offset(eq_offset, "Unhandled assignment type.");
       }
-#endif
       return operand_null;
     } else if (scope_result != SCOPE_RESULT_LOCAL && scope_decl == SSD_NONE) {
       ASSERT(false); abort();
@@ -1465,16 +1477,15 @@ static void for_statement(void) {
 static void print_statement(void) {
   Operand val = parse_expression();
   (void)val;
-  ASSERT(false); abort();
-#if 0
   if (type_eq(val.type, type_str)) {
-    gen_ssa_print_str(val.irref);
+    //print_str(val.lqref);
+    ASSERT(false && "todo");
   } else if (type_eq(val.type, type_range)) {
-    gen_ssa_print_range(val.irref);
+    //print_range(val.lqref);
+    ASSERT(false && "todo");
   } else if (convert_operand(&val, type_i32)) {
-    gen_ssa_print_i32(val.irref);
+    print_i32(val.lqref);
   }
-#endif
   expect_end_of_statement("print");
 }
 
@@ -1622,6 +1633,7 @@ void parse(const char* filename, ReadFileResult file) {
   parser.indent_levels[0] = 0;
   parser.num_indents = 1;
   parser.num_buffered_tokens = 0;
+  init_module_globals();
   enter_scope(/*is_module=*/true, /*is_function=*/false);
 
   parser.num_tokens = lex_indexer(file.buffer, file.allocated_size, parser.token_offsets);
