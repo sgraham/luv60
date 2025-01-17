@@ -21,7 +21,6 @@ static void parse_commandline(int argc,
         if (strcmp(argv[i], "amd64_apple") == 0) *target = LQ_TARGET_AMD64_APPLE;
         else if (strcmp(argv[i], "amd64_sysv") == 0) *target = LQ_TARGET_AMD64_SYSV;
         else if (strcmp(argv[i], "amd64_win") == 0) *target = LQ_TARGET_AMD64_WINDOWS;
-        else if (strcmp(argv[i], "amd64_win") == 0) *target = LQ_TARGET_AMD64_WINDOWS;
         else if (strcmp(argv[i], "arm64") == 0) *target = LQ_TARGET_ARM64;
         else if (strcmp(argv[i], "arm64_apple") == 0) *target = LQ_TARGET_ARM64_APPLE;
         else if (strcmp(argv[i], "rv64") == 0) *target = LQ_TARGET_RV64;
@@ -36,7 +35,7 @@ static void parse_commandline(int argc,
       }
     } else if (strcmp(argv[i], "-o") == 0) {
       if (!str_is_none(*output)) {
-        base_writef_stderr("Can only specific a single output file.\n");
+        base_writef_stderr("Can only specify a single output file.\n");
         base_exit(1);
       }
       if (i < argc - 1) {
@@ -48,7 +47,7 @@ static void parse_commandline(int argc,
       }
     } else {
       if (!str_is_none(*input)) {
-        base_writef_stderr("Can only specific a single input file.\n");
+        base_writef_stderr("Can only specify a single input file.\n");
         base_exit(1);
       }
       *input = str_intern(argv[i]);

@@ -372,14 +372,15 @@ static void print_i32(Operand* op) {
 static void print_str(Operand* op) {
   LqRef printf_func = lq_extern("printf");
   ASSERT(op->opkind == OpKindSymbol);
-  LqRef data = lq_i_load(lq_type_long, lq_ref_for_symbol(op->lqsym));
-  LqRef sizeptr = lq_i_add(lq_type_long, data, lq_const_int(8));
+  LqRef obj = lq_ref_for_symbol(op->lqsym);
+  LqRef data = lq_i_load(lq_type_long, obj);
+  LqRef sizeptr = lq_i_add(lq_type_long, obj, lq_const_int(8));
   LqRef size = lq_i_load(lq_type_long, sizeptr);
   lq_i_call4(lq_type_word, printf_func,
              (LqCallArg){lq_type_long, lq_ref_for_symbol(parser.lqsym_fmt_print_str)},  //
              lq_varargs_begin,                                                          //
-             (LqCallArg){lq_type_long, size},
-             (LqCallArg){lq_type_word, data}
+             (LqCallArg){lq_type_word, size},
+             (LqCallArg){lq_type_long, data}
   );
 }
 
@@ -1047,8 +1048,8 @@ static Operand parse_sizeof(bool can_assign, Type* expected) {
 }
 
 static LqSymbol emit_string_obj(const char* ptr, size_t size) {
-  lq_data_start(lq_linkage_default,
-                cstr(str_internf("str_bytes_%d", parser.string_gensym_counter++)));
+  int str_uniq = parser.string_gensym_counter++;
+  lq_data_start(lq_linkage_default, cstr(str_internf("str_bytes_%d", str_uniq)));
   // lq_data_string doesn't work because it assume nul-terminated.
   for (size_t i = 0; i < size; ++i) {
     lq_data_byte(ptr[i]);
@@ -1056,8 +1057,7 @@ static LqSymbol emit_string_obj(const char* ptr, size_t size) {
   lq_data_byte(0);
   LqSymbol str_bytes = lq_data_end();
 
-  lq_data_start(lq_linkage_default,
-                cstr(str_internf("str_%d", parser.string_gensym_counter++)));
+  lq_data_start(lq_linkage_default, cstr(str_internf("str_%d", str_uniq)));
   lq_data_ref(str_bytes, 0);
   lq_data_long(size);
   return lq_data_end();
