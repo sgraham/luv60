@@ -305,7 +305,7 @@ static void print_str(Operand* op) {
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
   Sym* new = sym_new(kind, name, type);
   ASSERT(type_kind(type) == TYPE_I32 && "todo");
-	new->ref = ir_COPY_I32(ir_CONST_I32(0));
+  new->ref = ir_COPY_I32(ir_CONST_I32(0));
   new->scope_decl = SSD_DECLARED_LOCAL;
   return new;
 }
@@ -341,7 +341,8 @@ static void enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS], Type para
   enter_scope(/*is_module=*/false, /*is_function=*/true);
 
   ir_consistency_check();
-  ir_init(&parser.ctx, IR_FUNCTION | IR_OPT_FOLDING, IR_CONSTS_LIMIT_MIN, IR_INSNS_LIMIT_MIN);
+  ir_init(&parser.ctx, IR_FUNCTION | IR_OPT_FOLDING | IR_OPT_MEM2SSA, IR_CONSTS_LIMIT_MIN,
+          IR_INSNS_LIMIT_MIN);
   parser.ctx.ret_type = type_to_ir_type(type_func_return_type(sym->type));
 
   ir_START();

@@ -89,11 +89,13 @@ CONFIGS = {
             "COMPILE": CLANG
             + " -MMD -MF $out.d -std=c11 -O0 -g -D_DEBUG -DBUILD_DEBUG=1 -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
             "LINK": CLANG + " -g $in -o $out",
+            "ML": CLANG + " $in -o $out",
         },
         "r": {
             "COMPILE": CLANG
             + " -MMD -MF $out.d -std:c11 -flto -fuse-ld=lld -O3 -g /DNDEBUG /DBUILD_DEBUG=0 -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
             "LINK": CLANG + " -g $in -o $out",
+            "ML": CLANG + " $in -o $out",
         },
         "__": {
             "exe_ext": "",
@@ -183,12 +185,27 @@ def generate(platform, config, settings, cmdlines, tests):
         )
         f.write("  description = DYNASM $out\n")
         f.write("\n")
+        f.write("rule dynasm\n")
+        f.write(
+            "  command = ./minilua $src/../third_party/ir/dynasm/dynasm.lua -o $out $in\n"
+        )
+        f.write("  description = DYNASM $out\n")
+        f.write("\n")
         f.write("rule ripsnip\n")
         f.write("  command = %s $src/clang_rip.py\n" % sys.executable)
         f.write("  description = SNIPRIP $out\n")
         f.write("\n")
         f.write("rule gen_ir_fold_hash\n")
-        f.write("  command = cmd /c %s < $src/../third_party/ir/ir_fold.h > ir_fold_hash.h\n" % gen_ir_fold_hash_exe)
+        if platform == "w":
+            f.write(
+                "  command = cmd /c %s < $src/../third_party/ir/ir_fold.h > ir_fold_hash.h\n"
+                % gen_ir_fold_hash_exe
+            )
+        else:
+            f.write(
+                "  command = ./%s < $src/../third_party/ir/ir_fold.h > ir_fold_hash.h\n"
+                % gen_ir_fold_hash_exe
+            )
         f.write("  description = GEN_IR_FOLD_HASH\n")
         f.write("\n")
         f.write("rule gendumbbench\n")
@@ -234,14 +251,12 @@ def generate(platform, config, settings, cmdlines, tests):
             extra_deps = " | snippets.c" if src == "gen.c" else extra_deps
             extra_deps = " | categorizer.c" if src == "token.c" else extra_deps
             extra_deps = (
-                " | ir_emit_x86.h"
+                " | ir_emit_x86.h ir_emit_aarch64.h"
                 if src == "../third_party/ir/ir_emit.c"
                 else extra_deps
             )
             extra_deps = (
-                " | ir_fold_hash.h"
-                if src == "../third_party/ir/ir.c"
-                else extra_deps
+                " | ir_fold_hash.h" if src == "../third_party/ir/ir.c" else extra_deps
             )
             f.write("build %s: cc $src/%s%s\n" % (obj, src, extra_deps))
             if "/mir/" in src:
@@ -309,10 +324,12 @@ def generate(platform, config, settings, cmdlines, tests):
             "build ir_emit_x86.h: dynasm_w $src/../third_party/ir/ir_x86.dasc | %s\n"
             % miniluaexe
         )
-
         f.write(
-            "build ir_fold_hash.h: gen_ir_fold_hash | %s\n" % gen_ir_fold_hash_exe
+            "build ir_emit_aarch64.h: dynasm $src/../third_party/ir/ir_aarch64.dasc | %s\n"
+            % miniluaexe
         )
+
+        f.write("build ir_fold_hash.h: gen_ir_fold_hash | %s\n" % gen_ir_fold_hash_exe)
 
         f.write(
             "build %s: link %s\n"
