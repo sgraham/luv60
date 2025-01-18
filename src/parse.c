@@ -358,12 +358,12 @@ static void leave_function(void) {
   size_t size;
   void* entry = ir_jit_compile(&parser.ctx, 2, &size);
   if (entry) {
-    printf("compiled %zu bytes for %s\n", size, cstr(parser.cur_func->sym->name));
+    //printf("compiled %zu bytes for %s\n", size, cstr(parser.cur_func->sym->name));
     if (str_eq(parser.cur_func->sym->name, str_intern("main"))) {
       parser.main_func_entry = entry;
     }
   } else {
-    printf("compilation failed '%s'\n", cstr(parser.cur_func->sym->name));
+    base_writef_stderr("compilation failed '%s'\n", cstr(parser.cur_func->sym->name));
   }
 
   --parser.num_funcdatas;
