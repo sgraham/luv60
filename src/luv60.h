@@ -164,4 +164,4 @@ Type type_func_param(Type type, uint32_t i);
 
 // parse.c
 
-void* parse(const char* filename, ReadFileResult file);
+void* parse(const char* filename, ReadFileResult file, bool verbose);

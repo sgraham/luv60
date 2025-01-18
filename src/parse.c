@@ -88,20 +88,14 @@ typedef struct Parser {
   //int string_gensym_counter;
 
   void* main_func_entry;
+  bool verbose;
   ir_ctx ctx;
 } Parser;
 
 static Parser parser;
 
-typedef enum OperandKind {
-  OpKindSymbol,
-  OpKindLocal,
-  OpKindValue,
-} OperandKind;
-
 typedef struct Operand {
   Type type;
-  OperandKind opkind;
   ir_ref ref;
   bool is_lvalue;
   bool is_const;
@@ -140,11 +134,6 @@ ir_type type_to_ir_type(Type type) {
 }
 
 #if 0
-static Operand operand_lvalue(Type type, OperandKind opkind, LqRef ref) {
-  return (Operand){
-      .type = type, .opkind = opkind, .lqref = ref, .is_lvalue = true, .is_const = false};
-}
-
 static Operand operand_rvalue(Type type, OperandKind opkind, LqRef ref) {
   return (Operand){
       .type = type, .opkind = opkind, .lqref = ref, .is_lvalue = false, .is_const = false};
@@ -155,8 +144,15 @@ static Operand operand_sym(Type type, LqSymbol lqsym) {
 }
 #endif
 
+static Operand operand_lvalue(Type type, ir_ref ref) {
+  return (Operand){.type = type, .ref = ref, .is_lvalue = true, .is_const = false};
+}
+
 static Operand operand_const(Type type, ir_ref ref) {
   return (Operand){.type = type, .ref = ref, .is_const = true};
+}
+
+void store_for_type(ir_ref into, Operand* op) {
 }
 
 static inline uint32_t cur_offset(void) {
@@ -304,8 +300,7 @@ static void print_str(Operand* op) {
 
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
   Sym* new = sym_new(kind, name, type);
-  ASSERT(type_kind(type) == TYPE_I32 && "todo");
-  new->ref = ir_COPY_I32(ir_CONST_I32(0));
+  new->ref = ir_VAR(type_to_ir_type(type), cstr(name));
   new->scope_decl = SSD_DECLARED_LOCAL;
   return new;
 }
@@ -341,7 +336,7 @@ static void enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS], Type para
   enter_scope(/*is_module=*/false, /*is_function=*/true);
 
   ir_consistency_check();
-  ir_init(&parser.ctx, IR_FUNCTION | IR_OPT_FOLDING | IR_OPT_MEM2SSA, IR_CONSTS_LIMIT_MIN,
+  ir_init(&parser.ctx, IR_FUNCTION | IR_OPT_FOLDING, IR_CONSTS_LIMIT_MIN,
           IR_INSNS_LIMIT_MIN);
   parser.ctx.ret_type = type_to_ir_type(type_func_return_type(sym->type));
 
@@ -355,15 +350,21 @@ static void enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS], Type para
 
 static void leave_function(void) {
   size_t size;
+  if (parser.verbose) {
+    ir_dump(&parser.ctx, stderr);
+  }
   void* entry = ir_jit_compile(&parser.ctx, 2, &size);
   if (entry) {
-    //printf("compiled %zu bytes for %s\n", size, cstr(parser.cur_func->sym->name));
+    if (parser.verbose) {
+      fprintf(stderr, "compiled %zu bytes for %s\n", size, cstr(parser.cur_func->sym->name));
+    }
     if (str_eq(parser.cur_func->sym->name, str_intern("main"))) {
       parser.main_func_entry = entry;
     }
   } else {
     base_writef_stderr("compilation failed '%s'\n", cstr(parser.cur_func->sym->name));
   }
+	ir_free(&parser.ctx);
 
   --parser.num_funcdatas;
   ASSERT(parser.num_funcdatas >= 0);
@@ -1236,10 +1237,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
     }
   } else {
     if (scope_result == SCOPE_RESULT_LOCAL) {
-      abort();
-#if 0
-      return operand_lvalue(sym->type, OpKindLocal, sym->lqref);
-#endif
+      return operand_lvalue(sym->type, sym->ref);
     } else if (scope_result == SCOPE_RESULT_PARAMETER) {
       abort();
 #if 0
@@ -1587,7 +1585,8 @@ static bool parse_func_body_only_statement(LastStatementType* lst) {
         errorf("Cannot convert type %s to expected return type %s.", type_as_str(op.type),
                type_as_str(func_ret));
       }
-      ir_RETURN(op.ref);
+      ir_ref ret = ir_VLOAD(type_to_ir_type(func_ret), op.ref);
+      ir_RETURN(ret);
     } else {
       *lst = LST_RETURN_VOID;
       ir_RETURN(IR_UNUSED);
@@ -1654,11 +1653,7 @@ static void parse_variable_statement(Type type) {
              type_as_str(op.type), type_as_str(type));
     }
     Sym* new = make_local_and_alloc(SYM_VAR, name, op.type);
-    (void)new;
-    abort();
-#if 0
-    store_for_type(new->lqref, op.type, op.lqref);
-#endif
+    ir_VSTORE(new->ref, op.ref);
   }
 
   expect_end_of_statement("variable declaration");
@@ -1695,7 +1690,7 @@ static LastStatementType parse_statement(bool toplevel) {
   return LST_NON_RETURN;  // Return isn't possible unless in func.
 }
 
-void* parse(const char* filename, ReadFileResult file) {
+void* parse(const char* filename, ReadFileResult file, bool verbose) {
   type_init();
 
   // In the case of "a.a." the worst case for offsets is the same as the number
@@ -1713,6 +1708,7 @@ void* parse(const char* filename, ReadFileResult file) {
   parser.num_indents = 1;
   parser.num_buffered_tokens = 0;
   parser.main_func_entry = NULL;
+  parser.verbose = verbose;
   init_module_globals();
   enter_scope(/*is_module=*/true, /*is_function=*/false);
 

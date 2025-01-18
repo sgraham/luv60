@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  void* entry = parse(cstr(input), file);
+  void* entry = parse(cstr(input), file, verbose);
   int rc = 0;
   if (entry) {
     rc = ((int (*)())entry)();
