@@ -97,6 +97,7 @@ static Parser parser;
 typedef struct Operand {
   Type type;
   ir_ref ref;
+  bool ref_is_addr;
   bool is_lvalue;
   bool is_const;
 } Operand;
@@ -145,14 +146,26 @@ static Operand operand_sym(Type type, LqSymbol lqsym) {
 #endif
 
 static Operand operand_lvalue(Type type, ir_ref ref) {
-  return (Operand){.type = type, .ref = ref, .is_lvalue = true, .is_const = false};
+  return (Operand){
+      .type = type, .ref = ref, .ref_is_addr = true, .is_lvalue = true, .is_const = false};
 }
 
 static Operand operand_const(Type type, ir_ref ref) {
-  return (Operand){.type = type, .ref = ref, .is_const = true};
+  return (Operand){.type = type, .ref = ref, .ref_is_addr = false, .is_const = true};
 }
 
+#if 0
 void store_for_type(ir_ref into, Operand* op) {
+}
+#endif
+
+ir_ref load_for_type(Type type, Operand* op) {
+  if (op->ref_is_addr) {
+    return ir_VLOAD(type_to_ir_type(type), op->ref);
+  } else {
+    ASSERT(op->is_const);  // TODO: Not sure if this is true.
+    return op->ref;
+  }
 }
 
 static inline uint32_t cur_offset(void) {
@@ -1605,7 +1618,7 @@ static bool parse_func_body_only_statement(LastStatementType* lst) {
         errorf("Cannot convert type %s to expected return type %s.", type_as_str(op.type),
                type_as_str(func_ret));
       }
-      ir_ref ret = ir_VLOAD(type_to_ir_type(func_ret), op.ref);
+      ir_ref ret = load_for_type(func_ret, &op);
       ir_RETURN(ret);
     } else {
       *lst = LST_RETURN_VOID;
