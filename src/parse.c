@@ -304,10 +304,8 @@ static void print_str(Operand* op) {
 
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
   Sym* new = sym_new(kind, name, type);
-  abort();
-#if 0
-  new->lqref = alloc_for_type(type);
-#endif
+  ASSERT(type_kind(type) == TYPE_I32 && "todo");
+	new->ref = ir_COPY_I32(ir_CONST_I32(0));
   new->scope_decl = SSD_DECLARED_LOCAL;
   return new;
 }
@@ -991,17 +989,9 @@ static Operand parse_number(bool can_assign, Type* expected) {
     error("Integer literal overflow.");
   }
 
-  switch (type_kind(type)) {
-    case TYPE_I8: return operand_const(type, ir_CONST_I8((int8_t)val));
-    case TYPE_U8: return operand_const(type, ir_CONST_U8((uint8_t)val));
-    case TYPE_I16: return operand_const(type, ir_CONST_I16((int16_t)val));
-    case TYPE_U16: return operand_const(type, ir_CONST_U16((uint16_t)val));
-    case TYPE_I32: return operand_const(type, ir_CONST_I32((int32_t)val));
-    case TYPE_U32: return operand_const(type, ir_CONST_U32((uint32_t)val));
-    case TYPE_I64: return operand_const(type, ir_CONST_I64((int64_t)val));
-    case TYPE_U64: return operand_const(type, ir_CONST_U64((uint64_t)val));
-    default: abort();
-  }
+  ir_val irval;
+  irval.u64 = val;
+  return operand_const(type, ir_const(&parser.ctx, irval, type_to_ir_type(type)));
 }
 
 static Operand parse_offsetof(bool can_assign, Type* expected) {
