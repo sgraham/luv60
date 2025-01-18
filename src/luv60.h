@@ -3,8 +3,8 @@
 #include "base_config.h"
 #include "base_core.h"
 
-#define LQ_ASSERT ASSERT
-#include "../third_party/libqbe/libqbe.h"
+#include "../third_party/ir/ir.h"
+#include "../third_party/ir/ir_builder.h"
 
 #if ARCH_X64
 #include <intrin.h>
@@ -164,4 +164,4 @@ Type type_func_param(Type type, uint32_t i);
 
 // parse.c
 
-void parse(const char* filename, ReadFileResult file);
+void* parse(const char* filename, ReadFileResult file);

@@ -2,6 +2,9 @@
 
 #include "dict.h"
 
+#undef _ir_CTX
+#define _ir_CTX &parser.ctx
+
 typedef enum SymKind {
   SYM_NONE,
   SYM_VAR,
@@ -37,10 +40,7 @@ typedef struct Sym {
   SymKind kind;
   Str name;
   Type type;
-  union {
-    LqSymbol lqsym;
-    LqRef lqref;
-  };
+  ir_ref ref;
   SymScopeDecl scope_decl;
 } Sym;
 
@@ -83,9 +83,12 @@ typedef struct Parser {
   FuncData* cur_func;
   VarScope* cur_var_scope;
 
-  LqSymbol lqsym_fmt_print_i32;
-  LqSymbol lqsym_fmt_print_str;
-  int string_gensym_counter;
+  //LqSymbol lqsym_fmt_print_i32;
+  //LqSymbol lqsym_fmt_print_str;
+  //int string_gensym_counter;
+
+  void* main_func_entry;
+  ir_ctx ctx;
 } Parser;
 
 static Parser parser;
@@ -99,16 +102,44 @@ typedef enum OperandKind {
 typedef struct Operand {
   Type type;
   OperandKind opkind;
-  union {
-    LqSymbol lqsym;
-    LqRef lqref;
-  };
+  ir_ref ref;
   bool is_lvalue;
   bool is_const;
 } Operand;
 
 static Operand operand_null;
 
+ir_type type_to_ir_type(Type type) {
+  switch (type_kind(type)) {
+    case TYPE_BOOL:
+      return IR_BOOL;
+    case TYPE_U8:
+      return IR_U8;
+    case TYPE_U16:
+      return IR_U16;
+    case TYPE_U32:
+      return IR_U32;
+    case TYPE_U64:
+      return IR_U64;
+    case TYPE_I8:
+      return IR_I8;
+    case TYPE_I16:
+      return IR_I16;
+    case TYPE_I32:
+      return IR_I32;
+    case TYPE_I64:
+      return IR_I64;
+    case TYPE_DOUBLE:
+      return IR_DOUBLE;
+    case TYPE_FLOAT:
+      return IR_FLOAT;
+    default:
+      ASSERT(false && "todo");
+      abort();
+  }
+}
+
+#if 0
 static Operand operand_lvalue(Type type, OperandKind opkind, LqRef ref) {
   return (Operand){
       .type = type, .opkind = opkind, .lqref = ref, .is_lvalue = true, .is_const = false};
@@ -119,12 +150,13 @@ static Operand operand_rvalue(Type type, OperandKind opkind, LqRef ref) {
       .type = type, .opkind = opkind, .lqref = ref, .is_lvalue = false, .is_const = false};
 }
 
-static Operand operand_const(Type type, OperandKind opkind, LqRef ref) {
-  return (Operand){.type = type, .opkind = opkind, .lqref = ref, .is_const = true};
-}
-
 static Operand operand_sym(Type type, LqSymbol lqsym) {
   return (Operand){.type = type, .opkind = OpKindSymbol, .lqsym = lqsym};
+}
+#endif
+
+static Operand operand_const(Type type, ir_ref ref) {
+  return (Operand){.type = type, .ref = ref, .is_const = true};
 }
 
 static inline uint32_t cur_offset(void) {
@@ -237,139 +269,24 @@ static Sym* sym_new(SymKind kind, Str name, Type type) {
   return &((NameSymPair*)dict_rawiter_get(&res.iter))->sym;
 }
 
-static LqType type_to_lq_type(Type type) {
-  switch (type_kind(type)) {
-    case TYPE_U8:
-      return lq_type_ubyte;
-    case TYPE_I8:
-      return lq_type_sbyte;
-    case TYPE_U16:
-      return lq_type_uhalf;
-    case TYPE_I16:
-      return lq_type_shalf;
-    case TYPE_U32:
-      return lq_type_word;
-    case TYPE_I32:
-      return lq_type_word;
-    case TYPE_U64:
-      return lq_type_long;
-    case TYPE_I64:
-      return lq_type_long;
-    case TYPE_FLOAT: return lq_type_single;
-    case TYPE_DOUBLE:
-      return lq_type_double;
-    default:
-      ASSERT(false && "todo");
-  }
-}
-
-static LqRef alloc_for_type(Type type) {
-  switch (type_align(type)) {
-    case 1:
-    case 2:
-    case 4:
-      return lq_i_alloc4(lq_const_int(type_size(type)));
-    case 8:
-      return lq_i_alloc8(lq_const_int(type_size(type)));
-    case 16:
-      return lq_i_alloc8(lq_const_int(type_size(type)));
-    default:
-      errorf("internal error: unexpected alignment %d", type_align(type));
-  }
-}
-
-static void store_for_type(LqRef into, Type type, LqRef val) {
-  switch (type_kind(type)) {
-    case TYPE_U8:
-    case TYPE_I8:
-      lq_i_storeb(val, into);
-      break;
-    case TYPE_U16:
-    case TYPE_I16:
-      lq_i_storeh(val, into);
-      break;
-    case TYPE_U32:
-    case TYPE_I32:
-      lq_i_storew(val, into);
-      break;
-    case TYPE_U64:
-    case TYPE_I64:
-      lq_i_storel(val, into);
-      break;
-    case TYPE_FLOAT:
-      lq_i_stores(val, into);
-      break;
-    case TYPE_DOUBLE:
-      lq_i_stored(val, into);
-      break;
-    default:
-      ASSERT(false && "todo");
-  }
-}
-
-static LqRef load_for_type(Type type, LqRef val) {
-  switch (type_kind(type)) {
-    case TYPE_U8:
-      return lq_i_loadub(lq_type_word, val);
-    case TYPE_I8:
-      return lq_i_loadsb(lq_type_word, val);
-    case TYPE_U16:
-      return lq_i_loaduh(lq_type_word, val);
-    case TYPE_I16:
-      return lq_i_loadsh(lq_type_word, val);
-    case TYPE_U32:
-      return lq_i_loaduw(lq_type_word, val);
-    case TYPE_I32:
-      return lq_i_loadsw(lq_type_word, val);
-    case TYPE_U64:
-    case TYPE_I64:
-      return lq_i_load(lq_type_long, val);
-    case TYPE_FLOAT:
-      return lq_i_load(lq_type_single, val);
-    case TYPE_DOUBLE:
-      return lq_i_load(lq_type_double, val);
-      break;
-    default:
-      ASSERT(false && "todo");
-  }
-}
-
-static LqRef value_of(Operand* op) {
-  switch (op->opkind) {
-    case OpKindSymbol:
-      return lq_ref_for_symbol(op->lqsym);
-    case OpKindLocal:
-      return load_for_type(op->type, op->lqref);
-    case OpKindValue:
-      return op->lqref;
-    default:
-      ASSERT(false && "unhandled");
-      TRAP();
-  }
-}
-
 static void init_module_globals(void) {
-  lq_data_start(lq_linkage_default, "fmt$print_i32");
-  lq_data_string("%d\n");
-  lq_data_byte(0);
-  parser.lqsym_fmt_print_i32 = lq_data_end();
-
-  lq_data_start(lq_linkage_default, "fmt$print_str");
-  lq_data_string("%.*s\n");
-  lq_data_byte(0);
-  parser.lqsym_fmt_print_str = lq_data_end();
 }
 
 static void print_i32(Operand* op) {
+  abort();
+#if 0
   LqRef printf_func = lq_extern("printf");
   lq_i_call3(lq_type_word, printf_func,
              (LqCallArg){lq_type_long, lq_ref_for_symbol(parser.lqsym_fmt_print_i32)},  //
              lq_varargs_begin,                                                          //
              (LqCallArg){lq_type_word, value_of(op)}                                    //
   );
+#endif
 }
 
 static void print_str(Operand* op) {
+  abort();
+#if 0
   LqRef printf_func = lq_extern("printf");
   ASSERT(op->opkind == OpKindSymbol);
   LqRef obj = lq_ref_for_symbol(op->lqsym);
@@ -382,18 +299,22 @@ static void print_str(Operand* op) {
              (LqCallArg){lq_type_word, size},
              (LqCallArg){lq_type_long, data}
   );
+#endif
 }
 
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
   Sym* new = sym_new(kind, name, type);
+  abort();
+#if 0
   new->lqref = alloc_for_type(type);
+#endif
   new->scope_decl = SSD_DECLARED_LOCAL;
   return new;
 }
 
-static Sym* make_param(Str name, Type type) {
+static Sym* make_param(Str name, Type type, int index) {
   Sym* new = sym_new(SYM_VAR, name, type);
-  new->lqref = lq_func_param_named(type_to_lq_type(type), cstr(name));
+  new->ref = ir_PARAM(type_to_ir_type(type), cstr(name), index + 1);
   new->scope_decl = SSD_DECLARED_PARAMETER;
   return new;
 }
@@ -421,18 +342,29 @@ static void enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS], Type para
   parser.cur_func->sym = sym;
   enter_scope(/*is_module=*/false, /*is_function=*/true);
 
-  LqLinkage linkage =
-      str_eq(sym->name, str_intern("main")) ? lq_linkage_export : lq_linkage_default;
-  lq_func_start(linkage, type_to_lq_type(type_func_return_type(sym->type)), cstr(sym->name));
+  ir_consistency_check();
+  ir_init(&parser.ctx, IR_FUNCTION | IR_OPT_FOLDING, IR_CONSTS_LIMIT_MIN, IR_INSNS_LIMIT_MIN);
+  parser.ctx.ret_type = type_to_ir_type(type_func_return_type(sym->type));
+
+  ir_START();
 
   uint32_t num_params = type_func_num_params(sym->type);
   for (uint32_t i = 0; i < num_params; ++i) {
-    make_param(param_names[i], type_func_param(sym->type, i));
+    make_param(param_names[i], type_func_param(sym->type, i), i);
   }
 }
 
 static void leave_function(void) {
-  parser.cur_func->sym->lqsym = lq_func_end();
+  size_t size;
+  void* entry = ir_jit_compile(&parser.ctx, 2, &size);
+  if (entry) {
+    printf("compiled %zu bytes for %s\n", size, cstr(parser.cur_func->sym->name));
+    if (str_eq(parser.cur_func->sym->name, str_intern("main"))) {
+      parser.main_func_entry = entry;
+    }
+  } else {
+    printf("compilation failed '%s'\n", cstr(parser.cur_func->sym->name));
+  }
 
   --parser.num_funcdatas;
   ASSERT(parser.num_funcdatas >= 0);
@@ -686,6 +618,8 @@ static bool cast_operand(Operand* operand, Type type) {
       // TODO: save val into op and convert here
     }
 
+    abort();
+#if 0
     // Not sure about this, need to handle i16 being stored and then cast to
     // i32, so there's a full proper i32 to load.
     if (operand->opkind == OpKindLocal) {
@@ -693,6 +627,7 @@ static bool cast_operand(Operand* operand, Type type) {
       store_for_type(copy, type, value_of(operand));
       operand->lqref = copy;
     }
+#endif
   }
 
   operand->type = type;
@@ -916,7 +851,10 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
   if (type_kind(left.type) != TYPE_FUNC) {
     errorf("Expected function type, but type is %s.", type_as_str(left.type));
   }
+  abort();
+#if 0
   LqRef arg_values[MAX_FUNC_PARAMS];
+#endif
   uint32_t num_args = 0;
   if (!check(TOK_RPAREN)) {
     for (;;) {
@@ -931,7 +869,10 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
         errorf_offset(arg_offset, "Call argument %d is type %s, but function expects type %s.",
                       num_args + 1, type_as_str(arg.type), type_as_str(param_type));
       }
+      abort();
+#if 0
       arg_values[num_args] = arg.lqref;
+#endif
       ++num_args;
       if (!match(TOK_COMMA)) {
         break;
@@ -984,8 +925,83 @@ static Operand parse_null_literal(bool can_assign, Type* expected) {
 static Operand parse_number(bool can_assign, Type* expected) {
   Type suffix = {0};
   uint64_t val = scan_int(get_strview_for_offsets(prev_offset(), cur_offset()), &suffix);
-  Type type = type_is_none(suffix) ? type_u64 : suffix;
-  return operand_const(type, OpKindValue, lq_const_int(val));
+  Type type = type_none;
+  bool overflow = false;
+  switch (type_kind(suffix)) {
+    case TYPE_NONE:
+      type = type_i32;
+      if (val > INT32_MAX) {
+        type = type_u32;
+        if (val > UINT32_MAX) {
+          type = type_i64;
+          if (val > INT64_MAX) {
+            type = type_u64;
+          }
+        }
+      }
+      break;
+    case TYPE_I8:
+      type = type_i8;
+      if (val > INT8_MAX) {
+        overflow = true;
+      }
+      break;
+    case TYPE_U8:
+      type = type_u8;
+      if (val > UINT8_MAX) {
+        overflow = true;
+      }
+      break;
+    case TYPE_I16:
+      type = type_i16;
+      if (val > INT16_MAX) {
+        overflow = true;
+      }
+      break;
+    case TYPE_U16:
+      type = type_u16;
+      if (val > UINT16_MAX) {
+        overflow = true;
+      }
+      break;
+    case TYPE_I32:
+      type = type_i32;
+      if (val > INT32_MAX) {
+        overflow = true;
+      }
+      break;
+    case TYPE_U32:
+      type = type_u32;
+      if (val > UINT32_MAX) {
+        overflow = true;
+      }
+      break;
+    case TYPE_I64:
+      type = type_i64;
+      overflow = val > INT64_MAX;
+      break;
+    case TYPE_U64:
+      type = type_u64;
+      break;
+    default:
+      ASSERT(false);
+      break;
+  }
+  if (overflow) {
+    error("Integer literal overflow.");
+  }
+
+  switch (type_kind(type)) {
+    case TYPE_I8: return operand_const(type, ir_CONST_I8((int8_t)val));
+    case TYPE_U8: return operand_const(type, ir_CONST_U8((uint8_t)val));
+    case TYPE_I16: return operand_const(type, ir_CONST_I16((int16_t)val));
+    case TYPE_U16: return operand_const(type, ir_CONST_U16((uint16_t)val));
+    case TYPE_I32: return operand_const(type, ir_CONST_I32((int32_t)val));
+    case TYPE_U32: return operand_const(type, ir_CONST_U32((uint32_t)val));
+    case TYPE_I64: return operand_const(type, ir_CONST_I64((int64_t)val));
+    case TYPE_U64: return operand_const(type, ir_CONST_U64((uint64_t)val));
+    default: abort();
+  }
 }
 
 static Operand parse_offsetof(bool can_assign, Type* expected) {
@@ -1047,6 +1063,7 @@ static Operand parse_sizeof(bool can_assign, Type* expected) {
   return operand_null;
 }
 
+#if 0
 static LqSymbol emit_string_obj(const char* ptr, size_t size) {
   int str_uniq = parser.string_gensym_counter++;
   lq_data_start(lq_linkage_default, cstr(str_internf("str_bytes_%d", str_uniq)));
@@ -1062,6 +1079,7 @@ static LqSymbol emit_string_obj(const char* ptr, size_t size) {
   lq_data_long(size);
   return lq_data_end();
 }
+#endif
 
 static Operand parse_string(bool can_assign, Type* expected) {
   StrView strview = get_strview_for_offsets(prev_offset(), cur_offset());
@@ -1075,8 +1093,11 @@ static Operand parse_string(bool can_assign, Type* expected) {
     return operand_const(type_str, gen_mir_op_str_const(str));
 #endif
   } else {
+    ASSERT(false); abort();
+#if 0
     LqSymbol str = emit_string_obj(strview.data + 1, strview.size - 2);
     return operand_sym(type_str, str);
+#endif
   }
 }
 
@@ -1199,7 +1220,10 @@ static Operand parse_variable(bool can_assign, Type* expected) {
         errorf("Cannot assign type %s to type %s.", type_as_str(op.type), type_as_str(sym->type));
       }
       if (eq_kind == TOK_EQ) {
+        abort();
+#if 0
         store_for_type(sym->lqref, op.type, op.lqref);
+#endif
       } else {
         error_offset(eq_offset, "Unhandled assignment type.");
       }
@@ -1221,9 +1245,15 @@ static Operand parse_variable(bool can_assign, Type* expected) {
     }
   } else {
     if (scope_result == SCOPE_RESULT_LOCAL) {
+      abort();
+#if 0
       return operand_lvalue(sym->type, OpKindLocal, sym->lqref);
+#endif
     } else if (scope_result == SCOPE_RESULT_PARAMETER) {
+      abort();
+#if 0
       return operand_rvalue(sym->type, OpKindValue, sym->lqref);
+#endif
     } else if (scope_result == SCOPE_RESULT_GLOBAL) {
       ASSERT(false); abort();
 #if 0
@@ -1566,10 +1596,10 @@ static bool parse_func_body_only_statement(LastStatementType* lst) {
         errorf("Cannot convert type %s to expected return type %s.", type_as_str(op.type),
                type_as_str(func_ret));
       }
-      lq_i_ret(value_of(&op));
+      ir_RETURN(op.ref);
     } else {
       *lst = LST_RETURN_VOID;
-      lq_i_ret_void();
+      ir_RETURN(IR_UNUSED);
     }
     return true;
   }
@@ -1633,7 +1663,11 @@ static void parse_variable_statement(Type type) {
              type_as_str(op.type), type_as_str(type));
     }
     Sym* new = make_local_and_alloc(SYM_VAR, name, op.type);
+    (void)new;
+    abort();
+#if 0
     store_for_type(new->lqref, op.type, op.lqref);
+#endif
   }
 
   expect_end_of_statement("variable declaration");
@@ -1670,7 +1704,7 @@ static LastStatementType parse_statement(bool toplevel) {
   return LST_NON_RETURN;  // Return isn't possible unless in func.
 }
 
-void parse(const char* filename, ReadFileResult file) {
+void* parse(const char* filename, ReadFileResult file) {
   type_init();
 
   // In the case of "a.a." the worst case for offsets is the same as the number
@@ -1687,6 +1721,7 @@ void parse(const char* filename, ReadFileResult file) {
   parser.indent_levels[0] = 0;
   parser.num_indents = 1;
   parser.num_buffered_tokens = 0;
+  parser.main_func_entry = NULL;
   init_module_globals();
   enter_scope(/*is_module=*/true, /*is_function=*/false);
 
@@ -1697,4 +1732,6 @@ void parse(const char* filename, ReadFileResult file) {
   while (parser.cur_kind != TOK_EOF) {
     parse_statement(/*toplevel=*/true);
   }
+
+  return parser.main_func_entry;
 }

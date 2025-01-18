@@ -9,7 +9,18 @@ ROOT_DIR = os.path.normpath(
 )
 
 COMMON_FILELIST = [
-    "../third_party/libqbe/libqbe.c",
+    "../third_party/ir/ir.c",
+    "../third_party/ir/ir_cfg.c",
+    "../third_party/ir/ir_check.c",
+    "../third_party/ir/ir_dump.c",
+    "../third_party/ir/ir_emit.c",
+    "../third_party/ir/ir_gcm.c",
+    "../third_party/ir/ir_mem2ssa.c",
+    "../third_party/ir/ir_patch.c",
+    "../third_party/ir/ir_ra.c",
+    "../third_party/ir/ir_save.c",
+    "../third_party/ir/ir_sccp.c",
+    "../third_party/ir/ir_strtab.c",
     "base_mac.c",
     "base_win.c",
     "lex.c",
@@ -21,6 +32,10 @@ COMMON_FILELIST = [
 
 LUVC_FILELIST = [
     "luvc_main.c",
+]
+
+GEN_IR_FOLD_HASH_FILELIST = [
+    "../third_party/ir/gen_ir_fold_hash.c",
 ]
 
 UNITTEST_FILELIST = [
@@ -45,18 +60,24 @@ CONFIGS = {
             + " /showIncludes -std:c11 /nologo /TC /FS /Od /Zi /D_DEBUG /DBUILD_DEBUG=1 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo:$out /Fd:$out.pdb",
             "LINK": LLD_LINK_WIN
             + " /nologo /dynamicbase:no /DEBUG $in /out:$out /pdb:$out.pdb",
+            "ML": CLANG_CL_WIN
+            + " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
         },
         "r": {
             "COMPILE": CLANG_CL_WIN
             + " /showIncludes -std:c11 /nologo -flto -fuse-ld=lld /FS /O2 /Zi /DNDEBUG /DBUILD_DEBUG=0 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb",
             "LINK": LLD_LINK_WIN
             + " /nologo /dynamicbase:no /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb",
+            "ML": CLANG_CL_WIN
+            + " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
         },
         "p": {
             "COMPILE": CLANG_CL_WIN
             + " /showIncludes /nologo -flto -fuse-ld=lld /FS /O2 /Zi /DTRACY_ENABLE=1 /DNDEBUG /DBUILD_DEBUG=0 /D_CRT_SECURE_NO_DEPRECATE /I$src/../third_party/tracy/public/tracy /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb",
             "LINK": LLD_LINK_WIN
             + " /nologo /dynamicbase:no /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb",
+            "ML": CLANG_CL_WIN
+            + " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
         },
         "__": {
             "exe_ext": ".exe",
@@ -67,14 +88,12 @@ CONFIGS = {
         "d": {
             "COMPILE": CLANG
             + " -MMD -MF $out.d -std=c11 -O0 -g -D_DEBUG -DBUILD_DEBUG=1 -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
-            "LINK": CLANG
-            + " -g $in -o $out",
+            "LINK": CLANG + " -g $in -o $out",
         },
         "r": {
             "COMPILE": CLANG
             + " -MMD -MF $out.d -std:c11 -flto -fuse-ld=lld -O3 -g /DNDEBUG /DBUILD_DEBUG=0 -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
-            "LINK": CLANG
-            + " -g $in -o $out",
+            "LINK": CLANG + " -g $in -o $out",
         },
         "__": {
             "exe_ext": "",
@@ -135,6 +154,8 @@ def generate(platform, config, settings, cmdlines, tests):
     obj_ext = settings["obj_ext"]
 
     luvcexe = "luvc" + exe_ext
+    miniluaexe = "minilua" + exe_ext
+    gen_ir_fold_hash_exe = "gen_ir_fold_hash" + exe_ext
 
     with open(os.path.join(root_dir, "build.ninja"), "w", newline="\n") as f:
         f.write("src = ../../src\n")
@@ -150,9 +171,25 @@ def generate(platform, config, settings, cmdlines, tests):
         f.write("  command = " + cmdlines["LINK"] + "\n")
         f.write("  description = LINK $out\n")
         f.write("\n")
+        f.write("rule mlbuild\n")
+        f.write("  command = " + cmdlines["ML"] + "\n")
+        f.write("  description = CC $out\n")
+        f.write("\n")
+        f.write("rule dynasm_w\n")
+        f.write(
+            "  command = ./minilua"
+            + exe_ext
+            + " $src/../third_party/ir/dynasm/dynasm.lua -D WIN=1 -D X64=1 -D X64WIN=1 -o $out $in\n"
+        )
+        f.write("  description = DYNASM $out\n")
+        f.write("\n")
         f.write("rule ripsnip\n")
         f.write("  command = %s $src/clang_rip.py\n" % sys.executable)
         f.write("  description = SNIPRIP $out\n")
+        f.write("\n")
+        f.write("rule gen_ir_fold_hash\n")
+        f.write("  command = cmd /c %s < $src/../third_party/ir/ir_fold.h > ir_fold_hash.h\n" % gen_ir_fold_hash_exe)
+        f.write("  description = GEN_IR_FOLD_HASH\n")
         f.write("\n")
         f.write("rule gendumbbench\n")
         f.write("  command = %s $src/gen_dumbbench.py\n" % sys.executable)
@@ -187,13 +224,25 @@ def generate(platform, config, settings, cmdlines, tests):
 
         common_objs = []
         for src in COMMON_FILELIST:
-            if sys.platform == 'darwin' and '_win.' in src: continue
-            elif sys.platform == 'win32' and '_mac.' in src: continue
+            if sys.platform == "darwin" and "_win." in src:
+                continue
+            elif sys.platform == "win32" and "_mac." in src:
+                continue
             obj = getobj(src)
             common_objs.append(obj)
             extra_deps = ""
             extra_deps = " | snippets.c" if src == "gen.c" else extra_deps
             extra_deps = " | categorizer.c" if src == "token.c" else extra_deps
+            extra_deps = (
+                " | ir_emit_x86.h"
+                if src == "../third_party/ir/ir_emit.c"
+                else extra_deps
+            )
+            extra_deps = (
+                " | ir_fold_hash.h"
+                if src == "../third_party/ir/ir.c"
+                else extra_deps
+            )
             f.write("build %s: cc $src/%s%s\n" % (obj, src, extra_deps))
             if "/mir/" in src:
                 f.write(
@@ -221,13 +270,19 @@ def generate(platform, config, settings, cmdlines, tests):
             unittest_objs.append(obj)
             f.write("build %s: cc $src/%s\n" % (obj, src))
 
+        gen_ir_fold_hash_objs = []
+        for src in GEN_IR_FOLD_HASH_FILELIST:
+            obj = getobj(src)
+            gen_ir_fold_hash_objs.append(obj)
+            f.write("build %s: cc $src/%s\n" % (obj, src))
+
         lexbench_objs = []
         for src in LEXBENCH_FILELIST:
             obj = getobj(src)
             lexbench_objs.append(obj)
             f.write("build %s: cc $src/%s\n" % (obj, src))
             fn = os.path.join(root_dir, "dumbbench.luv").replace("\\", "/")
-            if sys.platform == 'win32':
+            if sys.platform == "win32":
                 f.write('  extra=-DFILENAME="""%s"""\n' % fn)
             else:
                 f.write('  extra=-DFILENAME=\\"%s\\"\n' % fn)
@@ -242,6 +297,23 @@ def generate(platform, config, settings, cmdlines, tests):
             alltests.append(testf)
 
         f.write("build %s: link %s\n" % (luvcexe, " ".join(common_objs + luvc_objs)))
+        f.write(
+            "build %s: link %s\n"
+            % (gen_ir_fold_hash_exe, " ".join(gen_ir_fold_hash_objs))
+        )
+        f.write(
+            "build %s: mlbuild $src/../third_party/ir/dynasm/minilua.c\n" % miniluaexe
+        )
+
+        f.write(
+            "build ir_emit_x86.h: dynasm_w $src/../third_party/ir/ir_x86.dasc | %s\n"
+            % miniluaexe
+        )
+
+        f.write(
+            "build ir_fold_hash.h: gen_ir_fold_hash | %s\n" % gen_ir_fold_hash_exe
+        )
+
         f.write(
             "build %s: link %s\n"
             % ("unittests" + exe_ext, " ".join(common_objs + unittest_objs))
@@ -294,9 +366,11 @@ def main():
     os.chdir(ROOT_DIR)  # Necessary when regenerating manifest from ninja
     tests = get_tests()
     for platform, pdata in CONFIGS.items():
-        if (sys.platform == "win32" and platform == "w") or (
-            sys.platform == "linux" and platform == "l") or (
-            sys.platform == "darwin" and platform == "m"):
+        if (
+            (sys.platform == "win32" and platform == "w")
+            or (sys.platform == "linux" and platform == "l")
+            or (sys.platform == "darwin" and platform == "m")
+        ):
             for config, cmdlines in pdata.items():
                 if config == "__":
                     continue
