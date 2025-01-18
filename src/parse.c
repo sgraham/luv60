@@ -336,11 +336,22 @@ static void enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS], Type para
   enter_scope(/*is_module=*/false, /*is_function=*/true);
 
   ir_consistency_check();
-  ir_init(&parser.ctx, IR_FUNCTION | IR_OPT_FOLDING, IR_CONSTS_LIMIT_MIN,
+#if ARCH_ARM64
+  // There seems to be a problem in small functions with not maintaining 16 byte
+  // alignment of sp https://github.com/dstogov/ir/issues/100. Adding some
+  // allocas and disabling optimzations (so that they aren't removed) is a
+  // crappy workaround for now.
+  ir_init(&parser.ctx, IR_FUNCTION, IR_CONSTS_LIMIT_MIN, IR_INSNS_LIMIT_MIN);
+#else
+  ir_init(&parser.ctx, IR_FUNCTION | IR_OPT_FOLDING | IR_OPT_MEM2SSA, IR_CONSTS_LIMIT_MIN,
           IR_INSNS_LIMIT_MIN);
+#endif
   parser.ctx.ret_type = type_to_ir_type(type_func_return_type(sym->type));
 
   ir_START();
+#if ARCH_ARM64  // See above.
+  ir_ALLOCA(32);
+#endif
 
   uint32_t num_params = type_func_num_params(sym->type);
   for (uint32_t i = 0; i < num_params; ++i) {
@@ -353,10 +364,19 @@ static void leave_function(void) {
   if (parser.verbose) {
     ir_dump(&parser.ctx, stderr);
   }
-  void* entry = ir_jit_compile(&parser.ctx, 2, &size);
+#if ARCH_ARM64  // See above.
+  void* entry = ir_jit_compile(&parser.ctx, /*opt=*/0, &size);
+#else
+  void* entry = ir_jit_compile(&parser.ctx, /*opt=*/2, &size);
+#endif
   if (entry) {
     if (parser.verbose) {
       fprintf(stderr, "compiled %zu bytes for %s\n", size, cstr(parser.cur_func->sym->name));
+#if !OS_WINDOWS  // TODO: don't have capstone or ir_disasm on win32 right now
+      ir_disasm_init();
+      ir_disasm(cstr(parser.cur_func->sym->name), entry, size, false, &parser.ctx, stderr);
+      ir_disasm_free();
+#endif
     }
     if (str_eq(parser.cur_func->sym->name, str_intern("main"))) {
       parser.main_func_entry = entry;

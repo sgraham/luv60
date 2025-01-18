@@ -12,6 +12,7 @@ COMMON_FILELIST = [
     "../third_party/ir/ir.c",
     "../third_party/ir/ir_cfg.c",
     "../third_party/ir/ir_check.c",
+    "../third_party/ir/ir_disasm.c",
     "../third_party/ir/ir_dump.c",
     "../third_party/ir/ir_emit.c",
     "../third_party/ir/ir_gcm.c",
@@ -88,7 +89,7 @@ CONFIGS = {
         "d": {
             "COMPILE": CLANG
             + " -MMD -MF $out.d -std=c11 -O0 -g -D_DEBUG -DBUILD_DEBUG=1 -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
-            "LINK": CLANG + " -g $in -o $out",
+            "LINK": CLANG + " -g $in -lcapstone -o $out",
             "ML": CLANG + " $in -o $out",
         },
         "r": {
@@ -244,6 +245,9 @@ def generate(platform, config, settings, cmdlines, tests):
             if sys.platform == "darwin" and "_win." in src:
                 continue
             elif sys.platform == "win32" and "_mac." in src:
+                continue
+            if sys.platform == "win32" and "ir_disasm.c" in src:
+                # TODO: no capstone on win right now
                 continue
             obj = getobj(src)
             common_objs.append(obj)
