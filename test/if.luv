@@ -1,4 +1,4 @@
-# DISABLED
+# RUN: {self} --main-rc
 # RET: 44
 def int stuff(int x):
     if x != 0:
