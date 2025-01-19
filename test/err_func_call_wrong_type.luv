@@ -1,6 +1,6 @@
-# CRC: 1
-# TXT: {self}:9:11:    stuff(z)
-# TXT: {ssss}                ^ error: Call argument 1 is type str, but function expects type i32.
+# RET: 1
+# ERR: {self}:9:11:    stuff(z)
+# ERR: {ssss}                ^ error: Call argument 1 is type str, but function expects type i32.
 def int stuff(int x):
     return 0
 

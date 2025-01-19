@@ -1,4 +1,4 @@
-# CRC: 1
-# TXT: {self}:4:1:print
-# TXT: {ssss}     ^ error: Expect expression.
+# RET: 1
+# ERR: {self}:4:1:print
+# ERR: {ssss}     ^ error: Expect expression.
 print

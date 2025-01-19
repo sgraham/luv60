@@ -1,4 +1,4 @@
-# TXT: c
+# OUT: c
 def int main():
     int x = 5
     if x < 1:

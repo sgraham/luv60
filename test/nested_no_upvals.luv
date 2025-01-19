@@ -1,4 +1,4 @@
-# TXT: 13
+# OUT: 13
 def int main():
     def int inner():
         return 13

@@ -49,9 +49,12 @@ int main(int argc, char** argv) {
   void* entry = parse(cstr(input), file, verbose);
   int rc = 0;
   if (entry) {
-    rc = ((int (*)())entry)();
+    int entry_returned = ((int (*)())entry)();
     if (verbose) {
-      printf("main() returned %d\n", rc);
+      printf("main() returned %d\n", entry_returned);
+    }
+    if (return_main_rc) {
+      rc = entry_returned;
     }
   }
 

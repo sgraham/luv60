@@ -1,4 +1,4 @@
-# TXT: 1234
+# OUT: 1234
 def int main():
     print 1234
     return 0

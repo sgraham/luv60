@@ -1,20 +1,20 @@
-# TXT: 1
-# TXT: 2
-# TXT: 3
-# TXT: 4
-# TXT: 5
-# TXT: 6
-# TXT: 7
-# TXT: 8
-# TXT: 10
-# TXT: 11
-# TXT: 12
-# TXT: 13
-# TXT: 14
-# TXT: 15
-# TXT: 16
-# TXT: 17
-# TXT: ok
+# OUT: 1
+# OUT: 2
+# OUT: 3
+# OUT: 4
+# OUT: 5
+# OUT: 6
+# OUT: 7
+# OUT: 8
+# OUT: 10
+# OUT: 11
+# OUT: 12
+# OUT: 13
+# OUT: 14
+# OUT: 15
+# OUT: 16
+# OUT: 17
+# OUT: ok
 def int main():
     i64 a = 1
     i32 b = 2

@@ -1,3 +1,4 @@
+# RUN: {self} --main-rc
 # RET: 4
 def int main():
     return 4
