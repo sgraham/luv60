@@ -886,10 +886,28 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
       [TOK_GEQ] = {IR_GE, IR_UGE},
       [TOK_GT] = {IR_GT, IR_UGT},
   };
+  static ir_op tok_to_bin_op[NUM_TOKEN_KINDS] = {
+      [TOK_PLUS] = IR_ADD,
+      [TOK_MINUS] = IR_SUB,
+      [TOK_STAR] = IR_MUL,
+      [TOK_SLASH] = IR_DIV,
+      [TOK_PERCENT] = IR_MOD,
+      //[TOK_TILDE] = IR_NOT,
+      [TOK_PIPE] = IR_OR,
+      [TOK_AMPERSAND] = IR_AND,
+      [TOK_CARET] = IR_XOR,
+      [TOK_LSHIFT] = IR_SHL,
+      [TOK_RSHIFT] = IR_SHR,  // TODO: SAR
+  };
   if (tok_to_cmp_op[op].sign /*anything nonzero in slot*/) {
     ir_op irop = type_is_unsigned(left.type) ? tok_to_cmp_op[op].unsign : tok_to_cmp_op[op].sign;
     ir_ref cmp = ir_CMP_OP(irop, load_operand_if_necessary(&left), load_operand_if_necessary(&rhs));
     return operand_rvalue_imm(type_bool, cmp);
+  } else if (tok_to_bin_op[op]) {
+    ir_op irop = tok_to_bin_op[op];
+    ir_ref result = ir_BINARY_OP(irop, type_to_ir_type(left.type), load_operand_if_necessary(&left),
+                                 load_operand_if_necessary(&rhs));
+    return operand_rvalue_imm(left.type, result);
   } else {
     ASSERT(false && "todo");
     return operand_null;

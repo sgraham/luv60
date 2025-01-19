@@ -1,3 +1,4 @@
+# RUN: {self} --main-rc
 # RET: 16
 def int main():
     int x = 10
