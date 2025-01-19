@@ -10,6 +10,12 @@ typedef struct RuntimeStr {
   int64_t length;
 } RuntimeStr;
 
+typedef struct RuntimeRange {
+  int64_t start;
+  int64_t stop;
+  int64_t step;
+} RuntimeRange;
+
 typedef enum SymKind {
   SYM_NONE,
   SYM_VAR,
@@ -323,6 +329,19 @@ static void print_str_impl(RuntimeStr str) {
 
 static void print_str(Operand* op) {
   ir_ref addr = ir_CONST_ADDR(print_str_impl);
+  ir_CALL_1(IR_VOID, addr, load_operand_if_necessary(op));
+}
+
+static void print_range_impl(RuntimeRange range) {
+  if (range.step == 1) {
+    printf("range(%" PRIi64 ", %" PRIi64 ")\n", range.start, range.stop);
+  } else {
+    printf("range(%" PRIi64 ", %" PRIi64 ", %" PRIi64 ")\n", range.start, range.stop, range.step);
+  }
+}
+
+static void print_range(Operand* op) {
+  ir_ref addr = ir_CONST_ADDR(print_range_impl);
   ir_CALL_1(IR_VOID, addr, load_operand_if_necessary(op));
 }
 
@@ -1078,9 +1097,8 @@ static Operand parse_or(Operand left, bool can_assign, Type* expected) {
 }
 
 static Operand parse_range(bool can_assign, Type* expected) {
-#if 0
   consume(TOK_LPAREN, "Expect '(' after range.");
-  Operand first = parse_precedence(PREC_OR);
+  Operand first = parse_precedence(PREC_OR, &type_i64);
   if (!convert_operand(&first, type_i64)) {
     errorf("Cannot convert type %s to i64.", type_as_str(first.type));
   }
@@ -1088,12 +1106,12 @@ static Operand parse_range(bool can_assign, Type* expected) {
   Operand second = operand_null;
   Operand third = operand_null;
   if (match(TOK_COMMA)) {
-    second = parse_precedence(PREC_OR);
+    second = parse_precedence(PREC_OR, &type_i64);
     if (!convert_operand(&second, type_i64)) {
       errorf("Cannot convert type %s to i64.", type_as_str(second.type));
     }
     if (match(TOK_COMMA)) {
-      third = parse_precedence(PREC_OR);
+      third = parse_precedence(PREC_OR, &type_i64);
       if (!convert_operand(&third, type_i64)) {
         errorf("Cannot convert type %s to i64.", type_as_str(third.type));
       }
@@ -1101,26 +1119,26 @@ static Operand parse_range(bool can_assign, Type* expected) {
   }
   consume(TOK_RPAREN, "Expect ')' after range.");
 
-  IRRef range = gen_ssa_make_temp(type_range);
+  ir_ref range = ir_ALLOCA(ir_CONST_U32(sizeof(RuntimeRange)));
+  ir_ref astart = range;
+  ir_ref astop = ir_ADD_A(range, ir_CONST_ADDR(sizeof(int64_t)));
+  ir_ref astep = ir_ADD_A(range, ir_CONST_ADDR(2 * sizeof(int64_t)));
   if (type_is_none(second.type)) {
     // range(0, first, 1)
-    gen_ssa_store_field(range, 0, type_i64, gen_ssa_const(0, type_i64));
-    gen_ssa_store_field(range, type_size(type_i64), type_i64, first.irref);
-    gen_ssa_store_field(range, type_size(type_i64) * 2, type_i64, gen_ssa_const(1, type_i64));
+    ir_STORE(astart, ir_CONST_I64(0));
+    ir_STORE(astop, load_operand_if_necessary(&first));
+    ir_STORE(astep, ir_CONST_I64(1));
   } else {
     // range(first, second, third || 1)
-    gen_ssa_store_field(range, 0, type_i64, first.irref);
-    gen_ssa_store_field(range, type_size(type_i64), type_i64, second.irref);
+    ir_STORE(astart, load_operand_if_necessary(&first));
+    ir_STORE(astop, load_operand_if_necessary(&second));
     if (type_is_none(third.type)) {
-      gen_ssa_store_field(range, type_size(type_i64) * 2, type_i64, gen_ssa_const(1, type_i64));
+      ir_STORE(astep, ir_CONST_I64(1));
     } else {
-      gen_ssa_store_field(range, type_size(type_i64) * 2, type_i64, third.irref);
+      ir_STORE(astep, load_operand_if_necessary(&third));
     }
   }
   return operand_rvalue(type_range, range);
-#endif
-  ASSERT(false);
-  abort();
 }
 
 static Operand parse_sizeof(bool can_assign, Type* expected) {
@@ -1615,8 +1633,7 @@ static void print_statement(void) {
   if (type_eq(val.type, type_str)) {
     print_str(&val);
   } else if (type_eq(val.type, type_range)) {
-    //print_range(val.lqref);
-    ASSERT(false && "todo");
+    print_range(&val);
   } else if (convert_operand(&val, type_i32)) {
     print_i32(&val);
   }
