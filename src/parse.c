@@ -371,7 +371,9 @@ static void enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS], Type para
   // crappy workaround for now.
   ir_init(&parser.ctx, IR_FUNCTION, IR_CONSTS_LIMIT_MIN, IR_INSNS_LIMIT_MIN);
 #else
-  ir_init(&parser.ctx, IR_FUNCTION | IR_OPT_FOLDING | IR_OPT_MEM2SSA, IR_CONSTS_LIMIT_MIN,
+  // https://github.com/dstogov/ir/issues/101
+  // https://github.com/dstogov/ir/issues/102
+  ir_init(&parser.ctx, IR_FUNCTION | IR_OPT_FOLDING /*| IR_OPT_MEM2SSA*/, IR_CONSTS_LIMIT_MIN,
           IR_INSNS_LIMIT_MIN);
 #endif
   Type ret_type = type_func_return_type(sym->type);
@@ -1118,6 +1120,7 @@ static Operand parse_range(bool can_assign, Type* expected) {
   return operand_rvalue(type_range, range);
 #endif
   ASSERT(false);
+  abort();
 }
 
 static Operand parse_sizeof(bool can_assign, Type* expected) {
@@ -1173,6 +1176,7 @@ static Operand parse_unary(bool can_assign, Type* expected) {
   }
 #endif
   ASSERT(false);
+  abort();
 }
 
 typedef enum ScopeResult {

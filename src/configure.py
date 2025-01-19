@@ -60,7 +60,7 @@ CONFIGS = {
             "COMPILE": CLANG_CL_WIN
             + " /showIncludes -std:c11 /nologo /TC /FS /Od /Zi /D_DEBUG /DBUILD_DEBUG=1 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo:$out /Fd:$out.pdb",
             "LINK": LLD_LINK_WIN
-            + " /nologo /dynamicbase:no /DEBUG $in /out:$out /pdb:$out.pdb",
+            + " /nologo /DEBUG $in /out:$out /pdb:$out.pdb",
             "ML": CLANG_CL_WIN
             + " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
         },
@@ -68,7 +68,7 @@ CONFIGS = {
             "COMPILE": CLANG_CL_WIN
             + " /showIncludes -std:c11 /nologo -flto -fuse-ld=lld /FS /O2 /Zi /DNDEBUG /DBUILD_DEBUG=0 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb",
             "LINK": LLD_LINK_WIN
-            + " /nologo /dynamicbase:no /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb",
+            + " /nologo /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb",
             "ML": CLANG_CL_WIN
             + " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
         },
@@ -76,7 +76,15 @@ CONFIGS = {
             "COMPILE": CLANG_CL_WIN
             + " /showIncludes /nologo -flto -fuse-ld=lld /FS /O2 /Zi /DTRACY_ENABLE=1 /DNDEBUG /DBUILD_DEBUG=0 /D_CRT_SECURE_NO_DEPRECATE /I$src/../third_party/tracy/public/tracy /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb",
             "LINK": LLD_LINK_WIN
-            + " /nologo /dynamicbase:no /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb",
+            + " /nologo /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb",
+            "ML": CLANG_CL_WIN
+            + " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
+        },
+        "a": {
+            "COMPILE": CLANG_CL_WIN
+            + " /showIncludes -fsanitize=address -std:c11 /nologo /TC /FS /Od /Zi /D_DEBUG /DBUILD_DEBUG=1 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo:$out /Fd:$out.pdb",
+            "LINK": CLANG_CL_WIN
+            + " $in -fsanitize=address /link /out:$out /pdb:$out.pdb",
             "ML": CLANG_CL_WIN
             + " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
         },
@@ -145,6 +153,7 @@ def get_tests():
                     "out": sub(out),
                     "err": sub(err),
                 }
+
     return tests
 
 
