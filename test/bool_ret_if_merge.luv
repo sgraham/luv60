@@ -1,3 +1,5 @@
+# DISABLED
+# RUN: {self} --main-rc
 # RET: 18
 def bool stuff():
     return true

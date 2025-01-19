@@ -1,3 +1,4 @@
+# RUN: {self} --main-rc
 # RET: 123
 def int stuff(int a, int b):
     if a >= b:

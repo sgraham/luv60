@@ -371,7 +371,7 @@ static void enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS], Type para
   // crappy workaround for now.
   ir_init(&parser.ctx, IR_FUNCTION, IR_CONSTS_LIMIT_MIN, IR_INSNS_LIMIT_MIN);
 #else
-  ir_init(&parser.ctx, IR_FUNCTION /*| IR_OPT_FOLDING | IR_OPT_MEM2SSA*/, IR_CONSTS_LIMIT_MIN,
+  ir_init(&parser.ctx, IR_FUNCTION | IR_OPT_FOLDING | IR_OPT_MEM2SSA, IR_CONSTS_LIMIT_MIN,
           IR_INSNS_LIMIT_MIN);
 #endif
   Type ret_type = type_func_return_type(sym->type);
@@ -421,7 +421,7 @@ static void leave_function(void) {
 #if ARCH_ARM64  // See above.
   void* entry = ir_jit_compile(&parser.ctx, /*opt=*/0, &size);
 #else
-  void* entry = ir_jit_compile(&parser.ctx, /*opt=*/0, &size);
+  void* entry = ir_jit_compile(&parser.ctx, /*opt=*/1, &size);
 #endif
   if (entry) {
     if (parser.verbose) {
@@ -892,12 +892,12 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
       [TOK_STAR] = IR_MUL,
       [TOK_SLASH] = IR_DIV,
       [TOK_PERCENT] = IR_MOD,
-      //[TOK_TILDE] = IR_NOT,
+      //[TOK_TILDE] = IR_NOT,  // TODO
       [TOK_PIPE] = IR_OR,
       [TOK_AMPERSAND] = IR_AND,
       [TOK_CARET] = IR_XOR,
       [TOK_LSHIFT] = IR_SHL,
-      [TOK_RSHIFT] = IR_SHR,  // TODO: SAR
+      // TOK_RSHIFT handled below to do SHR vs SAR
   };
   if (tok_to_cmp_op[op].sign /*anything nonzero in slot*/) {
     ir_op irop = type_is_unsigned(left.type) ? tok_to_cmp_op[op].unsign : tok_to_cmp_op[op].sign;
@@ -905,6 +905,11 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
     return operand_rvalue_imm(type_bool, cmp);
   } else if (tok_to_bin_op[op]) {
     ir_op irop = tok_to_bin_op[op];
+    ir_ref result = ir_BINARY_OP(irop, type_to_ir_type(left.type), load_operand_if_necessary(&left),
+                                 load_operand_if_necessary(&rhs));
+    return operand_rvalue_imm(left.type, result);
+  } else if (op == TOK_RSHIFT) {
+    ir_op irop = type_is_unsigned(left.type) ? IR_SHR : IR_SAR;
     ir_ref result = ir_BINARY_OP(irop, type_to_ir_type(left.type), load_operand_if_necessary(&left),
                                  load_operand_if_necessary(&rhs));
     return operand_rvalue_imm(left.type, result);
@@ -1287,10 +1292,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
     if (scope_result == SCOPE_RESULT_LOCAL) {
       return operand_lvalue(sym->type, sym->ref);
     } else if (scope_result == SCOPE_RESULT_PARAMETER) {
-      abort();
-#if 0
-      return operand_rvalue(sym->type, OpKindValue, sym->lqref);
-#endif
+      return operand_rvalue_imm(sym->type, sym->ref);
     } else if (scope_result == SCOPE_RESULT_GLOBAL) {
       if (type_kind(sym->type) == TYPE_FUNC) {
         return operand_rvalue(sym->type, ir_CONST_ADDR(sym->addr));

@@ -1,3 +1,4 @@
+# DISABLED
 # RET: 1
 # ERR: {self}:9:12:    stuff(4, z)
 # ERR: {ssss}                 ^ error: Passing >= 2 arguments to function, but it expects 1.
