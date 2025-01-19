@@ -406,6 +406,11 @@ static void leave_function(void) {
 
   if (parser.verbose) {
     ir_dump(&parser.ctx, stderr);
+    Str dotname = str_internf("%s.dot", cstr(parser.cur_func->sym->name));
+    FILE* dot = fopen(cstr(dotname), "wb");
+    ir_dump_dot(&parser.ctx, cstr(parser.cur_func->sym->name), dot);
+    fclose(dot);
+    base_writef_stderr("=> saved '%s'\n", cstr(dotname));
   }
 
   if (!ir_check(&parser.ctx)) {
@@ -862,37 +867,33 @@ static Operand parse_and(Operand left, bool can_assign, Type* expected) {
 }
 
 static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
-#if 0
   // Remember the operator.
   TokenKind op = parser.prev_kind;
 
   // Compile the right operand.
   Rule* rule = get_rule(op);
-  Operand rhs = parse_precedence(rule->prec_for_infix + 1);
-  (void)rhs;
+  Operand rhs = parse_precedence(rule->prec_for_infix + 1, expected);
 
-  // TODO: gen binary lhs op rhs
-  static IRIntCmp tok_to_int_cmp_signed[NUM_TOKEN_KINDS] = {
-      [TOK_EQEQ] = IIC_EQ,    //
-      [TOK_BANGEQ] = IIC_NE,  //
-      [TOK_LEQ] = IIC_SLE,    //
-      [TOK_LT] = IIC_SLT,     //
-      [TOK_GEQ] = IIC_SGE,    //
-      [TOK_GT] = IIC_SGT,     //
+  typedef struct IrOpPair {
+    ir_op sign;
+    ir_op unsign;
+  } IrOpPair;
+  static IrOpPair tok_to_cmp_op[NUM_TOKEN_KINDS] = {
+      [TOK_EQEQ] = {IR_EQ, IR_EQ},
+      [TOK_BANGEQ] = {IR_NE, IR_NE},
+      [TOK_LEQ] = {IR_LE, IR_ULE},
+      [TOK_LT] = {IR_LT, IR_ULT},
+      [TOK_GEQ] = {IR_GE, IR_UGE},
+      [TOK_GT] = {IR_GT, IR_UGT},
   };
-  if (tok_to_int_cmp_signed[op]) {
-    return operand_rvalue(type_bool,
-                          gen_ssa_int_comparison(tok_to_int_cmp_signed[op], left.irref, rhs.irref));
-  } else if (op == TOK_PLUS) {
-    return operand_rvalue(type_i32, gen_ssa_add(left.irref, rhs.irref));
-  } else if (op == TOK_STAR) {
-    return operand_rvalue(type_i32, gen_ssa_mul(left.irref, rhs.irref));
+  if (tok_to_cmp_op[op].sign /*anything nonzero in slot*/) {
+    ir_op irop = type_is_unsigned(left.type) ? tok_to_cmp_op[op].unsign : tok_to_cmp_op[op].sign;
+    ir_ref cmp = ir_CMP_OP(irop, load_operand_if_necessary(&left), load_operand_if_necessary(&rhs));
+    return operand_rvalue_imm(type_bool, cmp);
   } else {
     ASSERT(false && "todo");
     return operand_null;
   }
-#endif
-  ASSERT(false); abort();
 }
 
 static Operand parse_bool_literal(bool can_assign, Type* expected) {
@@ -1478,26 +1479,27 @@ static Operand if_statement_cond_helper(void) {
 }
 
 static void if_statement(void) {
-  Operand opcond = if_statement_cond_helper();
-  ASSERT(type_kind(opcond.type) == TYPE_BOOL && "todo, other types");
-  ir_ref cond = ir_IF(load_operand_if_necessary(&opcond));
-  ir_IF_TRUE(cond);
-  LastStatementType lst = parse_block();
-  ir_ref iftrue = ir_END();
-  if (lst == LST_RETURN_VALUE || lst == LST_RETURN_VOID) {
-    ir_IF_FALSE(cond);
-    // Push that we're in the FALSE block, with END of iftrue
-    // When we get to the end of the outer block, END this false
-    // and the MERGE iftrue, iffalse
-    ASSERT(parser.num_pending_conds < COUNTOFI(parser.pending_conds));
-    parser.pending_conds[parser.num_pending_conds++] = (PendingCond){iftrue};
-  } else {
-    ir_IF_FALSE(cond);
-    ir_ref no_false = ir_END();
-    ir_MERGE_2(iftrue, no_false);
-  }
+  do {
+    Operand opcond = if_statement_cond_helper();
+    ASSERT(type_kind(opcond.type) == TYPE_BOOL && "todo, other types");
+    ir_ref cond = ir_IF(load_operand_if_necessary(&opcond));
+    ir_IF_TRUE(cond);
+    LastStatementType lst = parse_block();
+    ir_ref iftrue = ir_END();
+    if (lst == LST_RETURN_VALUE || lst == LST_RETURN_VOID) {
+      ir_IF_FALSE(cond);
+      // Push that we're in the FALSE block, with END of iftrue
+      // When we get to the end of the outer block, END this false
+      // and the MERGE iftrue, iffalse
+      ASSERT(parser.num_pending_conds < COUNTOFI(parser.pending_conds));
+      parser.pending_conds[parser.num_pending_conds++] = (PendingCond){iftrue};
+    } else {
+      ir_IF_FALSE(cond);
+      ir_ref no_false = ir_END();
+      ir_MERGE_2(iftrue, no_false);
+    }
+  } while (match(TOK_ELIF));
 
-  ASSERT(!check(TOK_ELIF) && "todo elif");
   ASSERT(!check(TOK_ELSE) && "todo else");
 }
 

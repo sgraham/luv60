@@ -1,0 +1,10 @@
+# OUT: b
+# OUT: after
+def int main():
+    int x = 2
+    if x < 1:
+        print "a"
+    elif x < 3:
+        print "b"
+    print "after"
+    return 0
