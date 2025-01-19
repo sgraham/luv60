@@ -886,11 +886,7 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
   if (type_kind(left.type) != TYPE_FUNC) {
     errorf("Expected function type, but type is %s.", type_as_str(left.type));
   }
-  ASSERT(false && "call");
-  abort();
-#if 0
-  LqRef arg_values[MAX_FUNC_PARAMS];
-#endif
+  ir_ref arg_values[MAX_FUNC_PARAMS];
   uint32_t num_args = 0;
   if (!check(TOK_RPAREN)) {
     for (;;) {
@@ -905,10 +901,7 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
         errorf_offset(arg_offset, "Call argument %d is type %s, but function expects type %s.",
                       num_args + 1, type_as_str(arg.type), type_as_str(param_type));
       }
-      abort();
-#if 0
-      arg_values[num_args] = arg.lqref;
-#endif
+      arg_values[num_args] = arg.ref;
       ++num_args;
       if (!match(TOK_COMMA)) {
         break;
@@ -916,13 +909,9 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
     }
   }
   consume(TOK_RPAREN, "Expect ')' after arguments.");
-  ASSERT(false); abort();
-#if 0
-  IRReg result = gen_mir_make_temp(str_intern("$ret"), type_func_return_type(left.type));
-  ASSERT(type_kind(left.type) == TYPE_FUNC);
-  gen_mir_instr_call(left.ir_func, type_func_return_type(left.type), result, num_args, arg_values);
-  return operand_rvalue(type_func_return_type(left.type), gen_mir_op_reg(result));
-#endif
+  Type ret_type = type_func_return_type(left.type);
+  return operand_rvalue(ret_type,
+                        ir_CALL_N(type_to_ir_type(ret_type), left.ref, num_args, arg_values));
 }
 
 static Operand parse_compound_literal(bool can_assign, Type* expected) {
