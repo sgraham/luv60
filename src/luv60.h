@@ -152,6 +152,7 @@ size_t type_size(Type type);
 size_t type_align(Type type);
 
 Type type_function(Type* params, size_t num_params, Type return_type);
+Type type_ptr(Type subtype);
 
 static inline FORCE_INLINE bool type_is_none(Type a) { return a.u == 0; }
 static inline FORCE_INLINE bool type_eq(Type a, Type b) { return a.u == b.u; }
@@ -166,6 +167,8 @@ bool type_is_aggregate(Type type);
 uint32_t type_func_num_params(Type type);
 Type type_func_return_type(Type type);
 Type type_func_param(Type type, uint32_t i);
+
+Type type_ptr_subtype(Type type);
 
 
 // parse.c

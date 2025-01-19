@@ -47,6 +47,7 @@ static TypeData typedata[16<<20];
 static int num_typedata;
 
 static DictImpl cached_func_types;
+static DictImpl cached_ptr_types;
 
 const char* natural_builtin_type_names[NUM_TYPE_KINDS] = {
     [TYPE_VOID] = "opaque",    //
@@ -169,6 +170,50 @@ Type type_function(Type* params, size_t num_params, Type return_type) {
   }
 }
 
+// For TypeDatas that don't have extra entries.
+static size_t plaintype_hash_func(void* functype) {
+  Type t = *(Type*)functype;
+  size_t hash = 0;
+  TypeData* td = type_td(t);
+  dict_hash_write(&hash, &td, sizeof(TypeData));
+  return hash;
+}
+
+// For TypeDatas that don't have extra entries.
+static bool plaintype_eq_func(void* keyvoid, void* slotvoid) {
+  Type k = *(Type*)keyvoid;
+  Type s = *(Type*)slotvoid;
+  TypeData* ktd = type_td(k);
+  TypeData* std = type_td(s);
+  return memcmp(ktd, std, sizeof(TypeData)) == 0;
+}
+
+Type type_ptr(Type subtype) {
+  uint32_t rewind_location;
+  Type ptr = type_alloc(TYPE_PTR, 0, &rewind_location);
+  TypeData* td = type_td(ptr);
+  td->kaps = pack_type(TYPE_PTR, 8, 8, 0);
+  td->PTR.subtype = subtype;
+
+  // The dict is only a set of intern'd Type, but we know they're all TYPE_PTR.
+  DictInsert res = dict_deferred_insert(&cached_ptr_types, &ptr, plaintype_hash_func,
+                                        plaintype_eq_func, sizeof(Type), _Alignof(Type));
+  Type* ptrtype = ((Type*)dict_rawiter_get(&res.iter));
+  if (res.inserted) {
+    ptrtype->u = ptr.u;
+    return ptr;
+  } else {
+    num_typedata = rewind_location;
+    return *ptrtype;
+  }
+}
+
+Type type_array(uint64_t count, Type subtype) {
+  return (Type){0};
+}
+
+
+
 // Returned str is either the cstr() of an interned string, or a constant.
 // Not fast or memory efficient, should only be used during errors though.
 const char* type_as_str(Type type) {
@@ -187,6 +232,10 @@ const char* type_as_str(Type type) {
       }
       return cstr(str_internf("%s)", cstr(head)));
     }
+    case TYPE_PTR: {
+      Str ptr = str_internf("*%s", type_as_str(type_ptr_subtype(type)));
+      return cstr(ptr);
+    }
     default:
       ASSERT(false && "todo");
       return "TODO";
@@ -195,6 +244,7 @@ const char* type_as_str(Type type) {
 
 void type_init(void) {
   cached_func_types = dict_new(128, sizeof(Type), _Alignof(Type));
+  cached_ptr_types = dict_new(128, sizeof(Type), _Alignof(Type));
 
   set_typedata_raw(TYPE_VOID, pack_type(TYPE_VOID, 0, 1, 0));
   set_typedata_raw(TYPE_BOOL, pack_type(TYPE_BOOL, 1, 1, 0));
@@ -296,6 +346,12 @@ Type type_func_param(Type type, uint32_t i){
   TypeData* td = type_td(type);
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1 + (i / 3));
   return tde->FUNC_EXTRA.param[i % 3];
+}
+
+Type type_ptr_subtype(Type type) {
+  ASSERT(type_kind(type) == TYPE_PTR);
+  TypeData* td = type_td(type);
+  return td->PTR.subtype;
 }
 
 void type_destroy_for_tests(void) {

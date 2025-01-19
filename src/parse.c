@@ -45,7 +45,10 @@ typedef struct Sym {
   SymKind kind;
   Str name;
   Type type;
-  ir_ref ref;
+  union {
+    ir_ref ref;
+    void* addr;  // kind == SYM_FUNC
+  };
   SymScopeDecl scope_decl;
 } Sym;
 
@@ -393,6 +396,7 @@ static void leave_function(void) {
   } else {
     base_writef_stderr("compilation failed '%s'\n", cstr(parser.cur_func->sym->name));
   }
+  parser.cur_func->sym->addr = entry;
   ir_free(&parser.ctx);
 
   --parser.num_funcdatas;
@@ -403,14 +407,6 @@ static void leave_function(void) {
     parser.cur_func = &parser.funcdatas[parser.num_funcdatas - 1];
   }
   leave_scope();
-}
-
-static Type make_type_ptr(uint32_t offset, Type subtype) {
-  return (Type){0};
-}
-
-static Type make_type_array(uint32_t offset, uint64_t count, Type subtype) {
-  return (Type){0};
 }
 
 static void advance(void) {
@@ -497,7 +493,7 @@ static Type basic_tok_to_type[NUM_TOKEN_KINDS] = {
 
 static Type parse_type(void) {
   if (match(TOK_STAR)) {
-    return make_type_ptr(cur_offset(), parse_type());
+    return type_ptr(parse_type());
   }
   if (match(TOK_LSQUARE)) {
     int count = 0;
@@ -509,7 +505,10 @@ static Type parse_type(void) {
     if (type_is_none(elem)) {
       error("Expecting type of array or slice.");
     }
-    return make_type_array(cur_offset(), count, elem);
+    ASSERT(false && "todo");
+    (void)count;
+    abort();
+    //return type_array(cur_offset(), count, elem);
   }
 
   if (match(TOK_LBRACE)) {
@@ -887,6 +886,7 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
   if (type_kind(left.type) != TYPE_FUNC) {
     errorf("Expected function type, but type is %s.", type_as_str(left.type));
   }
+  ASSERT(false && "call");
   abort();
 #if 0
   LqRef arg_values[MAX_FUNC_PARAMS];
@@ -1263,15 +1263,12 @@ static Operand parse_variable(bool can_assign, Type* expected) {
       return operand_rvalue(sym->type, OpKindValue, sym->lqref);
 #endif
     } else if (scope_result == SCOPE_RESULT_GLOBAL) {
-      ASSERT(false); abort();
-#if 0
-      // TODO: This can't be right
       if (type_kind(sym->type) == TYPE_FUNC) {
-        return operand_lvalue_sym(sym->type, sym->ir_func);
+        return operand_rvalue(sym->type, ir_CONST_ADDR(sym->addr));
       } else {
-        return operand_lvalue(sym->type, gen_mir_op_reg(sym->ir_reg));
+        ASSERT(false && "global var");
+        //return operand_lvalue(sym->type, gen_mir_op_reg(sym->ir_reg));
       }
-#endif
     } else if (scope_result == SCOPE_RESULT_UPVALUE) {
       // identify upvals
       // figure out how many up into parents
