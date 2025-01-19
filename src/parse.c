@@ -117,6 +117,8 @@ ir_type type_to_ir_type(Type type) {
     return IR_U64;
   }
   switch (type_kind(type)) {
+    case TYPE_VOID:
+      return IR_VOID;
     case TYPE_BOOL:
       return IR_BOOL;
     case TYPE_U8:
@@ -140,6 +142,7 @@ ir_type type_to_ir_type(Type type) {
     case TYPE_FLOAT:
       return IR_FLOAT;
     default:
+      base_writef_stderr("type_to_ir_type: %s\n", type_as_str(type));
       ASSERT(false && "todo");
       abort();
   }
@@ -159,6 +162,11 @@ static Operand operand_lvalue(Type type, ir_ref ref) {
 static Operand operand_rvalue(Type type, ir_ref ref) {
   return (Operand){
       .type = type, .ref = ref, .ref_is_addr = true, .is_lvalue = false, .is_const = false};
+}
+
+static Operand operand_rvalue_imm(Type type, ir_ref ref) {
+  return (Operand){
+      .type = type, .ref = ref, .ref_is_addr = false, .is_lvalue = false, .is_const = false};
 }
 
 static Operand operand_const(Type type, ir_ref ref) {
@@ -872,11 +880,7 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
 
 static Operand parse_bool_literal(bool can_assign, Type* expected) {
   ASSERT(parser.prev_kind == TOK_FALSE || parser.prev_kind == TOK_TRUE);
-#if 0
-  return operand_const(type_bool,
-                       gen_mir_op_const(parser.prev_kind == TOK_FALSE ? 0 : 1, type_bool));
-#endif
-  ASSERT(false); abort();
+  return operand_const(type_bool, ir_CONST_BOOL(parser.prev_kind == TOK_FALSE ? 0 : 1));
 }
 
 static Operand parse_call(Operand left, bool can_assign, Type* expected) {
@@ -910,8 +914,8 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
   }
   consume(TOK_RPAREN, "Expect ')' after arguments.");
   Type ret_type = type_func_return_type(left.type);
-  return operand_rvalue(ret_type,
-                        ir_CALL_N(type_to_ir_type(ret_type), left.ref, num_args, arg_values));
+  return operand_rvalue_imm(ret_type,
+                            ir_CALL_N(type_to_ir_type(ret_type), left.ref, num_args, arg_values));
 }
 
 static Operand parse_compound_literal(bool can_assign, Type* expected) {
@@ -1445,8 +1449,16 @@ static Operand if_statement_cond_helper(void) {
 }
 
 static void if_statement(void) {
-  (void)if_statement_cond_helper;
-  ASSERT(false); abort();
+  Operand opcond = if_statement_cond_helper();
+  ASSERT(type_kind(opcond.type) == TYPE_BOOL && "todo, other types");
+  ir_ref cond = ir_IF(load_operand_if_necessary(&opcond));
+  ir_IF_TRUE(cond);
+  LastStatementType lst = parse_block();
+  (void)lst;
+  ir_ref iftrue = ir_END();
+  ir_IF_FALSE(cond);
+  ir_ref iffalse = ir_END();
+  ir_MERGE_2(iftrue, iffalse);
 #if 0
   IRBlock after = gen_ssa_make_block_name();
 
@@ -1636,11 +1648,16 @@ static void parse_def_statement(void) {
   Sym* funcsym = sym_new(SYM_FUNC, name, functype);
   enter_function(funcsym, param_names, param_types);
   LastStatementType lst = parse_block();
-  if (lst == LST_NON_RETURN && !type_eq(type_void, type_func_return_type(functype))) {
-    errorf_offset(function_start_offset,
-                  "Function returns %s, but there is no return at the end of the body.",
-                  type_as_str(type_func_return_type(functype)));
+  if (lst == LST_NON_RETURN) {
+    if (!type_eq(type_void, type_func_return_type(functype))) {
+      errorf_offset(function_start_offset,
+                    "Function returns %s, but there is no return at the end of the body.",
+                    type_as_str(type_func_return_type(functype)));
+    } else {
+      ir_RETURN(IR_UNUSED);
+    }
   }
+
   leave_function();
 }
 
