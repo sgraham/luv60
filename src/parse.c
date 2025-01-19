@@ -54,11 +54,17 @@ typedef struct Sym {
 
 typedef struct FuncData {
   Sym* sym;
+  Sym* return_slot;
 } FuncData;
 
 #define MAX_FUNC_NESTING 16
 #define MAX_VARIABLE_SCOPES 32
 #define MAX_FUNC_PARAMS 32
+#define MAX_PENDING_CONDS 32
+
+typedef struct PendingCond {
+  ir_ref iftrue;
+} PendingCond;
 
 typedef struct VarScope VarScope;
 struct VarScope {
@@ -94,6 +100,9 @@ typedef struct Parser {
   //LqSymbol lqsym_fmt_print_i32;
   //LqSymbol lqsym_fmt_print_str;
   //int string_gensym_counter;
+
+  PendingCond pending_conds[MAX_PENDING_CONDS];
+  int num_pending_conds;
 
   void* main_func_entry;
   bool verbose;
@@ -365,12 +374,19 @@ static void enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS], Type para
   ir_init(&parser.ctx, IR_FUNCTION | IR_OPT_FOLDING | IR_OPT_MEM2SSA, IR_CONSTS_LIMIT_MIN,
           IR_INSNS_LIMIT_MIN);
 #endif
-  parser.ctx.ret_type = type_to_ir_type(type_func_return_type(sym->type));
+  Type ret_type = type_func_return_type(sym->type);
+  parser.ctx.ret_type = type_to_ir_type(ret_type);
 
   ir_START();
 #if ARCH_ARM64  // See above.
   ir_ALLOCA(32);
 #endif
+
+  if (type_eq(ret_type, type_void)) {
+    parser.cur_func->return_slot = NULL;
+  } else {
+    parser.cur_func->return_slot = make_local_and_alloc(SYM_VAR, str_intern("$ret"), ret_type);
+  }
 
   uint32_t num_params = type_func_num_params(sym->type);
   for (uint32_t i = 0; i < num_params; ++i) {
@@ -380,9 +396,23 @@ static void enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS], Type para
 
 static void leave_function(void) {
   size_t size;
+
+  Type ret_type = type_func_return_type(parser.cur_func->sym->type);
+  if (type_eq(ret_type, type_void)) {
+    ir_RETURN(IR_UNUSED);
+  } else {
+    ir_RETURN(ir_VLOAD(type_to_ir_type(ret_type), parser.cur_func->return_slot->ref));
+  }
+
   if (parser.verbose) {
     ir_dump(&parser.ctx, stderr);
   }
+
+  if (!ir_check(&parser.ctx)) {
+    base_writef_stderr("ir_check failed, not compiling\n");
+    base_exit(1);
+  }
+
 #if ARCH_ARM64  // See above.
   void* entry = ir_jit_compile(&parser.ctx, /*opt=*/0, &size);
 #else
@@ -391,7 +421,7 @@ static void leave_function(void) {
 #endif
   if (entry) {
     if (parser.verbose) {
-      fprintf(stderr, "compiled %zu bytes for %s\n", size, cstr(parser.cur_func->sym->name));
+      fprintf(stderr, "=> codegen to %zu bytes for '%s'\n", size, cstr(parser.cur_func->sym->name));
 #if !OS_WINDOWS  // TODO: don't have capstone or ir_disasm on win32 right now
       ir_disasm_init();
       ir_disasm(cstr(parser.cur_func->sym->name), entry, size, false, &parser.ctx, stderr);
@@ -587,18 +617,6 @@ static bool is_floating_type(Type type) {
   return type.i >= TYPE_FLOAT && type.i <= TYPE_DOUBLE;
 }
 #endif
-
-static bool is_condition_type(Type type) {
-  switch (type_kind(type)) {
-    case TYPE_BOOL:
-    case TYPE_STR:
-    case TYPE_SLICE:
-    case TYPE_PTR:
-      return true;
-    default:
-      return false;
-  }
-}
 
 static bool is_convertible(Operand* operand, Type dest) {
   Type src = operand->type;
@@ -1437,6 +1455,18 @@ static void expect_end_of_statement(const char* after_what) {
   }
 }
 
+static bool is_condition_type(Type type) {
+  switch (type_kind(type)) {
+    case TYPE_BOOL:
+    case TYPE_STR:
+    case TYPE_SLICE:
+    case TYPE_PTR:
+      return true;
+    default:
+      return false;
+  }
+}
+
 static Operand if_statement_cond_helper(void) {
   Operand cond = parse_expression(NULL);
   if (!is_condition_type(cond.type)) {
@@ -1454,38 +1484,22 @@ static void if_statement(void) {
   ir_ref cond = ir_IF(load_operand_if_necessary(&opcond));
   ir_IF_TRUE(cond);
   LastStatementType lst = parse_block();
-  (void)lst;
   ir_ref iftrue = ir_END();
-  ir_IF_FALSE(cond);
-  ir_ref iffalse = ir_END();
-  ir_MERGE_2(iftrue, iffalse);
-#if 0
-  IRBlock after = gen_ssa_make_block_name();
-
-  do {
-    Operand cond = if_statement_cond_helper();
-    IRBlock then = gen_ssa_make_block_name();
-    IRBlock next = gen_ssa_make_block_name();
-    gen_ssa_jump_cond(cond.irref, then, next);
-
-    gen_ssa_start_block(then);
-    if (parse_block() == LST_NON_RETURN) {
-      gen_ssa_jump(after);
-    }
-    gen_ssa_start_block(next);
-  } while (match(TOK_ELIF));
-
-  if (match(TOK_ELSE)) {
-    consume(TOK_COLON, "Expect ':' to start else.");
-    consume(TOK_NEWLINE, "Expect newline after ':' to start else.");
-    consume(TOK_INDENT, "Expect indent to start else.");
-    if (parse_block() == LST_NON_RETURN) {
-      gen_ssa_jump(after);
-    }
+  if (lst == LST_RETURN_VALUE || lst == LST_RETURN_VOID) {
+    ir_IF_FALSE(cond);
+    // Push that we're in the FALSE block, with END of iftrue
+    // When we get to the end of the outer block, END this false
+    // and the MERGE iftrue, iffalse
+    ASSERT(parser.num_pending_conds < COUNTOFI(parser.pending_conds));
+    parser.pending_conds[parser.num_pending_conds++] = (PendingCond){iftrue};
+  } else {
+    ir_IF_FALSE(cond);
+    ir_ref no_false = ir_END();
+    ir_MERGE_2(iftrue, no_false);
   }
 
-  gen_ssa_start_block(after);
-#endif
+  ASSERT(!check(TOK_ELIF) && "todo elif");
+  ASSERT(!check(TOK_ELSE) && "todo else");
 }
 
 static void for_statement(void) {
@@ -1602,11 +1616,10 @@ static bool parse_func_body_only_statement(LastStatementType* lst) {
         errorf("Cannot convert type %s to expected return type %s.", type_as_str(op.type),
                type_as_str(func_ret));
       }
-      ir_ref ret = load_operand_if_necessary(&op);
-      ir_RETURN(ret);
+      ir_VSTORE(parser.cur_func->return_slot->ref, load_operand_if_necessary(&op));
     } else {
+      consume(TOK_NEWLINE, "Expected newline after return in function with no return type.");
       *lst = LST_RETURN_VOID;
-      ir_RETURN(IR_UNUSED);
     }
     return true;
   }
@@ -1620,6 +1633,13 @@ static LastStatementType parse_block(void) {
     lst = parse_statement(/*toplevel=*/false);
     skip_newlines();
   }
+
+  if (parser.num_pending_conds) {
+    PendingCond cond = parser.pending_conds[--parser.num_pending_conds];
+    ir_ref other = ir_END();
+    ir_MERGE_2(cond.iftrue, other);
+  }
+
   consume(TOK_DEDENT, "Expect end of block.");
   return lst;
 }
@@ -1653,8 +1673,6 @@ static void parse_def_statement(void) {
       errorf_offset(function_start_offset,
                     "Function returns %s, but there is no return at the end of the body.",
                     type_as_str(type_func_return_type(functype)));
-    } else {
-      ir_RETURN(IR_UNUSED);
     }
   }
 

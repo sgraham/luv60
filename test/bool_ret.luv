@@ -1,8 +1,12 @@
-# RET: 18
+# TXT: ok
 def bool stuff():
     return true
 
-def int main():
+def bool stuff2():
+    return false
+
+def main():
     if stuff():
-        return 18
-    return 111
+        print "ok"
+    if stuff2():
+        print "bad"
