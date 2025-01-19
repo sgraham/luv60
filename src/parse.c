@@ -1278,19 +1278,16 @@ static Operand parse_variable(bool can_assign, Type* expected) {
       }
       return operand_null;
     } else if (scope_result != SCOPE_RESULT_LOCAL && scope_decl == SSD_NONE) {
-      ASSERT(false); abort();
-#if 0
       if (eq_kind == TOK_EQ) {
         // Variable declaration without a type.
         Operand op = parse_expression(NULL);
         Sym* new = make_local_and_alloc(SYM_VAR, target, op.type);
-        gen_ssa_store(new->irref, op.type, op.irref);
+        ir_VSTORE(new->ref, load_operand_if_necessary(&op));
         return operand_null;
       } else {
         error_offset(eq_offset,
                      "Cannot use an augmented assignment when implicitly declaring a local.");
       }
-#endif
     }
   } else {
     if (scope_result == SCOPE_RESULT_LOCAL) {

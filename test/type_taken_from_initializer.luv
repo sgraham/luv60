@@ -1,4 +1,4 @@
-# DISABLED
+# RUN: {self} --main-rc
 # RET: 12
 def int main():
     int x = 2
