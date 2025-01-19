@@ -371,7 +371,7 @@ static void enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS], Type para
   // crappy workaround for now.
   ir_init(&parser.ctx, IR_FUNCTION, IR_CONSTS_LIMIT_MIN, IR_INSNS_LIMIT_MIN);
 #else
-  ir_init(&parser.ctx, IR_FUNCTION | IR_OPT_FOLDING | IR_OPT_MEM2SSA, IR_CONSTS_LIMIT_MIN,
+  ir_init(&parser.ctx, IR_FUNCTION /*| IR_OPT_FOLDING | IR_OPT_MEM2SSA*/, IR_CONSTS_LIMIT_MIN,
           IR_INSNS_LIMIT_MIN);
 #endif
   Type ret_type = type_func_return_type(sym->type);
@@ -421,7 +421,7 @@ static void leave_function(void) {
 #if ARCH_ARM64  // See above.
   void* entry = ir_jit_compile(&parser.ctx, /*opt=*/0, &size);
 #else
-  void* entry = ir_jit_compile(&parser.ctx, /*opt=*/2, &size);
+  void* entry = ir_jit_compile(&parser.ctx, /*opt=*/0, &size);
 #endif
   if (entry) {
     if (parser.verbose) {
@@ -1494,13 +1494,25 @@ static void if_statement(void) {
       ASSERT(parser.num_pending_conds < COUNTOFI(parser.pending_conds));
       parser.pending_conds[parser.num_pending_conds++] = (PendingCond){iftrue};
     } else {
+      bool no_more = false;
       ir_IF_FALSE(cond);
-      ir_ref no_false = ir_END();
-      ir_MERGE_2(iftrue, no_false);
+      if (match(TOK_ELSE)) {
+        consume(TOK_COLON, "Expect ':' to start else.");
+        consume(TOK_NEWLINE, "Expect newline after ':' to start else.");
+        consume(TOK_INDENT, "Expect indent to start else.");
+        LastStatementType lst = parse_block();
+        if (lst == LST_RETURN_VALUE || lst == LST_RETURN_VOID) {
+          ASSERT(false && "todo: return in else");
+        }
+        no_more = true;
+      }
+      ir_ref otherwise = ir_END();
+      ir_MERGE_2(iftrue, otherwise);
+      if (no_more) {
+        break;
+      }
     }
   } while (match(TOK_ELIF));
-
-  ASSERT(!check(TOK_ELSE) && "todo else");
 }
 
 static void for_statement(void) {

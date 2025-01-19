@@ -1,0 +1,10 @@
+# OUT: A
+def int main():
+    int x = 5
+    if x > 1:
+        print "A"
+    else:
+        print "b"
+    return 0
+
+
