@@ -156,6 +156,12 @@ Type type_function(Type* params, size_t num_params, Type return_type);
 static inline FORCE_INLINE bool type_is_none(Type a) { return a.u == 0; }
 static inline FORCE_INLINE bool type_eq(Type a, Type b) { return a.u == b.u; }
 static inline FORCE_INLINE TypeKind type_kind(Type a) { return (TypeKind)(a.u & 0xff); }
+bool type_is_unsigned(Type type);
+bool type_is_signed(Type type);
+bool type_is_arithmetic(Type type);
+bool type_is_integer(Type type);
+bool type_is_ptr_like(Type type);
+bool type_is_aggregate(Type type);
 
 uint32_t type_func_num_params(Type type);
 Type type_func_return_type(Type type);

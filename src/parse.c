@@ -5,6 +5,11 @@
 #undef _ir_CTX
 #define _ir_CTX &parser.ctx
 
+typedef struct RuntimeStr {
+  const uint8_t* data;
+  int64_t length;
+} RuntimeStr;
+
 typedef enum SymKind {
   SYM_NONE,
   SYM_VAR,
@@ -105,6 +110,9 @@ typedef struct Operand {
 static Operand operand_null;
 
 ir_type type_to_ir_type(Type type) {
+  if (type_is_aggregate(type)) {
+    return IR_U64;
+  }
   switch (type_kind(type)) {
     case TYPE_BOOL:
       return IR_BOOL;
@@ -135,11 +143,6 @@ ir_type type_to_ir_type(Type type) {
 }
 
 #if 0
-static Operand operand_rvalue(Type type, OperandKind opkind, LqRef ref) {
-  return (Operand){
-      .type = type, .opkind = opkind, .lqref = ref, .is_lvalue = false, .is_const = false};
-}
-
 static Operand operand_sym(Type type, LqSymbol lqsym) {
   return (Operand){.type = type, .opkind = OpKindSymbol, .lqsym = lqsym};
 }
@@ -150,20 +153,24 @@ static Operand operand_lvalue(Type type, ir_ref ref) {
       .type = type, .ref = ref, .ref_is_addr = true, .is_lvalue = true, .is_const = false};
 }
 
+static Operand operand_rvalue(Type type, ir_ref ref) {
+  return (Operand){
+      .type = type, .ref = ref, .ref_is_addr = true, .is_lvalue = false, .is_const = false};
+}
+
 static Operand operand_const(Type type, ir_ref ref) {
   return (Operand){.type = type, .ref = ref, .ref_is_addr = false, .is_const = true};
 }
 
 #if 0
-void store_for_type(ir_ref into, Operand* op) {
+void store_into_operand(ir_ref into, Operand* op) {
 }
 #endif
 
-ir_ref load_for_type(Type type, Operand* op) {
-  if (op->ref_is_addr) {
-    return ir_VLOAD(type_to_ir_type(type), op->ref);
+ir_ref load_operand_if_necessary(Operand* op) {
+  if (op->ref_is_addr && !type_is_aggregate(op->type)) {
+    return ir_VLOAD(type_to_ir_type(op->type), op->ref);
   } else {
-    ASSERT(op->is_const);  // TODO: Not sure if this is true.
     return op->ref;
   }
 }
@@ -281,34 +288,22 @@ static Sym* sym_new(SymKind kind, Str name, Type type) {
 static void init_module_globals(void) {
 }
 
+static void print_i32_impl(int32_t val) {
+  printf("%d\n", val);
+}
+
 static void print_i32(Operand* op) {
-  abort();
-#if 0
-  LqRef printf_func = lq_extern("printf");
-  lq_i_call3(lq_type_word, printf_func,
-             (LqCallArg){lq_type_long, lq_ref_for_symbol(parser.lqsym_fmt_print_i32)},  //
-             lq_varargs_begin,                                                          //
-             (LqCallArg){lq_type_word, value_of(op)}                                    //
-  );
-#endif
+  ir_ref addr = ir_CONST_ADDR(print_i32_impl);
+  ir_CALL_1(IR_VOID, addr, load_operand_if_necessary(op));
+}
+
+static void print_str_impl(RuntimeStr str) {
+  printf("%.*s\n", (int)str.length, str.data);
 }
 
 static void print_str(Operand* op) {
-  abort();
-#if 0
-  LqRef printf_func = lq_extern("printf");
-  ASSERT(op->opkind == OpKindSymbol);
-  LqRef obj = lq_ref_for_symbol(op->lqsym);
-  LqRef data = lq_i_load(lq_type_long, obj);
-  LqRef sizeptr = lq_i_add(lq_type_long, obj, lq_const_int(8));
-  LqRef size = lq_i_load(lq_type_long, sizeptr);
-  lq_i_call4(lq_type_word, printf_func,
-             (LqCallArg){lq_type_long, lq_ref_for_symbol(parser.lqsym_fmt_print_str)},  //
-             lq_varargs_begin,                                                          //
-             (LqCallArg){lq_type_word, size},
-             (LqCallArg){lq_type_long, data}
-  );
-#endif
+  ir_ref addr = ir_CONST_ADDR(print_str_impl);
+  ir_CALL_1(IR_VOID, addr, load_operand_if_necessary(op));
 }
 
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
@@ -380,7 +375,8 @@ static void leave_function(void) {
 #if ARCH_ARM64  // See above.
   void* entry = ir_jit_compile(&parser.ctx, /*opt=*/0, &size);
 #else
-  void* entry = ir_jit_compile(&parser.ctx, /*opt=*/2, &size);
+  // Hang in ir_sccp on opt > 1: https://github.com/dstogov/ir/issues/101
+  void* entry = ir_jit_compile(&parser.ctx, /*opt=*/1, &size);
 #endif
   if (entry) {
     if (parser.verbose) {
@@ -397,7 +393,7 @@ static void leave_function(void) {
   } else {
     base_writef_stderr("compilation failed '%s'\n", cstr(parser.cur_func->sym->name));
   }
-	ir_free(&parser.ctx);
+  ir_free(&parser.ctx);
 
   --parser.num_funcdatas;
   ASSERT(parser.num_funcdatas >= 0);
@@ -579,18 +575,6 @@ static void skip_newlines(void) {
   }
 }
 
-static bool is_arithmetic_type(Type type) {
-  return type_kind(type) >= TYPE_U8 && type_kind(type) <= TYPE_DOUBLE;
-}
-
-static bool is_integer_type(Type type) {
-  return type_kind(type) >= TYPE_U8 && type_kind(type) <= TYPE_ENUM;
-}
-
-static bool is_ptr_like_type(Type type) {
-  return type_kind(type) == TYPE_PTR || type_kind(type) == TYPE_FUNC;
-}
-
 #if 0
 static bool is_floating_type(Type type) {
   return type.i >= TYPE_FLOAT && type.i <= TYPE_DOUBLE;
@@ -615,7 +599,7 @@ static bool is_convertible(Operand* operand, Type dest) {
     return true;
   } else if (type_kind(dest) == TYPE_VOID) {
     return true;
-  } else if (is_arithmetic_type(dest) && is_arithmetic_type(src)) {
+  } else if (type_is_arithmetic(dest) && type_is_arithmetic(src)) {
     return true;
   }
   // TODO: various pointer, null, etc.
@@ -629,12 +613,12 @@ static bool is_castable(Operand* operand, Type dest) {
   if (is_convertible(operand, dest)) {
     return true;
   } else if (type_kind(dest) == TYPE_BOOL) {
-    return is_ptr_like_type(src) || is_integer_type(src);
-  } else if (is_integer_type(dest)) {
-    return is_ptr_like_type(src);
-  } else if (is_integer_type(src)) {
-    return is_ptr_like_type(dest);
-  } else if (is_ptr_like_type(dest) && is_ptr_like_type(src)) {
+    return type_is_ptr_like(src) || type_is_integer(src);
+  } else if (type_is_integer(dest)) {
+    return type_is_ptr_like(src);
+  } else if (type_is_integer(src)) {
+    return type_is_ptr_like(dest);
+  } else if (type_is_ptr_like(dest) && type_is_ptr_like(src)) {
     return true;
   } else {
     return false;
@@ -651,7 +635,27 @@ static bool cast_operand(Operand* operand, Type type) {
       // TODO: save val into op and convert here
     }
 
-    abort();
+    ir_ref ref_to_adjust;
+    if (operand->ref_is_addr) {
+      ref_to_adjust = load_operand_if_necessary(operand);
+      operand->is_lvalue = false;
+      operand->ref_is_addr = false;
+    } else {
+      ref_to_adjust = operand->ref;
+    }
+
+    if (type_size(operand->type) > type_size(type)) {
+      operand->ref = ir_TRUNC(type_to_ir_type(type), ref_to_adjust);
+    } else if (type_size(operand->type) < type_size(type)) {
+      if (type_is_signed(type)) {
+        operand->ref = ir_SEXT(type_to_ir_type(type), ref_to_adjust);
+      } else {
+        operand->ref = ir_ZEXT(type_to_ir_type(type), ref_to_adjust);
+      }
+    } else {
+      // This is int-to-int, probably not necessary? Not sure.
+      operand->ref = ir_BITCAST(type_to_ir_type(type), ref_to_adjust);
+    }
 #if 0
     // Not sure about this, need to handle i16 being stored and then cast to
     // i32, so there's a full proper i32 to load.
@@ -670,7 +674,6 @@ static bool cast_operand(Operand* operand, Type type) {
 static bool convert_operand(Operand* operand, Type type) {
   if (is_convertible(operand, type)) {
     cast_operand(operand, type);
-    operand->is_lvalue = false;
     return true;
   }
   return false;
@@ -1088,41 +1091,27 @@ static Operand parse_sizeof(bool can_assign, Type* expected) {
   return operand_null;
 }
 
-#if 0
-static LqSymbol emit_string_obj(const char* ptr, size_t size) {
-  int str_uniq = parser.string_gensym_counter++;
-  lq_data_start(lq_linkage_default, cstr(str_internf("str_bytes_%d", str_uniq)));
-  // lq_data_string doesn't work because it assume nul-terminated.
-  for (size_t i = 0; i < size; ++i) {
-    lq_data_byte(ptr[i]);
-  }
-  lq_data_byte(0);
-  LqSymbol str_bytes = lq_data_end();
-
-  lq_data_start(lq_linkage_default, cstr(str_internf("str_%d", str_uniq)));
-  lq_data_ref(str_bytes, 0);
-  lq_data_long(size);
-  return lq_data_end();
+static ir_ref emit_string_obj(Str str) {
+  // TODO: I think IR doesn't do much with data? So the str bytes can go into
+  // the intern table, and then the Str object probably needs a data segment
+  // that lives with the code segment that we shove all these into.
+  RuntimeStr* p = malloc(sizeof(RuntimeStr));
+  p->data = (uint8_t*)cstr(str);  // Maybe we want to use str_intern for RuntimeStr too?
+  p->length = str_len(str);
+  return ir_CONST_ADDR(p);
 }
-#endif
 
 static Operand parse_string(bool can_assign, Type* expected) {
   StrView strview = get_strview_for_offsets(prev_offset(), cur_offset());
-  if (memchr(strview.data, '\\', strview.size) != NULL) {
+  if (memchr(strview.data, '\\', strview.size) != NULL) { // worthwhile?
     Str str = str_process_escapes(strview.data + 1, strview.size - 2);
     if (str.i == 0) {
       error("Invalid string escape.");
     }
-    ASSERT(false); abort();
-#if 0
-    return operand_const(type_str, gen_mir_op_str_const(str));
-#endif
+    return operand_rvalue(type_str, emit_string_obj(str));
   } else {
-    ASSERT(false); abort();
-#if 0
-    LqSymbol str = emit_string_obj(strview.data + 1, strview.size - 2);
-    return operand_sym(type_str, str);
-#endif
+    return operand_rvalue(type_str,
+                          emit_string_obj(str_intern_len(strview.data + 1, strview.size - 2)));
   }
 }
 
@@ -1245,10 +1234,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
         errorf("Cannot assign type %s to type %s.", type_as_str(op.type), type_as_str(sym->type));
       }
       if (eq_kind == TOK_EQ) {
-        abort();
-#if 0
-        store_for_type(sym->lqref, op.type, op.lqref);
-#endif
+        ir_VSTORE(sym->ref, load_operand_if_necessary(&op));
       } else {
         error_offset(eq_offset, "Unhandled assignment type.");
       }
@@ -1618,7 +1604,7 @@ static bool parse_func_body_only_statement(LastStatementType* lst) {
         errorf("Cannot convert type %s to expected return type %s.", type_as_str(op.type),
                type_as_str(func_ret));
       }
-      ir_ref ret = load_for_type(func_ret, &op);
+      ir_ref ret = load_operand_if_necessary(&op);
       ir_RETURN(ret);
     } else {
       *lst = LST_RETURN_VOID;

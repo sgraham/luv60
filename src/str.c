@@ -135,7 +135,7 @@ escape_error:
   *into++ = 0;
 
   ASSERT(final_len + sizeof(uint32_t) + 1 <= allocate_bytes);
-  // We preallocated a maximal amount, shrink to actaully used (unrelated to the
+  // We preallocated a maximal amount, shrink to actually used (unrelated to the
   // intern'ing that happens in rewind).
   str_insert_location -= allocate_bytes - (final_len + sizeof(uint32_t) + 1);
 

@@ -213,6 +213,71 @@ void type_init(void) {
   num_typedata = NUM_TYPE_KINDS;
 }
 
+bool type_is_unsigned(Type type) {
+  ASSERT(type_is_integer(type));
+  switch (type_kind(type)) {
+    case TYPE_U8:
+    case TYPE_U16:
+    case TYPE_U32:
+    case TYPE_U64:
+      return true;
+    case TYPE_I8:
+    case TYPE_I16:
+    case TYPE_I32:
+    case TYPE_I64:
+      return false;
+    default:
+      ASSERT(false);
+      TRAP();
+  }
+}
+
+bool type_is_signed(Type type) {
+  ASSERT(type_is_integer(type));
+  switch (type_kind(type)) {
+    case TYPE_U8:
+    case TYPE_U16:
+    case TYPE_U32:
+    case TYPE_U64:
+      return false;
+    case TYPE_I8:
+    case TYPE_I16:
+    case TYPE_I32:
+    case TYPE_I64:
+      return true;
+    default:
+      ASSERT(false);
+      TRAP();
+  }
+}
+
+bool type_is_arithmetic(Type type) {
+  return type_kind(type) >= TYPE_U8 && type_kind(type) <= TYPE_DOUBLE;
+}
+
+bool type_is_integer(Type type) {
+  return type_kind(type) >= TYPE_U8 && type_kind(type) <= TYPE_ENUM;
+}
+
+bool type_is_ptr_like(Type type) {
+  return type_kind(type) == TYPE_PTR || type_kind(type) == TYPE_FUNC;
+}
+
+bool type_is_aggregate(Type type) {
+  switch (type_kind(type)) {
+    case TYPE_STR:
+    case TYPE_RANGE:
+    case TYPE_SLICE:
+    case TYPE_ARRAY:
+    case TYPE_DICT:
+    case TYPE_STRUCT:
+    case TYPE_UNION:
+      return true;
+    default:
+      return false;
+  }
+}
+
 uint32_t type_func_num_params(Type type) {
   ASSERT(type_kind(type) == TYPE_FUNC);
   TypeData* td = type_td(type);
