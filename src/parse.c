@@ -58,11 +58,6 @@ typedef struct Sym {
   SymScopeDecl scope_decl;
 } Sym;
 
-typedef struct FuncData {
-  Sym* sym;
-  Sym* return_slot;
-} FuncData;
-
 #define MAX_FUNC_NESTING 16
 #define MAX_VARIABLE_SCOPES 32
 #define MAX_FUNC_PARAMS 32
@@ -71,6 +66,13 @@ typedef struct FuncData {
 typedef struct PendingCond {
   ir_ref iftrue;
 } PendingCond;
+
+typedef struct FuncData {
+  Sym* sym;
+  Sym* return_slot;
+  PendingCond pending_conds[MAX_PENDING_CONDS];
+  int num_pending_conds;
+} FuncData;
 
 typedef struct VarScope VarScope;
 struct VarScope {
@@ -106,9 +108,6 @@ typedef struct Parser {
   //LqSymbol lqsym_fmt_print_i32;
   //LqSymbol lqsym_fmt_print_str;
   //int string_gensym_counter;
-
-  PendingCond pending_conds[MAX_PENDING_CONDS];
-  int num_pending_conds;
 
   void* main_func_entry;
   bool verbose;
@@ -1530,8 +1529,8 @@ static void if_statement(void) {
       // Push that we're in the FALSE block, with END of iftrue
       // When we get to the end of the outer block, END this false
       // and the MERGE iftrue, iffalse
-      ASSERT(parser.num_pending_conds < COUNTOFI(parser.pending_conds));
-      parser.pending_conds[parser.num_pending_conds++] = (PendingCond){iftrue};
+      ASSERT(parser.cur_func->num_pending_conds < COUNTOFI(parser.cur_func->pending_conds));
+      parser.cur_func->pending_conds[parser.cur_func->num_pending_conds++] = (PendingCond){iftrue};
     } else {
       bool no_more = false;
       ir_IF_FALSE(cond);
@@ -1685,8 +1684,8 @@ static LastStatementType parse_block(void) {
     skip_newlines();
   }
 
-  if (parser.num_pending_conds) {
-    PendingCond cond = parser.pending_conds[--parser.num_pending_conds];
+  if (parser.cur_func->num_pending_conds) {
+    PendingCond cond = parser.cur_func->pending_conds[--parser.cur_func->num_pending_conds];
     ir_ref other = ir_END();
     ir_MERGE_2(cond.iftrue, other);
   }
