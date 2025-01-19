@@ -416,8 +416,7 @@ static void leave_function(void) {
 #if ARCH_ARM64  // See above.
   void* entry = ir_jit_compile(&parser.ctx, /*opt=*/0, &size);
 #else
-  // Hang in ir_sccp on opt > 1: https://github.com/dstogov/ir/issues/101
-  void* entry = ir_jit_compile(&parser.ctx, /*opt=*/1, &size);
+  void* entry = ir_jit_compile(&parser.ctx, /*opt=*/2, &size);
 #endif
   if (entry) {
     if (parser.verbose) {

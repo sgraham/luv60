@@ -112,13 +112,13 @@ def get_tests():
         test = test.replace("\\", "/")
         run = "{self} --main-rc"
         ret = "0"
-        crc = "0"
-        txt = ""
+        out = ""
+        err = ""
         disabled = False
         run_prefix = "# RUN: "
         ret_prefix = "# RET: "
-        crc_prefix = "# CRC: "
-        txt_prefix = "# TXT: "
+        err_prefix = "# ERR: "
+        out_prefix = "# OUT: "
         disabled_prefix = "# DISABLED"
         with open(test, "r", encoding="utf-8") as f:
             for l in f.readlines():
@@ -126,10 +126,10 @@ def get_tests():
                     run = l[len(run_prefix) :].rstrip()
                 if l.startswith(ret_prefix):
                     ret = l[len(ret_prefix) :].rstrip()
-                if l.startswith(crc_prefix):
-                    crc = l[len(crc_prefix) :].rstrip()
-                if l.startswith(txt_prefix):
-                    txt += l[len(txt_prefix) :].rstrip() + "\n"
+                if l.startswith(err_prefix):
+                    err += l[len(err_prefix) :].rstrip() + "\n"
+                if l.startswith(out_prefix):
+                    out += l[len(out_prefix) :].rstrip() + "\n"
                 if l.startswith(disabled_prefix):
                     disabled = True
 
@@ -142,8 +142,8 @@ def get_tests():
                 tests[test] = {
                     "run": sub(run),
                     "ret": int(ret),
-                    "crc": int(crc),
-                    "txt": sub(txt),
+                    "out": sub(out),
+                    "err": sub(err),
                 }
     return tests
 

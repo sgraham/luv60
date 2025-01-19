@@ -28,7 +28,7 @@ def main():
     env = os.environ.copy()
     env["ASAN_OPTIONS"] = "exitcode=117"
 
-    if cmds["txt"]:
+    if cmds["out"] or cmds["err"]:
         res = subprocess.run(
             [ccbin] + cmds["run"].split(" "),
             cwd=root,
@@ -37,11 +37,18 @@ def main():
             env=env,
         )
         out = res.stdout
-        if out != cmds["txt"]:
-            print("got output:\n")
+        err = res.stderr
+        if out != cmds["out"]:
+            print("got stdout:\n")
             print(out)
             print("but expected:\n")
-            print(cmds["txt"])
+            print(cmds["out"])
+            return 1
+        if err != cmds["err"]:
+            print("got stderr:\n")
+            print(out)
+            print("but expected:\n")
+            print(cmds["err"])
             return 1
     else:
         res = subprocess.run([ccbin] + cmds["run"].split(" "), cwd=root, env=env)
