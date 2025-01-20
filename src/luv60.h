@@ -3,9 +3,6 @@
 #include "base_config.h"
 #include "base_core.h"
 
-#include "../third_party/ir/ir.h"
-#include "../third_party/ir/ir_builder.h"
-
 #if ARCH_X64
 #include <intrin.h>
 #endif
@@ -198,9 +195,15 @@ Type type_ptr_subtype(Type type);
 
 // parse.c
 
-void* parse(Arena* arena,
-            Arena* temp_arena,
-            const char* filename,
-            ReadFileResult file,
-            bool verbose,
-            int opt_level);
+void* parse_code_gen(Arena* arena,
+                     Arena* temp_arena,
+                     const char* filename,
+                     ReadFileResult file,
+                     bool verbose,
+                     int opt_level);
+void* parse_syntax_check(Arena* arena,
+                         Arena* temp_arena,
+                         const char* filename,
+                         ReadFileResult file,
+                         bool verbose,
+                         int opt_level);

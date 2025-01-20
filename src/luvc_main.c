@@ -4,11 +4,13 @@ static void parse_commandline(int argc,
                               char** argv,
                               Str* input,
                               bool* verbose,
+                              bool* syntax_only,
                               bool* return_main_rc,
                               int* opt_level) {
   int i = 1;
   *verbose = false;
   *return_main_rc = false;
+  *syntax_only = false;
   *input = (Str){0};
   *opt_level = 1;
   while (i < argc) {
@@ -17,6 +19,9 @@ static void parse_commandline(int argc,
       ++i;
     } else if (strcmp(argv[i], "--main-rc") == 0) {
       *return_main_rc = true;
+      ++i;
+    } else if (strcmp(argv[i], "--syntax-only") == 0) {
+      *syntax_only = true;
       ++i;
     } else if (strcmp(argv[i], "--opt") == 0) {
       *opt_level = atoi(argv[i+1]);
@@ -52,9 +57,10 @@ int main(int argc, char** argv) {
 
   Str input;
   bool verbose;
+  bool syntax_only;
   bool return_main_rc;
   int opt_level;
-  parse_commandline(argc, argv, &input, &verbose, &return_main_rc, &opt_level);
+  parse_commandline(argc, argv, &input, &verbose, &syntax_only, &return_main_rc, &opt_level);
 
   ReadFileResult file = base_read_file(file_arena, cstr(input));
   if (!file.buffer) {
@@ -62,17 +68,23 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  void* entry = parse(main_arena, parse_temp_arena, cstr(input), file, verbose, opt_level);
-  int rc = 0;
-  if (entry) {
-    int entry_returned = ((int (*)())entry)();
-    if (verbose) {
-      printf("main() returned %d\n", entry_returned);
+  if (syntax_only) {
+    parse_syntax_check(main_arena, parse_temp_arena, cstr(input), file, verbose, opt_level);
+    return 0;
+  } else {
+    void* entry =
+        parse_code_gen(main_arena, parse_temp_arena, cstr(input), file, verbose, opt_level);
+    int rc = 0;
+    if (entry) {
+      int entry_returned = ((int (*)())entry)();
+      if (verbose) {
+        printf("main() returned %d\n", entry_returned);
+      }
+      if (return_main_rc) {
+        rc = entry_returned;
+      }
     }
-    if (return_main_rc) {
-      rc = entry_returned;
-    }
-  }
 
-  return rc;
+    return rc;
+  }
 }

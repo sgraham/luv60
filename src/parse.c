@@ -2,8 +2,6 @@
 
 #include "dict.h"
 
-#undef _ir_CTX
-#define _ir_CTX (&parser.cur_func->ctx)
 
 typedef struct RuntimeStr {
   const uint8_t* data;
@@ -131,7 +129,7 @@ typedef struct Operand {
 
 static Operand operand_null;
 
-ir_type type_to_ir_type(Type type) {
+static ir_type type_to_ir_type(Type type) {
   if (type_is_aggregate(type)) {
     return IR_U64;
   }
@@ -197,7 +195,7 @@ void store_into_operand(ir_ref into, Operand* op) {
 }
 #endif
 
-ir_ref load_operand_if_necessary(Operand* op) {
+static ir_ref load_operand_if_necessary(Operand* op) {
   if (op->ref_is_addr && !type_is_aggregate(op->type)) {
     return ir_VLOAD(type_to_ir_type(op->type), op->ref);
   } else {
@@ -420,7 +418,7 @@ static void enter_function(Sym* sym,
   // Allocation of the VAR for return_slot must be after all PARAMs.
   // https://github.com/dstogov/ir/issues/103.
   Type ret_type = type_func_return_type(sym->type);
-  _ir_CTX->ret_type = type_to_ir_type(ret_type);
+  parser.cur_func->ctx.ret_type = type_to_ir_type(ret_type);
   if (type_eq(ret_type, type_void)) {
     parser.cur_func->return_slot = NULL;
   } else {
@@ -451,7 +449,7 @@ static void leave_function(void) {
     base_exit(1);
   }
 
-#if 1
+#if ENABLE_CODE_GEN
   size_t size;
 #if ARCH_ARM64  // See above.
   void* entry = ir_jit_compile(_ir_CTX, /*opt=*/0, &size);
@@ -1779,12 +1777,12 @@ static LastStatementType parse_statement(bool toplevel) {
   return LST_NON_RETURN;  // Return isn't possible unless in func.
 }
 
-void* parse(Arena* main_arena,
-            Arena* temp_arena,
-            const char* filename,
-            ReadFileResult file,
-            bool verbose,
-            int opt_level) {
+static void* parse_impl(Arena* main_arena,
+                   Arena* temp_arena,
+                   const char* filename,
+                   ReadFileResult file,
+                   bool verbose,
+                   int opt_level) {
   type_init(main_arena);
 
   // In the case of "a.a." the worst case for offsets is the same as the number

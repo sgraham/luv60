@@ -26,7 +26,8 @@ COMMON_FILELIST = [
     "base_mac.c",
     "base_win.c",
     "lex.c",
-    "parse.c",
+    "parse_code_gen.c",
+    "parse_syntax_check.c",
     "str.c",
     "token.c",
     "type.c",
@@ -367,7 +368,7 @@ def generate(platform, config, settings, cmdlines, tests):
         common_without_higher_level = [
             x
             for x in common_objs
-            if "parse." not in x
+            if "parse_" not in x
             and "type." not in x
         ]
         f.write(

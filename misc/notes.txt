@@ -133,6 +133,7 @@ how fast could it go?
 
 
 hyperfine "out\wr\luvc.exe out\wr\dumbbench.luv"
+
 ir_jit_compile #if 0 (but still building ir_XXXX)
 
 initial:
@@ -141,5 +142,7 @@ most things to Arena:
   Time (mean ± σ):      3.042 s ±  0.033 s    [User: 2.742 s, System: 0.284 s]
 ir to Arena:
   Time (mean ± σ):      2.729 s ±  0.020 s    [User: 2.448 s, System: 0.269 s]
+--syntax-only (stub all ir_):
+  Time (mean ± σ):      1.587 s ±  0.015 s    [User: 1.354 s, System: 0.210 s]
 
 # vim: set tw=80:
