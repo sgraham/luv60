@@ -395,6 +395,9 @@ static void enter_function(Sym* sym,
   // https://github.com/dstogov/ir/issues/101
   // IR_OPT_MEM2SSA: https://github.com/dstogov/ir/issues/102
   uint32_t opts = parser.opt_level ? IR_OPT_FOLDING : 0;
+  if (parser.opt_level == 2) {
+    opts |= IR_OPT_MEM2SSA;
+  }
   ir_init(_ir_CTX, IR_FUNCTION | opts, IR_CONSTS_LIMIT_MIN, IR_INSNS_LIMIT_MIN);
 #endif
   ir_START();
@@ -1187,17 +1190,14 @@ static Operand parse_typeid(bool can_assign, Type* expected) {
 }
 
 static Operand parse_unary(bool can_assign, Type* expected) {
-#if 0
   TokenKind op_kind = parser.prev_kind;
-  Operand expr = parse_precedence(PREC_UNARY);
+  Operand expr = parse_precedence(PREC_UNARY, expected);
   if (op_kind == TOK_MINUS) {
-    return operand_rvalue(expr.type, gen_ssa_neg(expr.irref));
+    return operand_rvalue_imm(expr.type,
+                              ir_NEG(type_to_ir_type(expr.type), load_operand_if_necessary(&expr)));
   } else {
     error("unary operator not implemented");
   }
-#endif
-  ASSERT(false);
-  abort();
 }
 
 typedef enum ScopeResult {
@@ -1566,13 +1566,6 @@ static void for_statement(void) {
   // 5. index, iter enumerate expr
   // 6. index, *ptr enumerate expr
 
-  ASSERT(false); abort();
-#if 0
-  IRBlock after = gen_ssa_make_block_name();
-  IRBlock top = gen_ssa_make_block_name();
-  IRBlock body = gen_ssa_make_block_name();
-  IRBlock tail = gen_ssa_make_block_name();
-
   if (check(TOK_COLON)) {
     // Nothing, case 1:
   } else {  // if (check(TOK_IDENT_VAR) && peek(2, TOK_IN)) {
@@ -1581,53 +1574,43 @@ static void for_statement(void) {
     consume(TOK_IN, "Expect 'in'.");
     Operand expr = parse_expression(NULL);
     if (type_eq(expr.type, type_range)) {
-      IRRef step = gen_ssa_load_field(expr.irref, 16 /*.step*/, type_i64);
-      IRRef is_neg = gen_ssa_int_comparison(IIC_SLT, step, gen_ssa_const(0, type_i64));
+      ASSERT(expr.ref_is_addr);
+      ir_ref astart = expr.ref;
+      ir_ref astop = ir_ADD_A(expr.ref, ir_CONST_ADDR(sizeof(int64_t)));
+      ir_ref astep = ir_ADD_A(expr.ref, ir_CONST_ADDR(2 * sizeof(int64_t)));
+
+      ir_ref start = ir_LOAD_I64(astart);
+      ir_ref stop = ir_LOAD_I64(astop);
+      ir_ref step = ir_LOAD_I64(astep);
+
+      ir_ref is_neg = ir_LT(step, ir_CONST_I64(0));
 
       Sym* it = make_local_and_alloc(SYM_VAR, it_name, type_i64);
+      ir_VSTORE(it->ref, start);
 
-      gen_ssa_store(it->irref, type_i64, gen_ssa_load_field(expr.irref, 0 /*.start*/, type_i64));
+      ir_ref loop = ir_LOOP_BEGIN(ir_END());
 
-      IRRef stop = gen_ssa_load_field(expr.irref, 8 /*.stop*/, type_i64);
+      ir_ref cur = ir_VLOAD(IR_I64, it->ref);
+      // (is_neg ? cur > stop : cur < stop)
+      ir_ref cond = ir_IF(ir_COND(IR_BOOL, is_neg, ir_GT(cur, stop), ir_LT(cur, stop)));
+      ir_IF_TRUE(cond);
 
-      gen_ssa_start_block(top);
+      consume(TOK_COLON, "Expect ':' to start for.");
+      consume(TOK_NEWLINE, "Expect newline after ':' to start for.");
+      consume(TOK_INDENT, "Expect indent to start for.");
+      LastStatementType lst = parse_block();
+      ASSERT(lst == LST_NON_RETURN && "todo; return from loop");
 
-      IRRef cur_val = gen_ssa_load(it->irref, type_i64);
+      ir_ref itval = ir_VLOAD(IR_I64, it->ref);
+      ir_ref inc = ir_ADD_I64(itval, step);
+      ir_VSTORE(it->ref, inc);
 
-      // is_neg ? (it > stop) : (it < stop)
-      IRBlock is_neg_cmp = gen_ssa_make_block_name();
-      IRBlock is_pos_cmp = gen_ssa_make_block_name();
-      gen_ssa_jump_cond(is_neg, is_neg_cmp, is_pos_cmp);
-
-      gen_ssa_start_block(is_neg_cmp);
-      IRRef should_cont_neg = gen_ssa_int_comparison(IIC_SGT, cur_val, stop);
-      gen_ssa_jump_cond(should_cont_neg, body, after);
-
-      gen_ssa_start_block(is_pos_cmp);
-      IRRef should_cont_pos = gen_ssa_int_comparison(IIC_SLT, cur_val, stop);
-      gen_ssa_jump_cond(should_cont_pos, body, after);
-
-      // block goes in here
-
-      gen_ssa_start_block(tail);
-      IRRef cur = gen_ssa_load(it->irref, type_i64);
-      IRRef incremented = gen_ssa_add(cur, step);
-      gen_ssa_store(it->irref, type_i64, incremented);
-      gen_ssa_jump(top);
+      ir_MERGE_SET_OP(loop, 2, ir_LOOP_END());
+      ir_IF_FALSE(cond);
     } else {
       errorf("Unhandled for/in over type %s.", type_as_str(expr.type));
     }
   }
-
-  consume(TOK_COLON, "Expect ':' to start for.");
-  consume(TOK_NEWLINE, "Expect newline after ':' to start for.");
-  consume(TOK_INDENT, "Expect indent to start for.");
-  gen_ssa_start_block(body);
-  parse_block();
-  gen_ssa_jump(tail);
-
-  gen_ssa_start_block(after);
-#endif
 }
 
 static void print_statement(void) {
