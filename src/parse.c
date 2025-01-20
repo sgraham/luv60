@@ -3,7 +3,7 @@
 #include "dict.h"
 
 #undef _ir_CTX
-#define _ir_CTX &parser.ctx
+#define _ir_CTX (&parser.cur_func->ctx)
 
 typedef struct RuntimeStr {
   const uint8_t* data;
@@ -72,6 +72,7 @@ typedef struct FuncData {
   Sym* return_slot;
   PendingCond pending_conds[MAX_PENDING_CONDS];
   int num_pending_conds;
+  ir_ctx ctx;
 } FuncData;
 
 typedef struct VarScope VarScope;
@@ -111,7 +112,6 @@ typedef struct Parser {
 
   void* main_func_entry;
   bool verbose;
-  ir_ctx ctx;
 } Parser;
 
 static Parser parser;
@@ -387,15 +387,15 @@ static void enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS], Type para
   // alignment of sp https://github.com/dstogov/ir/issues/100. Adding some
   // allocas and disabling optimzations (so that they aren't removed) is a
   // crappy workaround for now.
-  ir_init(&parser.ctx, IR_FUNCTION, IR_CONSTS_LIMIT_MIN, IR_INSNS_LIMIT_MIN);
+  ir_init(_ir_CTX, IR_FUNCTION, IR_CONSTS_LIMIT_MIN, IR_INSNS_LIMIT_MIN);
 #else
   // https://github.com/dstogov/ir/issues/101
   // https://github.com/dstogov/ir/issues/102
-  ir_init(&parser.ctx, IR_FUNCTION | IR_OPT_FOLDING /*| IR_OPT_MEM2SSA*/, IR_CONSTS_LIMIT_MIN,
+  ir_init(_ir_CTX, IR_FUNCTION | IR_OPT_FOLDING /*| IR_OPT_MEM2SSA*/, IR_CONSTS_LIMIT_MIN,
           IR_INSNS_LIMIT_MIN);
 #endif
   Type ret_type = type_func_return_type(sym->type);
-  parser.ctx.ret_type = type_to_ir_type(ret_type);
+  _ir_CTX->ret_type = type_to_ir_type(ret_type);
 
   ir_START();
 #if ARCH_ARM64  // See above.
@@ -425,30 +425,30 @@ static void leave_function(void) {
   }
 
   if (parser.verbose) {
-    ir_dump(&parser.ctx, stderr);
+    ir_dump(_ir_CTX, stderr);
     Str dotname = str_internf("%s.dot", cstr(parser.cur_func->sym->name));
     FILE* dot = fopen(cstr(dotname), "wb");
-    ir_dump_dot(&parser.ctx, cstr(parser.cur_func->sym->name), dot);
+    ir_dump_dot(_ir_CTX, cstr(parser.cur_func->sym->name), dot);
     fclose(dot);
     base_writef_stderr("=> saved '%s'\n", cstr(dotname));
   }
 
-  if (!ir_check(&parser.ctx)) {
+  if (!ir_check(_ir_CTX)) {
     base_writef_stderr("ir_check failed, not compiling\n");
     base_exit(1);
   }
 
 #if ARCH_ARM64  // See above.
-  void* entry = ir_jit_compile(&parser.ctx, /*opt=*/0, &size);
+  void* entry = ir_jit_compile(_ir_CTX, /*opt=*/0, &size);
 #else
-  void* entry = ir_jit_compile(&parser.ctx, /*opt=*/1, &size);
+  void* entry = ir_jit_compile(_ir_CTX, /*opt=*/1, &size);
 #endif
   if (entry) {
     if (parser.verbose) {
       fprintf(stderr, "=> codegen to %zu bytes for '%s'\n", size, cstr(parser.cur_func->sym->name));
 #if !OS_WINDOWS  // TODO: don't have capstone or ir_disasm on win32 right now
       ir_disasm_init();
-      ir_disasm(cstr(parser.cur_func->sym->name), entry, size, false, &parser.ctx, stderr);
+      ir_disasm(cstr(parser.cur_func->sym->name), entry, size, false, _ir_CTX, stderr);
       ir_disasm_free();
 #endif
     }
@@ -459,7 +459,7 @@ static void leave_function(void) {
     base_writef_stderr("compilation failed '%s'\n", cstr(parser.cur_func->sym->name));
   }
   parser.cur_func->sym->addr = entry;
-  ir_free(&parser.ctx);
+  ir_free(_ir_CTX);
 
   --parser.num_funcdatas;
   ASSERT(parser.num_funcdatas >= 0);
@@ -1083,7 +1083,7 @@ static Operand parse_number(bool can_assign, Type* expected) {
 
   ir_val irval;
   irval.u64 = val;
-  return operand_const(type, ir_const(&parser.ctx, irval, type_to_ir_type(type)));
+  return operand_const(type, ir_const(_ir_CTX, irval, type_to_ir_type(type)));
 }
 
 static Operand parse_offsetof(bool can_assign, Type* expected) {
