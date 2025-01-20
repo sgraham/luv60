@@ -93,4 +93,53 @@ the escape character ($, `, #, whatever) to know if the slow interpolate re-lex 
 required too (since those can't appear in actual code).
 
 
+
+---
+
+not really achieving luajit speed. lj exec is ~4.85s, with ir_jit_compile
+removed (so only building ir), ~4.54s. when actually building code, in the
+~20-25s range.
+
+need to check some basics, is categorizing tokens killing it? maybe going back
+to that constantly is a bad tradeoff to make lex indexing seem faster than it
+is.
+
+alternatively, need a faster way to parse. is it bad code or bad lang design?
+there's no lookahead right now.
+
+things that stand out in profile:
+- dict ops (VirtualAlloc was esp bad)
+- heavily used though -- str_intern, var scope. maybe a smaller non-allocating
+  one that can be used until it grows past a certain point
+- ir_init mallocs, generally redirect everything to bump arena?
+- make a set of stub ir_AAAA to get real no-op time. i think they just have to
+  all just either return 0 or void
+
+maybe it's time to dump py syntax for something faster to parse. are braces or
+ends actually necessarily faster?
+
+what about more drastic things? like what if the input was already a flatbuffer,
+how fast could it go?
+
+- bump arena, never malloc/virtualalloc
+- ir_STUB header for parse_code_gen.c and parse_syntax_check.c
+- faster symtab for smaller scopes
+- cur_func->ctx indirects maybe better to copy on enter/leave
+- categorizer could be multicore since buffer is 1:1 now
+- parser restructure, maybe Carbon had some idea? not sure if different than
+  standard LR(n) table driven
+- get rid of pratt and use manual precedence for expressions (read lj_parse more
+  carefully)
+
+
+hyperfine "out\wr\luvc.exe out\wr\dumbbench.luv"
+ir_jit_compile #if 0 (but still building ir_XXXX)
+
+initial:
+  Time (mean ± σ):      7.051 s ±  0.070 s    [User: 3.631 s, System: 3.392 s]
+most things to Arena:
+  Time (mean ± σ):      3.042 s ±  0.033 s    [User: 2.742 s, System: 0.284 s]
+ir to Arena:
+  Time (mean ± σ):      2.729 s ±  0.020 s    [User: 2.448 s, System: 0.269 s]
+
 # vim: set tw=80:

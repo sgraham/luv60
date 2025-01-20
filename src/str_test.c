@@ -2,7 +2,8 @@
 #include "test.h"
 
 TEST(Str, NoneAndEmpty) {
-  str_intern_pool_init();
+  Arena* arena = arena_create(MiB(128), KiB(128));
+  str_intern_pool_init(arena);
 
   Str x = {0};
   EXPECT_TRUE(str_is_none(x));
@@ -12,10 +13,12 @@ TEST(Str, NoneAndEmpty) {
   EXPECT_TRUE(!str_eq(x, y));
 
   str_intern_pool_destroy_for_tests();
+  arena_destroy(arena);
 }
 
 TEST(Str, Intern) {
-  str_intern_pool_init();
+  Arena* arena = arena_create(MiB(128), KiB(128));
+  str_intern_pool_init(arena);
 
   char a[] = "hello";
   EXPECT_STREQ(a, cstr(str_intern(a)));
@@ -30,10 +33,12 @@ TEST(Str, Intern) {
   EXPECT_TRUE(str_intern(a).i != str_intern(d).i);
 
   str_intern_pool_destroy_for_tests();
+  arena_destroy(arena);
 }
 
 TEST(Str, Internf) {
-  str_intern_pool_init();
+  Arena* arena = arena_create(MiB(128), KiB(128));
+  str_intern_pool_init(arena);
 
   Str x = str_internf("hi%d", 44);
   EXPECT_STREQ(cstr(x), "hi44");
@@ -43,4 +48,5 @@ TEST(Str, Internf) {
   EXPECT_TRUE(str_eq(x, y));
 
   str_intern_pool_destroy_for_tests();
+  arena_destroy(arena);
 }

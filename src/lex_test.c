@@ -13,12 +13,14 @@ typedef struct KindAndOffset {
 } KindAndOffset;
 
 static bool lex_test(const char* buf, KindAndOffset* exp, size_t num_exp) {
+  Arena* arena = arena_create(KiB(128), KiB(128));
+
   size_t len = strlen(buf) + 1;
-  size_t alloc_size = ALIGN_UP(len + 64, PAGE_SIZE);
-  unsigned char* padded_copy = base_large_alloc_rw(alloc_size);
+  size_t alloc_size = ALIGN_UP(len + 64, base_page_size());
+  unsigned char* padded_copy = arena_push(arena, alloc_size, base_page_size());
   memcpy(padded_copy, buf, len);
 
-  uint32_t* token_offsets = (uint32_t*)base_large_alloc_rw(alloc_size * sizeof(uint32_t));
+  uint32_t* token_offsets = (uint32_t*)arena_push(arena, alloc_size * sizeof(uint32_t), 8);
   lex_indexer(padded_copy, alloc_size, token_offsets);
   token_init((const unsigned char*)padded_copy);
 
@@ -41,8 +43,7 @@ static bool lex_test(const char* buf, KindAndOffset* exp, size_t num_exp) {
   }
 
 done:
-  base_large_alloc_free(padded_copy);
-  base_large_alloc_free(token_offsets);
+  arena_destroy(arena);
   return ok;
 }
 

@@ -15,7 +15,32 @@ typedef struct StrView {
   uint32_t size;
 } StrView;
 
-// base_win.c
+// arena.c
+
+#define ARENA_HEADER_SIZE 128
+typedef struct Arena {
+  uint64_t original_commit_size;
+  uint64_t original_reserve_size;
+  uint64_t cur_pos;
+  uint64_t cur_commit;
+  uint64_t cur_reserve;
+} Arena;
+
+_Static_assert(sizeof(Arena) < ARENA_HEADER_SIZE, "Arena too large");
+
+#define KiB(size) ((size)<<10)
+#define MiB(size) ((size)<<20)
+
+Arena* arena_create(uint64_t reserve_size, uint64_t commit_size);
+void arena_destroy(Arena* arena);
+void* arena_push(Arena* arena, uint64_t size, uint64_t align);
+uint64_t arena_pos(Arena* arena);
+void arena_pop_to(Arena* arena, uint64_t pos);
+
+extern Arena* arena_ir;
+
+
+// base_{win,mac}.c
 
 typedef struct ReadFileResult {
   unsigned char* buffer;
@@ -24,13 +49,13 @@ typedef struct ReadFileResult {
 } ReadFileResult;
 
 int base_writef_stderr(const char* fmt, ...);
-unsigned char* base_large_alloc_rw(size_t size);  // At least 64 aligned.
-//unsigned char* base_large_alloc_rwx(size_t size);
-void base_large_alloc_free(void* ptr);
-//void base_set_protection_rx(unsigned char* ptr, size_t size);
-ReadFileResult base_read_file(const char* filename);
+uint64_t base_page_size(void);
+void *base_mem_reserve(uint64_t size);
+bool base_mem_commit(void* ptr, uint64_t size);
+void base_mem_decommit(void* ptr, uint64_t size);
+void base_mem_release(void* ptr, uint64_t size);
+ReadFileResult base_read_file(Arena* arena, const char* filename);
 NORETURN void base_exit(int rc);
-
 
 // str.c
 
@@ -40,7 +65,7 @@ typedef struct Str {
 
 extern char* str_intern_pool;
 
-void str_intern_pool_init(void);
+void str_intern_pool_init(Arena* arena);
 void str_intern_pool_destroy_for_tests(void);
 
 Str str_intern_len(const char* str, uint32_t len);
@@ -143,7 +168,7 @@ typedef enum TypeKind {
 #define type_str BASIC_TYPE_CONSTANT_IMPL(TYPE_STR)
 #define type_range BASIC_TYPE_CONSTANT_IMPL(TYPE_RANGE)
 
-void type_init(void);
+void type_init(Arena* arena);
 void type_destroy_for_tests(void);
 // returned str is either the cstr() of an interned string, or a constant.
 const char* type_as_str(Type type);
@@ -173,4 +198,9 @@ Type type_ptr_subtype(Type type);
 
 // parse.c
 
-void* parse(const char* filename, ReadFileResult file, bool verbose, int opt_level);
+void* parse(Arena* arena,
+            Arena* temp_arena,
+            const char* filename,
+            ReadFileResult file,
+            bool verbose,
+            int opt_level);

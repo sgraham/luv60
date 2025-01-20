@@ -73,16 +73,20 @@ typedef struct FuncData {
   PendingCond pending_conds[MAX_PENDING_CONDS];
   int num_pending_conds;
   ir_ctx ctx;
+  uint64_t arena_saved_pos;
 } FuncData;
 
 typedef struct VarScope VarScope;
 struct VarScope {
   DictImpl sym_dict;
+  uint64_t arena_pos;
   bool is_function;
   bool is_module;
 };
 
 typedef struct Parser {
+  Arena* arena;
+  Arena* var_scope_arena;
   const char* cur_filename;
 
   const char* file_contents;
@@ -361,13 +365,15 @@ static Sym* make_param(Str name, Type type, int index) {
 
 static void enter_scope(bool is_module, bool is_function) {
   parser.cur_var_scope = &parser.varscopes[parser.num_varscopes++];
-  parser.cur_var_scope->sym_dict =
-      dict_new(is_module ? (1 << 24) : 16, sizeof(NameSymPair), _Alignof(NameSymPair));
+  parser.cur_var_scope->arena_pos = arena_pos(parser.var_scope_arena);
+  parser.cur_var_scope->sym_dict = dict_new(parser.var_scope_arena, is_module ? (1 << 16) : 16,
+                                            sizeof(NameSymPair), _Alignof(NameSymPair));
   parser.cur_var_scope->is_function = is_function;
   parser.cur_var_scope->is_module = is_module;
 }
 
 static void leave_scope(void) {
+  arena_pop_to(parser.var_scope_arena, parser.cur_var_scope->arena_pos);
   --parser.num_varscopes;
   ASSERT(parser.num_varscopes >= 0);
   if (parser.num_varscopes == 0) {
@@ -382,6 +388,7 @@ static void enter_function(Sym* sym,
                            Type param_types[MAX_FUNC_PARAMS]) {
   parser.cur_func = &parser.funcdatas[parser.num_funcdatas++];
   parser.cur_func->sym = sym;
+  parser.cur_func->arena_saved_pos = arena_pos(arena_ir);
   enter_scope(/*is_module=*/false, /*is_function=*/true);
 
   ir_consistency_check();
@@ -398,7 +405,7 @@ static void enter_function(Sym* sym,
   if (parser.opt_level == 2) {
     opts |= IR_OPT_MEM2SSA;
   }
-  ir_init(_ir_CTX, IR_FUNCTION | opts, IR_CONSTS_LIMIT_MIN, IR_INSNS_LIMIT_MIN);
+  ir_init(_ir_CTX, IR_FUNCTION | opts, 4096, 4096);//IR_INSNS_LIMIT_MIN);
 #endif
   ir_START();
 #if ARCH_ARM64  // See above.
@@ -422,7 +429,6 @@ static void enter_function(Sym* sym,
 }
 
 static void leave_function(void) {
-  size_t size;
 
   Type ret_type = type_func_return_type(parser.cur_func->sym->type);
   if (type_eq(ret_type, type_void)) {
@@ -445,6 +451,8 @@ static void leave_function(void) {
     base_exit(1);
   }
 
+#if 1
+  size_t size;
 #if ARCH_ARM64  // See above.
   void* entry = ir_jit_compile(_ir_CTX, /*opt=*/0, &size);
 #else
@@ -466,7 +474,10 @@ static void leave_function(void) {
     base_writef_stderr("compilation failed '%s'\n", cstr(parser.cur_func->sym->name));
   }
   parser.cur_func->sym->addr = entry;
+#endif
   ir_free(_ir_CTX);
+
+  arena_pop_to(arena_ir, parser.cur_func->arena_saved_pos);
 
   --parser.num_funcdatas;
   ASSERT(parser.num_funcdatas >= 0);
@@ -475,6 +486,7 @@ static void leave_function(void) {
   } else {
     parser.cur_func = &parser.funcdatas[parser.num_funcdatas - 1];
   }
+
   leave_scope();
 }
 
@@ -1156,7 +1168,7 @@ static ir_ref emit_string_obj(Str str) {
   // TODO: I think IR doesn't do much with data? So the str bytes can go into
   // the intern table, and then the Str object probably needs a data segment
   // that lives with the code segment that we shove all these into.
-  RuntimeStr* p = malloc(sizeof(RuntimeStr));
+  RuntimeStr* p = arena_push(parser.arena, sizeof(RuntimeStr), _Alignof(RuntimeStr));
   p->data = (uint8_t*)cstr(str);  // Maybe we want to use str_intern for RuntimeStr too?
   p->length = str_len(str);
   return ir_CONST_ADDR(p);
@@ -1767,12 +1779,20 @@ static LastStatementType parse_statement(bool toplevel) {
   return LST_NON_RETURN;  // Return isn't possible unless in func.
 }
 
-void* parse(const char* filename, ReadFileResult file, bool verbose, int opt_level) {
-  type_init();
+void* parse(Arena* main_arena,
+            Arena* temp_arena,
+            const char* filename,
+            ReadFileResult file,
+            bool verbose,
+            int opt_level) {
+  type_init(main_arena);
 
   // In the case of "a.a." the worst case for offsets is the same as the number
   // of characters in the buffer.
-  parser.token_offsets = (uint32_t*)base_large_alloc_rw(file.allocated_size * sizeof(uint32_t));
+  parser.arena = main_arena;
+  parser.var_scope_arena = temp_arena;
+  parser.token_offsets =
+      (uint32_t*)arena_push(main_arena, file.allocated_size * sizeof(uint32_t), 8);
   parser.file_contents = (const char*)file.buffer;
   parser.cur_filename = filename;
   parser.cur_token_index = 0;

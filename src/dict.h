@@ -442,6 +442,7 @@ typedef struct DictImpl {
   size_t capacity;        // total number of slots
   size_t growth_left;     // how many more slots can be filled before rehash
                           // See dict_capacity_to_growth().
+  Arena* arena;
 } DictImpl;
 
 // An iterator into a SwissTable.
@@ -505,10 +506,12 @@ static inline void dict_reset_growth_left(DictImpl* self) {
   self->growth_left = dict_capacity_to_growth(self->capacity) - self->size;
 }
 
-static inline void dict_initialize_slots(DictImpl* self, size_t slot_size, size_t slot_align) {
+static inline void dict_initialize_slots(DictImpl* self,
+                                         size_t slot_size,
+                                         size_t slot_align) {
   ASSERT(self->capacity > 0);
-  ASSERT(slot_align <= 64);  // This is what base_large_alloc_rw ensures.
-  void* mem = base_large_alloc_rw(dict_alloc_size(self->capacity, slot_size, slot_align));
+  void* mem =
+      arena_push(self->arena, dict_alloc_size(self->capacity, slot_size, slot_align), slot_align);
   ASSERT(mem);
   self->ctrl = mem;
   self->slots = mem + dict_slot_offset(self->capacity, slot_align);
@@ -516,8 +519,11 @@ static inline void dict_initialize_slots(DictImpl* self, size_t slot_size, size_
   dict_reset_growth_left(self);
 }
 
-static inline DictImpl dict_new(size_t capacity, size_t slot_size, size_t slot_align) {
-  DictImpl ret = {.ctrl = dict_empty_group()};
+static inline DictImpl dict_new(Arena* arena,
+                                size_t capacity,
+                                size_t slot_size,
+                                size_t slot_align) {
+  DictImpl ret = {.ctrl = dict_empty_group(), .arena = arena};
   if (capacity != 0) {
     ret.capacity = dict_normalize_capacity(capacity);
     dict_initialize_slots(&ret, slot_size, slot_align);
@@ -529,7 +535,7 @@ static inline void dict_destroy(DictImpl* self) {
   if (self->capacity == 0) {
     return;
   }
-  base_large_alloc_free(self->ctrl);
+  //arena_free(arena, self->ctrl);
   *self = (DictImpl){0};
 }
 
@@ -611,7 +617,7 @@ static inline void dict_resize(DictImpl* self,
   }
 
   if (old_capacity) {
-    base_large_alloc_free(old_ctrl);
+    // arena_free(old_ctrl);
   }
 }
 

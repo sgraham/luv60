@@ -4,12 +4,19 @@
 #error
 #endif
 
+#include <sys/mman.h>
+#include <unistd.h>
+
 int base_writef_stderr(const char* fmt, ...) {
   va_list args;
   va_start(args, fmt);
   int ret = vfprintf(stderr, fmt, args);
   va_end(args);
   return ret;
+}
+
+uint64_t base_page_size(void) {
+  return sysconf(_SC_PAGE_SIZE);
 }
 
 unsigned char* base_large_alloc_rw(size_t size) {
@@ -32,7 +39,7 @@ ReadFileResult base_read_file(const char* filename) {
   long len = ftell(f);
   rewind(f);
 
-  size_t to_alloc = ALIGN_UP(len + 64, PAGE_SIZE);
+  size_t to_alloc = ALIGN_UP(len + 64, base_page_size());
   unsigned char* read_buf = base_large_alloc_rw(to_alloc);
   if (!read_buf) {
     fclose(f);

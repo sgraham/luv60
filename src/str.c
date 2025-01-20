@@ -2,19 +2,18 @@
 
 #include "dict.h"
 
-#define STR_POOL_SIZE (32<<20)
+#define STR_POOL_SIZE (MiB(32))
 char* str_intern_pool;
 static int str_insert_location;
 static DictImpl str_map;
 
-void str_intern_pool_init(void) {
-  str_intern_pool = (char*)base_large_alloc_rw(STR_POOL_SIZE);
+void str_intern_pool_init(Arena* arena) {
+  str_intern_pool = (char*)arena_push(arena, STR_POOL_SIZE, 8);
   str_insert_location = 1;
-  str_map = dict_new(8 << 20, sizeof(Str), _Alignof(Str));
+  str_map = dict_new(arena, 8 << 20, sizeof(Str), _Alignof(Str));
 }
 
 void str_intern_pool_destroy_for_tests(void) {
-  base_large_alloc_free(str_intern_pool);
   dict_destroy(&str_map);
 }
 

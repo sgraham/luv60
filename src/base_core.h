@@ -37,8 +37,6 @@
 #define COUNTOF(a) (sizeof(a)/sizeof(a[0]))
 #define COUNTOFI(a) ((int)(sizeof(a)/sizeof(a[0])))
 
-#define PAGE_SIZE 4096
-
 #if COMPILER_MSVC
 #  define TRAP() __debugbreak()
 #elif COMPILER_CLANG || COMPILER_GCC

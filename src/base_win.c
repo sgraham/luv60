@@ -4,7 +4,7 @@
 #error
 #endif
 
-#include "base_some_windows.h"
+#include <windows.h>
 
 int base_writef_stderr(const char* fmt, ...) {
   va_list args;
@@ -14,28 +14,29 @@ int base_writef_stderr(const char* fmt, ...) {
   return ret;
 }
 
-unsigned char* base_large_alloc_rw(size_t size) {
-  void* p = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-  ASSERT(ALIGN_UP((uintptr_t)p, 64) == (uintptr_t)p);
-  return p;
+uint64_t base_page_size(void) {
+  SYSTEM_INFO sysInfo;
+  GetSystemInfo(&sysInfo);
+  return sysInfo.dwPageSize;
 }
 
-unsigned char* base_large_alloc_rwx(size_t size) {
-  void *p = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-  ASSERT(ALIGN_UP((uintptr_t)p, 64) == (uintptr_t)p);
-  return p;
+void *base_mem_reserve(uint64_t size) {
+  return VirtualAlloc(NULL, size, MEM_RESERVE, PAGE_NOACCESS);
 }
 
-void base_set_protection_rx(unsigned char* ptr, size_t size) {
-  DWORD old_protect;
-  VirtualProtect(ptr, size, PAGE_EXECUTE_READ, &old_protect);
+bool base_mem_commit(void* ptr, uint64_t size) {
+  return VirtualAlloc(ptr, size, MEM_COMMIT, PAGE_READWRITE) != 0;
 }
 
-void base_large_alloc_free(void* ptr) {
+void base_mem_decommit(void* ptr, uint64_t size) {
+  VirtualFree(ptr, size, MEM_DECOMMIT);
+}
+
+void base_mem_release(void* ptr, uint64_t size) {
   VirtualFree(ptr, 0, MEM_RELEASE);
 }
 
-ReadFileResult base_read_file(const char* filename) {
+ReadFileResult base_read_file(Arena* arena, const char* filename) {
   SECURITY_ATTRIBUTES sa = {sizeof(sa), 0, 0};
   HANDLE file = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, &sa,
                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
@@ -45,8 +46,9 @@ ReadFileResult base_read_file(const char* filename) {
   LARGE_INTEGER size;
   GetFileSizeEx(file, &size);
 
-  size_t to_alloc = ALIGN_UP(size.QuadPart + 64, PAGE_SIZE);
-  unsigned char* read_buf = base_large_alloc_rw(to_alloc);
+  size_t page_size = base_page_size();
+  size_t to_alloc = ALIGN_UP(size.QuadPart + 64, page_size);
+  unsigned char* read_buf = arena_push(arena, to_alloc, page_size);
   if (!read_buf) {
     CloseHandle(file);
     return (ReadFileResult){0};
@@ -54,13 +56,11 @@ ReadFileResult base_read_file(const char* filename) {
 
   DWORD bytes_read = 0;
   if (!ReadFile(file, read_buf, size.QuadPart, &bytes_read, NULL)) {
-    base_large_alloc_free(read_buf);
     return (ReadFileResult){0};
   }
   CloseHandle(file);
 
   if (bytes_read != size.QuadPart) {
-    base_large_alloc_free(read_buf);
     return (ReadFileResult){0};
   }
 

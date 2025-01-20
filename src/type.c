@@ -175,7 +175,7 @@ static size_t plaintype_hash_func(void* functype) {
   Type t = *(Type*)functype;
   size_t hash = 0;
   TypeData* td = type_td(t);
-  dict_hash_write(&hash, &td, sizeof(TypeData));
+  dict_hash_write(&hash, td, sizeof(TypeData));
   return hash;
 }
 
@@ -242,9 +242,9 @@ const char* type_as_str(Type type) {
   }
 }
 
-void type_init(void) {
-  cached_func_types = dict_new(128, sizeof(Type), _Alignof(Type));
-  cached_ptr_types = dict_new(128, sizeof(Type), _Alignof(Type));
+void type_init(Arena* arena) {
+  cached_func_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
+  cached_ptr_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
 
   set_typedata_raw(TYPE_VOID, pack_type(TYPE_VOID, 0, 1, 0));
   set_typedata_raw(TYPE_BOOL, pack_type(TYPE_BOOL, 1, 1, 0));

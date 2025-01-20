@@ -2,12 +2,15 @@
 #include "test.h"
 
 TEST(Type, Basic) {
-  type_init();
+  Arena* arena = arena_create(KiB(128), KiB(128));
+  type_init(arena);
   type_destroy_for_tests();
+  arena_destroy(arena);
 }
 
 TEST(Type, FuncNoParam) {
-  type_init();
+  Arena* arena = arena_create(KiB(128), KiB(128));
+  type_init(arena);
 
   Type a = type_function(NULL, 0, type_i32);
   Type b = type_function(NULL, 0, type_i32);
@@ -22,10 +25,12 @@ TEST(Type, FuncNoParam) {
   EXPECT_TRUE(!type_eq(c, d));
 
   type_destroy_for_tests();
+  arena_destroy(arena);
 }
 
 TEST(Type, FuncWithBasicParams) {
-  type_init();
+  Arena* arena = arena_create(KiB(128), KiB(128));
+  type_init(arena);
 
   Type params_a[4] = { type_i32, type_i32, type_bool, type_double };
   Type params_b[4] = { type_i32, type_bool, type_float, type_i32 };
@@ -45,10 +50,12 @@ TEST(Type, FuncWithBasicParams) {
   EXPECT_TRUE(!type_eq(a0, c));  // same return, same args up to 3
 
   type_destroy_for_tests();
+  arena_destroy(arena);
 }
 
-TEST(Test, CrackFuncs) {
-  type_init();
+TEST(Type, CrackFuncs) {
+  Arena* arena = arena_create(KiB(128), KiB(128));
+  type_init(arena);
 
   Type params[4] = { type_i32, type_i32, type_bool, type_double };
 
@@ -62,5 +69,19 @@ TEST(Test, CrackFuncs) {
   EXPECT_TRUE(type_eq(type_func_param(f, 3), type_double));
 
   type_destroy_for_tests();
+  arena_destroy(arena);
 }
 
+TEST(Type, Ptr) {
+  Arena* arena = arena_create(KiB(128), KiB(128));
+  type_init(arena);
+
+  Type a = type_ptr(type_i32);
+  Type b = type_ptr(type_i32);
+  EXPECT_TRUE(type_eq(a, b));
+  Type c = type_ptr(type_bool);
+  EXPECT_TRUE(!type_eq(a, c));
+
+  type_destroy_for_tests();
+  arena_destroy(arena);
+}

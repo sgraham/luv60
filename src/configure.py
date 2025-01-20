@@ -22,6 +22,7 @@ COMMON_FILELIST = [
     "../third_party/ir/ir_save.c",
     "../third_party/ir/ir_sccp.c",
     "../third_party/ir/ir_strtab.c",
+    "arena.c",
     "base_mac.c",
     "base_win.c",
     "lex.c",
@@ -249,6 +250,12 @@ def generate(platform, config, settings, cmdlines, tests):
         def getobj(src):
             return os.path.splitext(src)[0].replace("..", "__") + obj_ext
 
+        def get_extra(src):
+            if platform == 'w':
+                return ' /FI $src/force_include.h'
+            else:
+                return ' -include $src/force_include.h'
+
         common_objs = []
         for src in COMMON_FILELIST:
             if sys.platform == "darwin" and "_win." in src:
@@ -272,36 +279,34 @@ def generate(platform, config, settings, cmdlines, tests):
                 " | ir_fold_hash.h" if src == "../third_party/ir/ir.c" else extra_deps
             )
             f.write("build %s: cc $src/%s%s\n" % (obj, src, extra_deps))
-            if "/mir/" in src:
-                f.write(
-                    "  extra=-Wno-missing-field-initializers -Wno-sign-compare -Wno-unused-variable -Wno-unused-function -Wno-unused-but-set-variable\n"
-                )
+            f.write("  extra=%s\n" % get_extra(src))
 
         if config == "p":
             tracy_cpp = "../third_party/tracy/public/TracyClient.cpp"
             obj = getobj(tracy_cpp)
             common_objs.append(obj)
             f.write("build %s: cc $src/%s\n" % (obj, tracy_cpp))
-            f.write(
-                "  extra=-Wno-missing-field-initializers -Wno-unused-variable -Wno-cast-function-type-mismatch -Wno-microsoft-cast -Wno-unused-function -Wno-unused-but-set-variable\n"
-            )
+            f.write("  extra=-Wno-missing-field-initializers -Wno-unused-variable -Wno-cast-function-type-mismatch -Wno-microsoft-cast -Wno-unused-function -Wno-unused-but-set-variable\n")
 
         luvc_objs = []
         for src in LUVC_FILELIST:
             obj = getobj(src)
             luvc_objs.append(obj)
             f.write("build %s: cc $src/%s\n" % (obj, src))
+            f.write("  extra=%s\n" % get_extra(src))
 
         unittest_objs = []
         for src in UNITTEST_FILELIST:
             obj = getobj(src)
             unittest_objs.append(obj)
             f.write("build %s: cc $src/%s\n" % (obj, src))
+            f.write("  extra=%s\n" % get_extra(src))
 
         gen_ir_fold_hash_objs = []
         for src in GEN_IR_FOLD_HASH_FILELIST:
             obj = getobj(src)
             gen_ir_fold_hash_objs.append(obj)
+            # No force_include.h here.
             f.write("build %s: cc $src/%s\n" % (obj, src))
 
         lexbench_objs = []
@@ -311,9 +316,9 @@ def generate(platform, config, settings, cmdlines, tests):
             f.write("build %s: cc $src/%s\n" % (obj, src))
             fn = os.path.join(root_dir, "dumbbench.luv").replace("\\", "/")
             if sys.platform == "win32":
-                f.write('  extra=-DFILENAME="""%s"""\n' % fn)
+                f.write('  extra=-DFILENAME="""%s""" %s\n' % (fn, get_extra(src)))
             else:
-                f.write('  extra=-DFILENAME=\\"%s\\"\n' % fn)
+                f.write('  extra=-DFILENAME=\\"%s\\" %s\n' % (fn, get_extra(src)))
 
         alltests = []
         for testf, cmds in tests.items():
@@ -363,9 +368,7 @@ def generate(platform, config, settings, cmdlines, tests):
             x
             for x in common_objs
             if "parse." not in x
-            and "gen_ssa." not in x
             and "type." not in x
-            and "gen_mir." not in x
         ]
         f.write(
             "build %s: link %s | dumbbench.luv\n"

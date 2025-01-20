@@ -57,11 +57,11 @@ with open('dumbbench.luv', 'w', newline='\n') as f:
     for name in ids:
         f.write(f'''\
 # This is the {name} function!
-def int {name}():
-    int x = 0
+def i64 {name}():
+    i64 x = 0
     str z = "this is a string"
     for i in range(5):
-        x += i
+        x = x+i
     return x
 
 ''')
