@@ -112,6 +112,7 @@ typedef struct Parser {
 
   void* main_func_entry;
   bool verbose;
+  int opt_level;
 } Parser;
 
 static Parser parser;
@@ -376,7 +377,9 @@ static void leave_scope(void) {
   }
 }
 
-static void enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS], Type param_types[MAX_FUNC_PARAMS]) {
+static void enter_function(Sym* sym,
+                           Str param_names[MAX_FUNC_PARAMS],
+                           Type param_types[MAX_FUNC_PARAMS]) {
   parser.cur_func = &parser.funcdatas[parser.num_funcdatas++];
   parser.cur_func->sym = sym;
   enter_scope(/*is_module=*/false, /*is_function=*/true);
@@ -390,27 +393,28 @@ static void enter_function(Sym* sym, Str param_names[MAX_FUNC_PARAMS], Type para
   ir_init(_ir_CTX, IR_FUNCTION, IR_CONSTS_LIMIT_MIN, IR_INSNS_LIMIT_MIN);
 #else
   // https://github.com/dstogov/ir/issues/101
-  // https://github.com/dstogov/ir/issues/102
-  ir_init(_ir_CTX, IR_FUNCTION | IR_OPT_FOLDING /*| IR_OPT_MEM2SSA*/, IR_CONSTS_LIMIT_MIN,
-          IR_INSNS_LIMIT_MIN);
+  // IR_OPT_MEM2SSA: https://github.com/dstogov/ir/issues/102
+  uint32_t opts = parser.opt_level ? IR_OPT_FOLDING : 0;
+  ir_init(_ir_CTX, IR_FUNCTION | opts, IR_CONSTS_LIMIT_MIN, IR_INSNS_LIMIT_MIN);
 #endif
-  Type ret_type = type_func_return_type(sym->type);
-  _ir_CTX->ret_type = type_to_ir_type(ret_type);
-
   ir_START();
 #if ARCH_ARM64  // See above.
   ir_ALLOCA(32);
 #endif
 
+  uint32_t num_params = type_func_num_params(sym->type);
+  for (uint32_t i = 0; i < num_params; ++i) {
+    make_param(param_names[i], type_func_param(sym->type, i), i);
+  }
+
+  // Allocation of the VAR for return_slot must be after all PARAMs.
+  // https://github.com/dstogov/ir/issues/103.
+  Type ret_type = type_func_return_type(sym->type);
+  _ir_CTX->ret_type = type_to_ir_type(ret_type);
   if (type_eq(ret_type, type_void)) {
     parser.cur_func->return_slot = NULL;
   } else {
     parser.cur_func->return_slot = make_local_and_alloc(SYM_VAR, str_intern("$ret"), ret_type);
-  }
-
-  uint32_t num_params = type_func_num_params(sym->type);
-  for (uint32_t i = 0; i < num_params; ++i) {
-    make_param(param_names[i], type_func_param(sym->type, i), i);
   }
 }
 
@@ -441,7 +445,7 @@ static void leave_function(void) {
 #if ARCH_ARM64  // See above.
   void* entry = ir_jit_compile(_ir_CTX, /*opt=*/0, &size);
 #else
-  void* entry = ir_jit_compile(_ir_CTX, /*opt=*/1, &size);
+  void* entry = ir_jit_compile(_ir_CTX, /*opt=*/parser.opt_level, &size);
 #endif
   if (entry) {
     if (parser.verbose) {
@@ -1780,7 +1784,7 @@ static LastStatementType parse_statement(bool toplevel) {
   return LST_NON_RETURN;  // Return isn't possible unless in func.
 }
 
-void* parse(const char* filename, ReadFileResult file, bool verbose) {
+void* parse(const char* filename, ReadFileResult file, bool verbose, int opt_level) {
   type_init();
 
   // In the case of "a.a." the worst case for offsets is the same as the number
@@ -1799,6 +1803,7 @@ void* parse(const char* filename, ReadFileResult file, bool verbose) {
   parser.num_buffered_tokens = 0;
   parser.main_func_entry = NULL;
   parser.verbose = verbose;
+  parser.opt_level = opt_level;
   init_module_globals();
   enter_scope(/*is_module=*/true, /*is_function=*/false);
 

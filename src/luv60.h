@@ -173,4 +173,4 @@ Type type_ptr_subtype(Type type);
 
 // parse.c
 
-void* parse(const char* filename, ReadFileResult file, bool verbose);
+void* parse(const char* filename, ReadFileResult file, bool verbose, int opt_level);
