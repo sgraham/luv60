@@ -395,9 +395,7 @@ static void enter_function(Sym* sym,
   enter_scope(/*is_module=*/false, /*is_function=*/true);
 
   ir_consistency_check();
-  // https://github.com/dstogov/ir/issues/100
-  // https://github.com/dstogov/ir/issues/101
-  // IR_OPT_MEM2SSA: https://github.com/dstogov/ir/issues/102
+
   uint32_t opts = parser.opt_level ? IR_OPT_FOLDING : 0;
   if (parser.opt_level == 2) {
     opts |= IR_OPT_MEM2SSA;
