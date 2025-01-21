@@ -390,25 +390,15 @@ static void enter_function(Sym* sym,
   enter_scope(/*is_module=*/false, /*is_function=*/true);
 
   ir_consistency_check();
-#if ARCH_ARM64
-  // There seems to be a problem in small functions with not maintaining 16 byte
-  // alignment of sp https://github.com/dstogov/ir/issues/100. Adding some
-  // allocas and disabling optimzations (so that they aren't removed) is a
-  // crappy workaround for now.
-  ir_init(_ir_CTX, IR_FUNCTION, IR_CONSTS_LIMIT_MIN, IR_INSNS_LIMIT_MIN);
-#else
+  // https://github.com/dstogov/ir/issues/100
   // https://github.com/dstogov/ir/issues/101
   // IR_OPT_MEM2SSA: https://github.com/dstogov/ir/issues/102
   uint32_t opts = parser.opt_level ? IR_OPT_FOLDING : 0;
   if (parser.opt_level == 2) {
     opts |= IR_OPT_MEM2SSA;
   }
-  ir_init(_ir_CTX, IR_FUNCTION | opts, 4096, 4096);//IR_INSNS_LIMIT_MIN);
-#endif
+  ir_init(_ir_CTX, IR_FUNCTION | opts, 4096, 4096);
   ir_START();
-#if ARCH_ARM64  // See above.
-  ir_ALLOCA(32);
-#endif
 
   uint32_t num_params = type_func_num_params(sym->type);
   for (uint32_t i = 0; i < num_params; ++i) {
@@ -451,11 +441,7 @@ static void leave_function(void) {
 
 #if ENABLE_CODE_GEN
   size_t size;
-#if ARCH_ARM64  // See above.
-  void* entry = ir_jit_compile(_ir_CTX, /*opt=*/0, &size);
-#else
   void* entry = ir_jit_compile(_ir_CTX, /*opt=*/parser.opt_level, &size);
-#endif
   if (entry) {
     if (parser.verbose) {
       fprintf(stderr, "=> codegen to %zu bytes for '%s'\n", size, cstr(parser.cur_func->sym->name));

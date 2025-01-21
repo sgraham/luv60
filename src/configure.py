@@ -355,7 +355,7 @@ def generate(platform, config, settings, cmdlines, tests):
             % ("unittests" + exe_ext, " ".join(common_objs + unittest_objs))
         )
 
-        f.write("build run_unittests: testrun unittests.exe\n")
+        f.write("build run_unittests: testrun unittests%s\n" % exe_ext)
         cmds = {
             "run": os.path.join(root_dir, "unittests" + exe_ext) + " -q",
             "ret": 0,

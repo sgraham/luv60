@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 void* arena_ir_malloc(size_t size);
 void* arena_ir_calloc(size_t num, size_t size);
 void* arena_ir_realloc(void* ptr, size_t size);
