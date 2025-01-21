@@ -5,7 +5,7 @@ int main(int argc, char** argv) {
   base_writef_stderr("warning: this is a debug build, probably not a useful benchmark binary.\n");
 #endif
 
-  Arena* arena = arena_create(MiB(512), MiB(512));
+  Arena* arena = arena_create(MiB(1024), MiB(1024));
 
   const char* filename = FILENAME;
   ReadFileResult file = base_read_file(arena, filename);

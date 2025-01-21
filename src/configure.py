@@ -104,8 +104,8 @@ CONFIGS = {
         },
         "r": {
             "COMPILE": CLANG
-            + " -MMD -MF $out.d -std:c11 -flto -fuse-ld=lld -O3 -g /DNDEBUG /DBUILD_DEBUG=0 -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
-            "LINK": CLANG + " -g $in -o $out",
+            + " -MMD -MF $out.d -std=c11 -flto -O3 -g -DNDEBUG -DBUILD_DEBUG=0 -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            "LINK": CLANG + " -g $in -lcapstone -o $out",
             "ML": CLANG + " $in -o $out",
         },
         "__": {
