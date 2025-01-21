@@ -48,7 +48,7 @@
 #define CHECK(x)                                                            \
   do {                                                                      \
     if (!(x)) {                                                             \
-      fprintf(stderr, "%s:%d: CHECK failed: " #x "\n", __FILE__, __LINE__); \
+      fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #x); \
       TRAP();                                                               \
     }                                                                       \
   } while (0)
