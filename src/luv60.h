@@ -53,6 +53,8 @@ void base_mem_decommit(void* ptr, uint64_t size);
 void base_mem_release(void* ptr, uint64_t size);
 ReadFileResult base_read_file(Arena* arena, const char* filename);
 NORETURN void base_exit(int rc);
+void base_timer_init(void);
+uint64_t base_timer_now(void);
 
 // str.c
 

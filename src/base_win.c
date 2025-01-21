@@ -70,3 +70,22 @@ ReadFileResult base_read_file(Arena* arena, const char* filename) {
 NORETURN void base_exit(int rc) {
   ExitProcess(rc);
 }
+
+static uint64_t microsecond_resolution_;
+
+void base_timer_init(void) {
+  microsecond_resolution_ = 1;
+  LARGE_INTEGER large_int_resolution;
+  if (QueryPerformanceFrequency(&large_int_resolution)) {
+    microsecond_resolution_ = large_int_resolution.QuadPart;
+  }
+}
+
+uint64_t base_timer_now(void) {
+  uint64_t result = 0;
+  LARGE_INTEGER large_int_counter;
+  if (QueryPerformanceCounter(&large_int_counter)) {
+    result = (large_int_counter.QuadPart * (1000000)) / microsecond_resolution_;
+  }
+  return result;
+}

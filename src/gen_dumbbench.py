@@ -4,6 +4,9 @@ Generates a dumb lexing benchmark file for a few languages.
 
 import string
 import random
+
+random.seed(0x12345678)
+
 def id_generator():
     chars = string.ascii_lowercase + '_'
     return ''.join(random.choice(chars) for _ in range(16))

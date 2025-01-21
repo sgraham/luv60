@@ -1,12 +1,22 @@
 #include "luv60.h"
 
+
+#define TIMER_START(x) uint64_t x##_start_us = base_timer_now()
+#define TIMER_END(x)                                                 \
+  do {                                                               \
+    uint64_t x##_end_us = base_timer_now();                          \
+    printf(#x ": %.7fs\n", (x##_end_us - x##_start_us) / 1000000.0); \
+  } while (0)
+
 int main(int argc, char** argv) {
 #if BUILD_DEBUG
   base_writef_stderr("warning: this is a debug build, probably not a useful benchmark binary.\n");
 #endif
+  base_timer_init();
 
-  Arena* arena = arena_create(MiB(1024), MiB(1024));
+  Arena* arena = arena_create(MiB(1024), KiB(128));
 
+  (void)arena;
   const char* filename = FILENAME;
   ReadFileResult file = base_read_file(arena, filename);
   if (!file.buffer) {
