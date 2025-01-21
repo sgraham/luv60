@@ -47,11 +47,10 @@ static void parse_commandline(int argc,
 }
 
 int main(int argc, char** argv) {
-  Arena* file_arena = arena_create(MiB(256), KiB(128));
-  Arena* main_arena = arena_create(MiB(1792), MiB(128));
-  Arena* parse_temp_arena = arena_create(MiB(1024), MiB(1024));
+  Arena* main_arena = arena_create(MiB(256), KiB(128));
+  Arena* parse_temp_arena = arena_create(MiB(256), KiB(128));
   Arena* str_arena = arena_create(MiB(256), KiB(128));
-  arena_ir = arena_create(MiB(1024), KiB(1024));
+  arena_ir = arena_create(MiB(256), KiB(128));
 
   str_intern_pool_init(str_arena);
 
@@ -62,7 +61,7 @@ int main(int argc, char** argv) {
   int opt_level;
   parse_commandline(argc, argv, &input, &verbose, &syntax_only, &return_main_rc, &opt_level);
 
-  ReadFileResult file = base_read_file(file_arena, cstr(input));
+  ReadFileResult file = base_read_file(cstr(input));
   if (!file.buffer) {
     base_writef_stderr("Couldn't read '%s'\n", cstr(input));
     return 1;

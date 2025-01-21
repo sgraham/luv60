@@ -1778,8 +1778,7 @@ static void* parse_impl(Arena* main_arena,
   // of characters in the buffer.
   parser.arena = main_arena;
   parser.var_scope_arena = temp_arena;
-  parser.token_offsets =
-      (uint32_t*)arena_push(main_arena, file.allocated_size * sizeof(uint32_t), 8);
+  parser.token_offsets = (uint32_t*)base_mem_large_alloc(file.allocated_size * sizeof(uint32_t));
   parser.file_contents = (const char*)file.buffer;
   parser.cur_filename = filename;
   parser.cur_token_index = 0;

@@ -14,11 +14,8 @@ int main(int argc, char** argv) {
 #endif
   base_timer_init();
 
-  Arena* arena = arena_create(MiB(1024), KiB(128));
-
-  (void)arena;
   const char* filename = FILENAME;
-  ReadFileResult file = base_read_file(arena, filename);
+  ReadFileResult file = base_read_file(filename);
   if (!file.buffer) {
     base_writef_stderr("Couldn't read '%s'\n", filename);
     return 1;
@@ -28,7 +25,7 @@ int main(int argc, char** argv) {
 
   // In the worst case of input "x.x.", the token_offsets has the same number of
   // elements as the number of bytes in the input.
-  uint32_t* token_offsets = (uint32_t*)arena_push(arena, file.allocated_size * sizeof(uint32_t), 8);
+  uint32_t* token_offsets = base_mem_large_alloc(file.allocated_size * sizeof(uint32_t));
   uint32_t count =
       lex_indexer((const uint8_t*)file.buffer, (uint32_t)file.allocated_size, token_offsets);
 

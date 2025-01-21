@@ -1,7 +1,7 @@
 #include "luv60.h"
 
 #if !OS_WINDOWS
-#error
+#  error
 #endif
 
 #include <windows.h>
@@ -20,12 +20,16 @@ uint64_t base_page_size(void) {
   return sysInfo.dwPageSize;
 }
 
-void *base_mem_reserve(uint64_t size) {
+void* base_mem_reserve(uint64_t size) {
   return VirtualAlloc(NULL, size, MEM_RESERVE, PAGE_NOACCESS);
 }
 
 bool base_mem_commit(void* ptr, uint64_t size) {
   return VirtualAlloc(ptr, size, MEM_COMMIT, PAGE_READWRITE) != 0;
+}
+
+void* base_mem_large_alloc(uint64_t size) {
+  return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 }
 
 void base_mem_decommit(void* ptr, uint64_t size) {
@@ -36,10 +40,10 @@ void base_mem_release(void* ptr, uint64_t size) {
   VirtualFree(ptr, 0, MEM_RELEASE);
 }
 
-ReadFileResult base_read_file(Arena* arena, const char* filename) {
+ReadFileResult base_read_file(const char* filename) {
   SECURITY_ATTRIBUTES sa = {sizeof(sa), 0, 0};
-  HANDLE file = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, &sa,
-                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+  HANDLE file = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, &sa, OPEN_EXISTING,
+                            FILE_ATTRIBUTE_NORMAL, 0);
   if (file == INVALID_HANDLE_VALUE) {
     return (ReadFileResult){0};
   }
@@ -48,7 +52,7 @@ ReadFileResult base_read_file(Arena* arena, const char* filename) {
 
   size_t page_size = base_page_size();
   size_t to_alloc = ALIGN_UP(size.QuadPart + 64, page_size);
-  unsigned char* read_buf = arena_push(arena, to_alloc, page_size);
+  unsigned char* read_buf = base_mem_large_alloc(to_alloc);
   if (!read_buf) {
     CloseHandle(file);
     return (ReadFileResult){0};
@@ -56,11 +60,13 @@ ReadFileResult base_read_file(Arena* arena, const char* filename) {
 
   DWORD bytes_read = 0;
   if (!ReadFile(file, read_buf, size.QuadPart, &bytes_read, NULL)) {
+    base_mem_release(read_buf, to_alloc);
     return (ReadFileResult){0};
   }
   CloseHandle(file);
 
   if (bytes_read != size.QuadPart) {
+    base_mem_release(read_buf, to_alloc);
     return (ReadFileResult){0};
   }
 
