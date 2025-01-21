@@ -26,7 +26,6 @@
 # include "ir_elf.h"
 #endif
 
-#define CAPSTONE_AARCH64_COMPAT_HEADER
 #include <capstone/capstone.h>
 #define HAVE_CAPSTONE_ITER
 

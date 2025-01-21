@@ -15,7 +15,6 @@ extern "C" {
 #include <inttypes.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -30,9 +29,7 @@ extern "C" {
 # endif
 /* Only supported is little endian for any arch on Windows,
    so just fake the same for all. */
-#ifndef __ORDER_LITTLE_ENDIAN__
 # define __ORDER_LITTLE_ENDIAN__ 1
-#endif
 # define __BYTE_ORDER__ __ORDER_LITTLE_ENDIAN__
 # ifndef __has_builtin
 #  define __has_builtin(arg) (0)
@@ -961,10 +958,12 @@ IR_ALWAYS_INLINE void *ir_jit_compile(ir_ctx *ctx, int opt_level, size_t *size)
 			 || !ir_mem2ssa(ctx)) {
 				return NULL;
 			}
+			if (opt_level > 1) {
+				ir_reset_cfg(ctx);
+			}
 		}
 
 		if (opt_level > 1) {
-			ir_reset_cfg(ctx);
 			if (!ir_sccp(ctx)) {
 				return NULL;
 			}

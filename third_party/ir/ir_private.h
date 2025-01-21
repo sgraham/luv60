@@ -137,7 +137,9 @@ IR_ALWAYS_INLINE uint32_t ir_ntz(uint32_t num)
 /* Number of trailing zero bits (0x01 -> 0; 0x40 -> 6; 0x00 -> LEN) */
 IR_ALWAYS_INLINE uint32_t ir_ntzl(uint64_t num)
 {
-#if defined(_WIN64)
+#if (defined(__GNUC__) || __has_builtin(__builtin_ctzl))
+	return __builtin_ctzl(num);
+#elif defined(_WIN64)
 	unsigned long index;
 
 	if (!_BitScanForward64(&index, num)) {
@@ -146,8 +148,6 @@ IR_ALWAYS_INLINE uint32_t ir_ntzl(uint64_t num)
 	}
 
 	return (uint32_t) index;
-#elif (defined(__GNUC__) || __has_builtin(__builtin_ctzl))
-	return __builtin_ctzl(num);
 #else
 	uint32_t n;
 
