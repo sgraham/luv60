@@ -1,4 +1,4 @@
-#define ENABLE_CODE_GEN 0
+#define ENABLE_CODE_GEN 1
 
 #include "../third_party/ir/ir.h"
 #include "../third_party/ir/ir_builder.h"

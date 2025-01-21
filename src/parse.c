@@ -108,10 +108,6 @@ typedef struct Parser {
   FuncData* cur_func;
   VarScope* cur_var_scope;
 
-  //LqSymbol lqsym_fmt_print_i32;
-  //LqSymbol lqsym_fmt_print_str;
-  //int string_gensym_counter;
-
   void* main_func_entry;
   bool verbose;
   int opt_level;
@@ -330,8 +326,17 @@ static void print_str_impl(RuntimeStr str) {
 }
 
 static void print_str(Operand* op) {
+  // This is really !(AARCH64 || SYSV): 16 byte argument passed as pointer
+  // rather than two words.
+#if OS_WINDOWS
   ir_ref addr = ir_CONST_ADDR(print_str_impl);
   ir_CALL_1(IR_VOID, addr, load_operand_if_necessary(op));
+#else
+  ir_ref addr = ir_CONST_ADDR(print_str_impl);
+  ir_ref data = ir_LOAD(IR_ADDR, op->ref);
+  ir_ref size = ir_LOAD(IR_I64, ir_ADD_OFFSET(op->ref, 8));
+  ir_CALL_2(IR_VOID, addr, data, size);
+#endif
 }
 
 static void print_range_impl(RuntimeRange range) {

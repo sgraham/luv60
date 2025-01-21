@@ -8,3 +8,6 @@ void arena_ir_free(void* ptr);
 #define ir_mem_calloc arena_ir_calloc
 #define ir_mem_realloc arena_ir_realloc
 #define ir_mem_free arena_ir_free
+
+// ir_disasm is written against an older capstone revision.
+#define CAPSTONE_AARCH64_COMPAT_HEADER
