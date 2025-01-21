@@ -74,12 +74,26 @@ typedef struct FuncData {
   uint64_t arena_saved_pos;
 } FuncData;
 
+typedef struct SmallFlatNameSymMap {
+  Str names[16];
+  Sym syms[16];
+  int num_entries;
+} SmallFlatNameSymMap;
+
+static void flat_name_map_init(SmallFlatNameSymMap* nm) {
+  nm->num_entries = 0;
+}
+
 typedef struct VarScope VarScope;
 struct VarScope {
-  DictImpl sym_dict;
+  union {
+    DictImpl sym_dict;  // when is_full_dict
+    SmallFlatNameSymMap flat_map;
+  };
   uint64_t arena_pos;
   bool is_function;
   bool is_module;
+  bool is_full_dict;
 };
 
 typedef struct Parser {
@@ -278,6 +292,7 @@ NORETURN static void errorf_offset(uint32_t offset, const char* fmt, ...) {
   va_end(args);
   error_offset(offset, str);
 }
+
 typedef struct NameSymPair {
   Str name;
   Sym sym;
@@ -299,15 +314,24 @@ static bool namesym_eq_func(void* void_nsp_a, void* void_nsp_b) {
 // Returns pointer into dict where Sym is stored by value, probably bad idea.
 static Sym* sym_new(SymKind kind, Str name, Type type) {
   ASSERT(parser.cur_var_scope);
-  NameSymPair nsp = {.name = name,
-                     .sym = {
-                         .kind = kind,
-                         .name = name,
-                         .type = type,
-                     }};
-  DictInsert res = dict_insert(&parser.cur_var_scope->sym_dict, &nsp, namesym_hash_func,
-                               namesym_eq_func, sizeof(NameSymPair), _Alignof(NameSymPair));
-  return &((NameSymPair*)dict_rawiter_get(&res.iter))->sym;
+  if (parser.cur_var_scope->is_full_dict) {
+    NameSymPair nsp = {.name = name,
+                      .sym = {
+                          .kind = kind,
+                          .name = name,
+                          .type = type,
+                      }};
+    DictInsert res = dict_insert(&parser.cur_var_scope->sym_dict, &nsp, namesym_hash_func,
+                                namesym_eq_func, sizeof(NameSymPair), _Alignof(NameSymPair));
+    return &((NameSymPair*)dict_rawiter_get(&res.iter))->sym;
+  } else {
+    SmallFlatNameSymMap* nm = &parser.cur_var_scope->flat_map;
+    nm->names[nm->num_entries] = name;
+    nm->syms[nm->num_entries] = (Sym){.kind = kind, .name = name, .type = type};
+    Sym* ret = &nm->syms[nm->num_entries++];
+    ASSERT(nm->num_entries < COUNTOFI(nm->names) && "todo; 'rehash' into is_full_dict");
+    return ret;
+  }
 }
 
 static void init_module_globals(void) {
@@ -370,10 +394,15 @@ static Sym* make_param(Str name, Type type, int index) {
 static void enter_scope(bool is_module, bool is_function) {
   parser.cur_var_scope = &parser.varscopes[parser.num_varscopes++];
   parser.cur_var_scope->arena_pos = arena_pos(parser.var_scope_arena);
-  parser.cur_var_scope->sym_dict = dict_new(parser.var_scope_arena, is_module ? (1 << 16) : 16,
-                                            sizeof(NameSymPair), _Alignof(NameSymPair));
   parser.cur_var_scope->is_function = is_function;
   parser.cur_var_scope->is_module = is_module;
+  parser.cur_var_scope->is_full_dict = !is_function;
+  if (parser.cur_var_scope->is_full_dict) {
+    parser.cur_var_scope->sym_dict =
+        dict_new(parser.var_scope_arena, 1 << 20, sizeof(NameSymPair), _Alignof(NameSymPair));
+  } else {
+    flat_name_map_init(&parser.cur_var_scope->flat_map);
+  }
 }
 
 static void leave_scope(void) {
@@ -1214,16 +1243,26 @@ typedef enum ScopeResult {
 } ScopeResult;
 
 static Sym* find_in_scope(VarScope* scope, Str name) {
-  DictRawIter iter =
-      dict_find(&scope->sym_dict, &name, namesym_hash_func, namesym_eq_func, sizeof(NameSymPair));
-  NameSymPair* nsp = (NameSymPair*)dict_rawiter_get(&iter);
-  if (!nsp) {
+  if (BRANCH_UNLIKELY(scope->is_full_dict)) {
+    DictRawIter iter =
+        dict_find(&scope->sym_dict, &name, namesym_hash_func, namesym_eq_func, sizeof(NameSymPair));
+    NameSymPair* nsp = (NameSymPair*)dict_rawiter_get(&iter);
+    if (!nsp) {
+      return NULL;
+    }
+    return &nsp->sym;
+  } else {
+    SmallFlatNameSymMap* nm = &scope->flat_map;
+    for (int i = nm->num_entries - 1; i >= 0; --i) {
+      if (str_eq(nm->names[i], name))
+        return &nm->syms[i];
+    }
     return NULL;
   }
-  return &nsp->sym;
 }
 
-// Returns pointer into sym_dict (where Sym is stored by value), probably a bad idea.
+// Returns pointer into sym_dict/flat_map (where Sym is stored by value),
+// probably a bad idea.
 static ScopeResult scope_lookup(Str name, Sym** sym, SymScopeDecl* scope_decl) {
   *scope_decl = SSD_NONE;
   *sym = NULL;

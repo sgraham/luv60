@@ -60,7 +60,7 @@ CONFIGS = {
     "w": {
         "d": {
             "COMPILE": CLANG_CL_WIN
-            + " /showIncludes -std:c11 /nologo /TC /FS /Od /Zi /D_DEBUG /DBUILD_DEBUG=1 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo:$out /Fd:$out.pdb",
+            + " /showIncludes -std:c11 /nologo /TC /FS /Od /Zi /DIR_DEBUG /D_DEBUG /DBUILD_DEBUG=1 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo:$out /Fd:$out.pdb",
             "LINK": LLD_LINK_WIN
             + " /nologo /DEBUG $in /out:$out /pdb:$out.pdb",
             "ML": CLANG_CL_WIN
@@ -98,7 +98,7 @@ CONFIGS = {
     "m": {
         "d": {
             "COMPILE": CLANG
-            + " -MMD -MF $out.d -std=c11 -O0 -g -D_DEBUG -DBUILD_DEBUG=1 -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            + " -MMD -MF $out.d -std=c11 -O0 -g -DIR_DEBUG -D_DEBUG -DBUILD_DEBUG=1 -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
             "LINK": CLANG + " -g $in -lcapstone -o $out",
             "ML": CLANG + " $in -o $out",
         },
