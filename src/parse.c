@@ -110,6 +110,7 @@ typedef struct Parser {
 
   void* main_func_entry;
   bool verbose;
+  bool ir_only;
   int opt_level;
 } Parser;
 
@@ -443,25 +444,29 @@ static void leave_function(void) {
   }
 
 #if ENABLE_CODE_GEN
-  size_t size;
-  void* entry = ir_jit_compile(_ir_CTX, /*opt=*/parser.opt_level, &size);
-  if (entry) {
-    if (parser.verbose) {
-      fprintf(stderr, "=> codegen to %zu bytes for '%s'\n", size, cstr(parser.cur_func->sym->name));
-#if !OS_WINDOWS  // TODO: don't have capstone or ir_disasm on win32 right now
-      ir_disasm_init();
-      ir_disasm(cstr(parser.cur_func->sym->name), entry, size, false, _ir_CTX, stderr);
-      ir_disasm_free();
-#endif
+  if (!parser.ir_only) {
+    size_t size = 0;
+    void* entry = ir_jit_compile(_ir_CTX, /*opt=*/parser.opt_level, &size);
+    if (entry) {
+      if (parser.verbose) {
+        fprintf(stderr, "=> codegen to %zu bytes for '%s'\n", size,
+                cstr(parser.cur_func->sym->name));
+#  if !OS_WINDOWS  // TODO: don't have capstone or ir_disasm on win32 right now
+        ir_disasm_init();
+        ir_disasm(cstr(parser.cur_func->sym->name), entry, size, false, _ir_CTX, stderr);
+        ir_disasm_free();
+#  endif
+      }
+      if (str_eq(parser.cur_func->sym->name, str_intern("main"))) {
+        parser.main_func_entry = entry;
+      }
+    } else {
+      base_writef_stderr("compilation failed '%s'\n", cstr(parser.cur_func->sym->name));
     }
-    if (str_eq(parser.cur_func->sym->name, str_intern("main"))) {
-      parser.main_func_entry = entry;
-    }
-  } else {
-    base_writef_stderr("compilation failed '%s'\n", cstr(parser.cur_func->sym->name));
+    parser.cur_func->sym->addr = entry;
   }
-  parser.cur_func->sym->addr = entry;
 #endif
+
   ir_free(_ir_CTX);
 
   arena_pop_to(arena_ir, parser.cur_func->arena_saved_pos);
@@ -1771,6 +1776,7 @@ static void* parse_impl(Arena* main_arena,
                    const char* filename,
                    ReadFileResult file,
                    bool verbose,
+                   bool ir_only,
                    int opt_level) {
   type_init(main_arena);
 
@@ -1792,6 +1798,7 @@ static void* parse_impl(Arena* main_arena,
   parser.num_buffered_tokens = 0;
   parser.main_func_entry = NULL;
   parser.verbose = verbose;
+  parser.ir_only = ir_only;
   parser.opt_level = opt_level;
   init_module_globals();
   enter_scope(/*is_module=*/true, /*is_function=*/false);
