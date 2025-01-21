@@ -85,8 +85,8 @@ def main():
             f.write('Minor portability patches carried in the sgraham tree. Last pulled at:\n')
             rev_proc = subprocess.run(['git', 'rev-parse', 'HEAD'], capture_output=True)
             f.write(rev_proc.stdout.decode('utf-8') + '\n')
+        os.chdir(ROOT_DIR)
 
-    os.chdir(ROOT_DIR)
     subprocess.run(['git', 'add', '-u'])
     subprocess.run(['git', 'add', ir_dir])
     subprocess.run(['git', 'status'])
