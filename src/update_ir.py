@@ -78,7 +78,7 @@ def main():
         for f in FILES:
             shutil.copyfile(f, os.path.join(ir_dir, f))
         # This is https://github.com/dstogov/ir at d6d7fc489137aab218b04b59d770b497c5ae3832.
-        with open(os.path.join(ir_dir, "README"), 'w') as f:
+        with open(os.path.join(ir_dir, "README"), 'w', newline='\n') as f:
             f.write(
                 "This is https://github.com/dstogov/ir forked to https://github.com/sgraham/ir.\n"
             )
