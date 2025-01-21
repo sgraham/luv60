@@ -5,6 +5,7 @@ ROOT_DIR = os.path.normpath(
 )
 
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -60,8 +61,9 @@ def main():
         capture_output=True,
         check=True,
     )
-    if proc.stdout.strip() != "":
+    if proc.stdout.decode('utf-8').strip() != "":
         print("Run with a clean workdir.\n")
+        print("Got: '%s'\n" % proc.stdout.strip())
         sys.exit(1)
 
     ir_dir = os.path.join(ROOT_DIR, "third_party", "ir")
@@ -72,17 +74,19 @@ def main():
         subprocess.run(["git", "clone", "git@github.com:sgraham/ir.git"], check=True)
         os.chdir(os.path.join(tmpdir, "ir"))
         os.makedirs(ir_dir)
+        os.makedirs(os.path.join(ir_dir, 'dynasm'))
         for f in FILES:
             shutil.copyfile(f, os.path.join(ir_dir, f))
         # This is https://github.com/dstogov/ir at d6d7fc489137aab218b04b59d770b497c5ae3832.
-        with open(os.path.join(ir_dir, "README")) as f:
+        with open(os.path.join(ir_dir, "README"), 'w') as f:
             f.write(
                 "This is https://github.com/dstogov/ir forked to https://github.com/sgraham/ir.\n"
             )
             f.write('Minor portability patches carried in the sgraham tree. Last pulled at:\n')
             rev_proc = subprocess.run(['git', 'rev-parse', 'HEAD'], capture_output=True)
-            f.write(rev_proc.stdout + '\n')
+            f.write(rev_proc.stdout.decode('utf-8') + '\n')
 
+    os.chdir(ROOT_DIR)
     subprocess.run(['git', 'add', '-u'])
     subprocess.run(['git', 'add', ir_dir])
     subprocess.run(['git', 'status'])
