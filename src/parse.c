@@ -1687,44 +1687,6 @@ static void print_statement(void) {
   expect_end_of_statement("print");
 }
 
-static bool parse_func_body_only_statement(LastStatementType* lst) {
-  *lst = LST_NON_RETURN;
-
-  if (match(TOK_IF)) {
-    if_statement();
-    return true;
-  }
-  if (match(TOK_FOR)) {
-    for_statement();
-    return true;
-  }
-  if (match(TOK_PRINT)) {
-    print_statement();
-    return true;
-  }
-
-  if (match(TOK_RETURN)) {
-    Type func_ret = type_func_return_type(parser.cur_func->sym->type);
-    ASSERT(!type_is_none(func_ret));
-    Operand op = operand_null;
-    if (!type_eq(func_ret, type_void)) {
-      op = parse_expression(NULL);
-      *lst = LST_RETURN_VALUE;
-      if (!convert_operand(&op, func_ret)) {
-        errorf("Cannot convert type %s to expected return type %s.", type_as_str(op.type),
-               type_as_str(func_ret));
-      }
-      ir_VSTORE(parser.cur_func->return_slot->ref, load_operand_if_necessary(&op));
-    } else {
-      consume(TOK_NEWLINE, "Expected newline after return in function with no return type.");
-      *lst = LST_RETURN_VOID;
-    }
-    return true;
-  }
-
-  return false;
-}
-
 static LastStatementType parse_block(void) {
   LastStatementType lst = LST_NON_RETURN;
   while (!check(TOK_DEDENT)) {
@@ -1743,7 +1705,7 @@ static LastStatementType parse_block(void) {
 }
 
 // TODO: decorators
-static void parse_def_statement(void) {
+static void def_statement(void) {
   Type return_type = parse_type();
   if (type_is_none(return_type)) {
     return_type = type_void;
@@ -1797,35 +1759,69 @@ static void parse_variable_statement(Type type) {
   expect_end_of_statement("variable declaration");
 }
 
-static bool parse_anywhere_statement(void) {
-  if (match(TOK_DEF)) {
-    parse_def_statement();
-    return true;
+static LastStatementType return_statement(void) {
+  Type func_ret = type_func_return_type(parser.cur_func->sym->type);
+  ASSERT(!type_is_none(func_ret));
+  Operand op = operand_null;
+  if (!type_eq(func_ret, type_void)) {
+    op = parse_expression(NULL);
+    if (!convert_operand(&op, func_ret)) {
+      errorf("Cannot convert type %s to expected return type %s.", type_as_str(op.type),
+             type_as_str(func_ret));
+    }
+    ir_VSTORE(parser.cur_func->return_slot->ref, load_operand_if_necessary(&op));
+    return LST_RETURN_VALUE;
+  } else {
+    consume(TOK_NEWLINE, "Expected newline after return in function with no return type.");
+    return LST_RETURN_VOID;
   }
-
-  Type var_type = parse_type();
-  if (!type_is_none(var_type)) {
-    parse_variable_statement(var_type);
-    return true;
-  }
-
-  parse_expression(NULL);
-  expect_end_of_statement("top level");
-  return true;
 }
 
 static LastStatementType parse_statement(bool toplevel) {
+  LastStatementType lst = LST_NON_RETURN;
+
   skip_newlines();
-  if (!toplevel) {
-    LastStatementType lst;
-    if (parse_func_body_only_statement(&lst)) {
-      return lst;
+
+  switch (parser.cur_kind) {
+    case TOK_DEF:
+      advance();
+      def_statement();
+      break;
+    case TOK_IF:
+      advance();
+      if (toplevel) error("if statement not allowed at top level.");
+      if_statement();
+      break;
+    case TOK_FOR:
+      advance();
+      if (toplevel) error("for statement not allowed at top level.");
+      for_statement();
+      break;
+    case TOK_PRINT:
+      advance();
+      if (toplevel) error("print statement not allowed at top level.");
+      print_statement();
+      break;
+    case TOK_RETURN:
+      advance();
+      if (toplevel) error("return statement not allowed at top level.");
+      lst = return_statement();
+      break;
+    default: {
+      Type var_type = parse_type();
+      if (!type_is_none(var_type)) {
+        parse_variable_statement(var_type);
+        break;
+      }
+
+      parse_expression(NULL);
+      expect_end_of_statement("top level");
+      break;
     }
   }
 
-  parse_anywhere_statement();
   skip_newlines();
-  return LST_NON_RETURN;  // Return isn't possible unless in func.
+  return lst;
 }
 
 static void* parse_impl(Arena* main_arena,

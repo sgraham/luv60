@@ -1,4 +1,4 @@
 # RET: 1
 # ERR: {self}:4:1:print
-# ERR: {ssss}     ^ error: Expect expression.
+# ERR: {ssss}     ^ error: print statement not allowed at top level.
 print
