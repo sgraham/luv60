@@ -152,6 +152,8 @@ flat map for func syms instead of full swisstable:
 damn, m3 macbook air on battery for --syntax-only is <1s, amazing at branchy code
   Time (mean ± σ):     990.3 ms ±   6.4 ms    [User: 916.7 ms, System: 67.2 ms]
 flat map might be a bit slower on mac? strange
-Time (mean ± σ):     999.0 ms ±   3.9 ms    [User: 931.5 ms, System: 61.6 ms]
+  Time (mean ± σ):     999.0 ms ±   3.9 ms    [User: 931.5 ms, System: 61.6 ms]
+hmm, fiddling wiht the module dict size (1<<16 vs 1<<24) mildly affects it, weirdness seems opposite to windows too (where rehash is worse than initial clear)
+  Time (mean ± σ):     961.4 ms ±   2.8 ms    [User: 887.5 ms, System: 66.9 ms]
 
 # vim: set tw=80:

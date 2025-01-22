@@ -399,7 +399,7 @@ static void enter_scope(bool is_module, bool is_function) {
   parser.cur_var_scope->is_full_dict = !is_function;
   if (parser.cur_var_scope->is_full_dict) {
     parser.cur_var_scope->sym_dict =
-        dict_new(parser.var_scope_arena, 1 << 20, sizeof(NameSymPair), _Alignof(NameSymPair));
+        dict_new(parser.var_scope_arena, 1 << 16, sizeof(NameSymPair), _Alignof(NameSymPair));
   } else {
     flat_name_map_init(&parser.cur_var_scope->flat_map);
   }
