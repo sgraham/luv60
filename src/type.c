@@ -213,7 +213,6 @@ Type type_array(uint64_t count, Type subtype) {
 }
 
 
-
 // Returned str is either the cstr() of an interned string, or a constant.
 // Not fast or memory efficient, should only be used during errors though.
 const char* type_as_str(Type type) {

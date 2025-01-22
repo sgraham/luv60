@@ -670,6 +670,7 @@ typedef struct ir_val {
 #define ir_consistency_check() 0
 #define ir_const(ctx, val, type) 0
 #define ir_dump(ctx, file)
+#define ir_save(ctx, flags, file)
 #define ir_dump_dot(ctx, name, file)
 #define ir_check(ctx) 1
 #define ir_jit_compile(ctx, opt, size) 0

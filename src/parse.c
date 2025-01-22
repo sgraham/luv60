@@ -459,12 +459,7 @@ static void leave_function(void) {
   }
 
   if (parser.verbose) {
-    ir_dump(_ir_CTX, stderr);
-    Str dotname = str_internf("%s.dot", cstr(parser.cur_func->sym->name));
-    FILE* dot = fopen(cstr(dotname), "wb");
-    ir_dump_dot(_ir_CTX, cstr(parser.cur_func->sym->name), dot);
-    fclose(dot);
-    base_writef_stderr("=> saved '%s'\n", cstr(dotname));
+    ir_save(_ir_CTX, -1, stderr);
   }
 
   if (!ir_check(_ir_CTX)) {
