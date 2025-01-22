@@ -160,4 +160,10 @@ hmm, fiddling wiht the module dict size (1<<16 vs 1<<24) mildly affects it, weir
 new short str impl
   Time (mean ± σ):     795.1 ms ±   9.7 ms    [User: 730.1 ms, System: 54.8 ms]
 
+Actual compilation is 25-30s:
+a lot of time in memory futzing again, probably giving IR a slice of a buffer
+would be a lot better.
+with code_buffer pre-alloc, --opt 1
+  Time (mean ± σ):      7.727 s ±  0.078 s    [User: 7.475 s, System: 0.234 s]
+
 # vim: set tw=80:

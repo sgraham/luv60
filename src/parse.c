@@ -126,6 +126,7 @@ typedef struct Parser {
   bool verbose;
   bool ir_only;
   int opt_level;
+  ir_code_buffer code_buffer;
 } Parser;
 
 static Parser parser;
@@ -432,6 +433,7 @@ static void enter_function(Sym* sym,
     opts |= IR_OPT_MEM2SSA;
   }
   ir_init(_ir_CTX, IR_FUNCTION | opts, 4096, 4096);
+  parser.cur_func->ctx.code_buffer = &parser.code_buffer;
   ir_START();
 
   uint32_t num_params = type_func_num_params(sym->type);
@@ -1819,10 +1821,10 @@ static void* parse_impl(Arena* main_arena,
                    int opt_level) {
   type_init(main_arena);
 
-  // In the case of "a.a." the worst case for offsets is the same as the number
-  // of characters in the buffer.
   parser.arena = main_arena;
   parser.var_scope_arena = temp_arena;
+  // In the case of "a.a." the worst case for offsets is the same as the number
+  // of characters in the buffer.
   parser.token_offsets = (uint32_t*)base_mem_large_alloc(file.allocated_size * sizeof(uint32_t));
   parser.file_contents = (const char*)file.buffer;
   parser.cur_filename = filename;
@@ -1839,6 +1841,14 @@ static void* parse_impl(Arena* main_arena,
   parser.verbose = verbose;
   parser.ir_only = ir_only;
   parser.opt_level = opt_level;
+
+#if ENABLE_CODE_GEN
+  size_t code_buffer_size = MiB(512);
+  parser.code_buffer.start = ir_mem_mmap(code_buffer_size);
+  parser.code_buffer.end = (uint8_t*)parser.code_buffer.start + code_buffer_size;
+  parser.code_buffer.pos = parser.code_buffer.start;
+#endif
+
   init_module_globals();
   enter_scope(/*is_module=*/true, /*is_function=*/false);
 

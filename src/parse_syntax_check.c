@@ -9,11 +9,17 @@
 
 typedef uint32_t ir_ref;
 typedef uint32_t ir_op;
-typedef struct ir_ctx {
+typedef struct _ir_fake_code_buffer {
+  void* start;
+  void* end;
+  void* pos;
+} ir_code_buffer;
+typedef struct _ir_fake_ctx {
   ir_ref ret_type;
+  struct _ir_fake_code_buffer* code_buffer;
 } ir_ctx;
 typedef uint32_t ir_type;
-typedef struct ir_val {
+typedef struct _ir_val {
   uint64_t u64;
 } ir_val;
 
@@ -675,6 +681,7 @@ typedef struct ir_val {
 #define ir_check(ctx) 1
 #define ir_jit_compile(ctx, opt, size) 0
 #define ir_free(ctx)
+#define ir_mem_mmap(size) 0
 
 #undef _ir_CTX
 
