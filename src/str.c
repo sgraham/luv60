@@ -38,7 +38,7 @@ static size_t parse_buffer_size_;
 #define STR_NEW_BUFFER_SIZE (MiB(1))
 static char* new_buffer_;
 static size_t new_buffer_size_;
-static int new_buffer_insert_location_;
+static size_t new_buffer_insert_location_;
 
 static Arena* arena_;
 
