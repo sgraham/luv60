@@ -40,10 +40,13 @@ static char* new_buffer_;
 static size_t new_buffer_size_;
 static int new_buffer_insert_location_;
 
+static Arena* arena_;
+
 void str_intern_pool_init(Arena* arena, char* parse_buffer, size_t buffer_size) {
+  arena_ = arena;
   new_buffer_ = arena_push(arena, STR_NEW_BUFFER_SIZE, 8);
   new_buffer_size_ = STR_NEW_BUFFER_SIZE;
-  new_buffer_insert_location_ = 0;
+  new_buffer_insert_location_ = 1;
   parse_buffer_ = parse_buffer;
   parse_buffer_size_ = buffer_size;
 }
@@ -64,16 +67,19 @@ void str_intern_pool_destroy_for_tests(void) {
 #define MAKE_PARSE_BUFFER_STR_VAL(index, len)               \
   (TOP_BIT_U64 |                          /* top bit */     \
    (((index) & 0x3fffffffull) << 32ull) | /* 30bit index */ \
-   (((len) & 0x3fffffffull) << 32ull) /* 30bit len */)
+   (((len) & 0x3fffffffull)) /* 30bit len */)
 
 #define MAKE_NEW_BUFFER_STR_VAL(index, len)                    \
   (TOP_BIT_U64 |                          /* top bit */        \
    SECOND_TOP_BIT_U64 |                   /* second top bit */ \
    (((index) & 0x3fffffffull) << 32ull) | /* 30bit index */    \
-   (((len) & 0x3fffffffull) << 32ull) /* 30bit len */)
+   (((len) & 0x3fffffffull)) /* 30bit len */)
 
 Str str_intern_len(const char* p, uint32_t len) {
   switch (len) {
+    case 0:
+      ASSERT(false && "zero length string not allowed");
+      TRAP();
     case 1:
       return (Str){MAKE_SHORT_STR_VAL(p[0], 0, 0, 0, 0, 0, 0, 0)};
     case 2:
@@ -92,13 +98,18 @@ Str str_intern_len(const char* p, uint32_t len) {
       // TODO: bail if 0x80 of p[7] is set
       return (Str){MAKE_SHORT_STR_VAL(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7])};
     default:
-      ASSERT(false && "todo");
-      abort();
+      if (p >= parse_buffer_ && p < parse_buffer_ + parse_buffer_size_) {
+        ASSERT(len <= 0x3fffffff);
+        return (Str){MAKE_PARSE_BUFFER_STR_VAL(p - parse_buffer_, len)};
+      }
+
+      uint32_t new_loc = new_buffer_insert_location_;
+      new_buffer_insert_location_ += len;
+      ASSERT(new_buffer_insert_location_ < new_buffer_size_);
+      char* strp = &new_buffer_[new_loc];
+      memcpy(strp, p, len);
+      return (Str){MAKE_NEW_BUFFER_STR_VAL(new_loc, len)};
   }
-  ASSERT(p >= parse_buffer_ && p < parse_buffer_ + parse_buffer_size_ &&
-         "todo; strings not in parse buffer");
-  ASSERT(len <= 0x3fffffff);
-  return (Str){MAKE_PARSE_BUFFER_STR_VAL(p - parse_buffer_, len)};
 }
 
 uint32_t str_len(Str str) {
@@ -123,16 +134,12 @@ uint32_t str_len(Str str) {
   }
 }
 
-const char* str_raw_ptr(Str str) {
-  if (str.i & TOP_BIT_U64) {
-    if (str.i & SECOND_TOP_BIT_U64) {
-      return &new_buffer_[(str.i >> 32ull) & 0x3fffffff];
-    } else {
-      return &parse_buffer_[(str.i >> 32ull) & 0x3fffffff];
-    }
+const char* str_raw_ptr_impl_long_string(Str str) {
+  ASSERT(str.i & TOP_BIT_U64);
+  if (str.i & SECOND_TOP_BIT_U64) {
+    return &new_buffer_[(str.i >> 32ull) & 0x3fffffff];
   } else {
-    // XXXXXXXXXXXXXXXXXX has to be macro
-    return (const char*)&str.i;
+    return &parse_buffer_[(str.i >> 32ull) & 0x3fffffff];
   }
 }
 
@@ -164,65 +171,51 @@ Str str_internf(const char* fmt, ...) {
   uint32_t len = vsnprintf(NULL, 0, fmt, args);
   va_end(args);
 
-  uint32_t new_buf_index = new_buffer_insert_location_;
-  char* strp = &new_buffer_[new_buf_index];
-  new_buffer_insert_location_ += len;  // Don't want to include \0 to not rely on it.
+  uint64_t saved_pos = arena_pos(arena_);
+  char* strp = arena_push(arena_, len + 1, 1);
   va_start(args, fmt);
   vsnprintf(strp, len + 1, fmt, args);
   va_end(args);
 
-  return (Str){MAKE_NEW_BUFFER_STR_VAL(new_buf_index, len)};
+  Str ret = str_intern_len(strp, len);
+  arena_pop_to(arena_, saved_pos);
+
+  return ret;
 }
 
-#if 0
 static char hex_digits[] = {
     ['0'] = 0,  ['1'] = 1,  ['2'] = 2,  ['3'] = 3,  ['4'] = 4,  ['5'] = 5,  ['6'] = 6,  ['7'] = 7,
     ['8'] = 8,  ['9'] = 9,  ['a'] = 10, ['b'] = 11, ['c'] = 12, ['d'] = 13, ['e'] = 14, ['f'] = 15,
     ['A'] = 10, ['B'] = 11, ['C'] = 12, ['D'] = 13, ['E'] = 14, ['F'] = 15,
 };
-#endif
 
-Str str_process_escapes(const char* ptr, uint32_t len) {
-  abort();
-#if 0
-  uint32_t original_insert_location = str_insert_location;
-  uint32_t allocate_bytes = len + sizeof(uint32_t) + 1;
-  uint32_t start = str_alloc_uninitialized_pool_bytes(allocate_bytes);
-  char* into_start = &str_intern_pool[start + sizeof(uint32_t)];
-  char* into = into_start;
-  for (const char* e = ptr; e != ptr + len; ++e) {
-    if (e[0] == '\\') {
-      switch (e[1]) {
-        case 'n': *into++ = '\n'; ++e; break;
-        case 't': *into++ = '\t'; ++e; break;
-        case 'r': *into++ = '\r'; ++e; break;
-        case '\\': *into++ = '\\'; ++e; break;
-        case '"': *into++ = '"'; ++e; break;
+// Modifies data in place!
+uint32_t str_process_escapes(char* ptr, uint32_t len) {
+  char* write = ptr;
+  uint32_t new_len = len;
+  for (const char* read = ptr; read != ptr + len; ++read) {
+    if (read[0] == '\\') {
+      switch (read[1]) {
+        case 'n': *write++ = '\n'; ++read; --new_len; break;
+        case 't': *write++ = '\t'; ++read; --new_len; break;
+        case 'r': *write++ = '\r'; ++read; --new_len; break;
+        case '\\': *write++ = '\\'; ++read; --new_len; break;
+        case '"': *write++ = '"'; ++read; --new_len; break;
         case 'x':
-          if (e + 3 >= ptr + len) {
+          if (read + 3 >= ptr + len) {
             goto escape_error;
           }
-          *into++ = (char)(hex_digits[(int)e[2]] * 16 + hex_digits[(int)e[3]]);
-          e += 3;
+          *write++ = (char)(hex_digits[(int)read[2]] * 16 + hex_digits[(int)read[3]]);
+          read += 3;
+          new_len -= 3;
           break;
         default:
 escape_error:
-          return (Str){0};
+          return 0;
       }
     } else {
-      *into++ = *e;
+      *write++ = *read;
     }
   }
-  uint32_t final_len = into - into_start;
-  memcpy(&str_intern_pool[start], &final_len, sizeof(final_len));
-  *into++ = 0;
-
-  ASSERT(final_len + sizeof(uint32_t) + 1 <= allocate_bytes);
-  // We preallocated a maximal amount, shrink to actually used (unrelated to the
-  // intern'ing that happens in rewind).
-  str_insert_location -= allocate_bytes - (final_len + sizeof(uint32_t) + 1);
-
-  Str s = {start + sizeof(uint32_t)};
-  INSERT_OR_REWIND(s, original_insert_location);
-#endif
+  return new_len;
 }

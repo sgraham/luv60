@@ -8,7 +8,7 @@ TEST(Str, NoneAndEmpty) {
   Str x = {0};
   EXPECT_TRUE(str_is_none(x));
 
-  Str y = str_intern("");
+  Str y = str_intern("a");
   EXPECT_TRUE(!str_is_none(y));
   EXPECT_TRUE(!str_eq(x, y));
 

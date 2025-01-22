@@ -37,7 +37,7 @@ static void parse_commandline(int argc,
       }
       i += 2;
     } else {
-      if (!*input) {
+      if (*input) {
         base_writef_stderr("Can only specify a single input file.\n");
         base_exit(1);
       }

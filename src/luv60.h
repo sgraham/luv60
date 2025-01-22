@@ -69,10 +69,12 @@ void str_intern_pool_destroy_for_tests(void);
 Str str_intern_len(const char* str, uint32_t len);
 Str str_intern(const char* str);
 Str str_internf(const char* fmt, ...);
-Str str_process_escapes(const char* str, uint32_t len);
+uint32_t str_process_escapes(char* str, uint32_t len);
 
 uint32_t str_len(Str str);
-const char* str_raw_ptr(Str str);
+const char* str_raw_ptr_impl_long_string(Str str);
+#define str_raw_ptr(str) \
+  ((((str).i) >> 63) ? str_raw_ptr_impl_long_string(str) : (const char*)&(str).i)
 
 bool str_eq_impl_long_strings(Str a, Str b);
 
