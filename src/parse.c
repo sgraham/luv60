@@ -964,42 +964,56 @@ static Operand parse_and(Operand left, bool can_assign, Type* expected) {
 static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
   // Remember the operator.
   TokenKind op = parser.prev_kind;
+  uint32_t op_offset = prev_offset();
 
   // Compile the right operand.
   Rule* rule = get_rule(op);
   Operand rhs = parse_precedence(rule->prec_for_infix + 1, expected);
 
-  typedef struct IrOpPair {
+  typedef struct IrOpPairAndErr {
     ir_op sign;
     ir_op unsign;
-  } IrOpPair;
-  static IrOpPair tok_to_cmp_op[NUM_TOKEN_KINDS] = {
-      [TOK_EQEQ] = {IR_EQ, IR_EQ},
-      [TOK_BANGEQ] = {IR_NE, IR_NE},
-      [TOK_LEQ] = {IR_LE, IR_ULE},
-      [TOK_LT] = {IR_LT, IR_ULT},
-      [TOK_GEQ] = {IR_GE, IR_UGE},
-      [TOK_GT] = {IR_GT, IR_UGT},
+    const char* err_msg;
+  } IrOpPairAndErr;
+  static IrOpPairAndErr tok_to_cmp_op[NUM_TOKEN_KINDS] = {
+      [TOK_EQEQ] = {IR_EQ, IR_EQ, "TODO %s %s"},
+      [TOK_BANGEQ] = {IR_NE, IR_NE, "TODO %s %s"},
+      [TOK_LEQ] = {IR_LE, IR_ULE, "TODO %s %s"},
+      [TOK_LT] = {IR_LT, IR_ULT, "TODO %s %s"},
+      [TOK_GEQ] = {IR_GE, IR_UGE, "TODO %s %s"},
+      [TOK_GT] = {IR_GT, IR_UGT, "TODO %s %s"},
   };
-  static ir_op tok_to_bin_op[NUM_TOKEN_KINDS] = {
-      [TOK_PLUS] = IR_ADD,
-      [TOK_MINUS] = IR_SUB,
-      [TOK_STAR] = IR_MUL,
-      [TOK_SLASH] = IR_DIV,
-      [TOK_PERCENT] = IR_MOD,
-      //[TOK_TILDE] = IR_NOT,  // TODO
-      [TOK_PIPE] = IR_OR,
-      [TOK_AMPERSAND] = IR_AND,
-      [TOK_CARET] = IR_XOR,
-      [TOK_LSHIFT] = IR_SHL,
+  typedef struct IrOpAndErr {
+    ir_op op;
+    const char* err_msg;
+  } IrOpAndErr;
+  static IrOpAndErr tok_to_bin_op[NUM_TOKEN_KINDS] = {
+      [TOK_PLUS] = {IR_ADD, "Cannot add %s to %s"},
+      [TOK_MINUS] = {IR_SUB, "TODO %s %s"},
+      [TOK_STAR] = {IR_MUL, "TODO %s %s"},
+      [TOK_SLASH] = {IR_DIV, "TODO %s %s"},
+      [TOK_PERCENT] = {IR_MOD, "TODO %s %s"},
+      //[TOK_TILDE] = {IR_NOT,  // TODO
+      [TOK_PIPE] = {IR_OR, "TODO %s %s"},
+      [TOK_AMPERSAND] = {IR_AND, "TODO %s %s"},
+      [TOK_CARET] = {IR_XOR, "TODO %s %s"},
+      [TOK_LSHIFT] = {IR_SHL, "TODO %s %s"},
       // TOK_RSHIFT handled below to do SHR vs SAR
   };
-  if (tok_to_cmp_op[op].sign /*anything nonzero in slot*/) {
+  if (tok_to_cmp_op[op].err_msg /*anything nonzero in slot*/) {
     ir_op irop = type_is_unsigned(left.type) ? tok_to_cmp_op[op].unsign : tok_to_cmp_op[op].sign;
     ir_ref cmp = ir_CMP_OP(irop, load_operand_if_necessary(&left), load_operand_if_necessary(&rhs));
     return operand_rvalue_imm(type_bool, cmp);
-  } else if (tok_to_bin_op[op]) {
-    ir_op irop = tok_to_bin_op[op];
+  } else if (tok_to_bin_op[op].err_msg /* anything nonzero in slot*/) {
+    if (type_is_arithmetic(left.type) && type_is_arithmetic(rhs.type)) {
+      ASSERT(false && "resolve binary arithmetic here");
+    } else {
+      // TODO: special case str here
+
+      errorf_offset(op_offset, tok_to_bin_op[op].err_msg, type_as_str(left.type),
+                    type_as_str(rhs.type));
+    }
+    ir_op irop = tok_to_bin_op[op].op;
     ir_ref result = ir_BINARY_OP(irop, type_to_ir_type(left.type), load_operand_if_necessary(&left),
                                  load_operand_if_necessary(&rhs));
     return operand_rvalue_imm(left.type, result);
@@ -1089,7 +1103,12 @@ static Operand parse_null_literal(bool can_assign, Type* expected) {
 
 static Operand parse_number(bool can_assign, Type* expected) {
   Type suffix = {0};
-  uint64_t val = scan_int(get_strview_for_offsets(prev_offset(), cur_offset()), &suffix);
+  StrView view = get_strview_for_offsets(prev_offset(), cur_offset());
+  ASSERT(view.size > 0);
+  while (view.data[view.size - 1] == ' ') {
+    --view.size;
+  }
+  uint64_t val = scan_int(view, &suffix);
   Type type = type_none;
   bool overflow = false;
   switch (type_kind(suffix)) {
