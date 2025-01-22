@@ -168,6 +168,8 @@ win 3900x:
   Time (mean ± σ):      7.306 s ±  0.056 s    [User: 7.094 s, System: 0.186 s]
 mac m3a:
   Time (mean ± σ):      4.747 s ±  0.033 s    [User: 4.639 s, System: 0.091 s]
+no ir_check in release:
+  Time (mean ± σ):      6.869 s ±  0.050 s    [User: 6.673 s, System: 0.173 s]
 
 
 

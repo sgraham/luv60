@@ -465,10 +465,12 @@ static void leave_function(void) {
     ir_save(_ir_CTX, -1, stderr);
   }
 
+#if BUILD_DEBUG
   if (!ir_check(_ir_CTX)) {
     base_writef_stderr("ir_check failed, not compiling\n");
     base_exit(1);
   }
+#endif
 
 #if ENABLE_CODE_GEN
   if (!parser.ir_only) {
