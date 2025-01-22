@@ -3,12 +3,12 @@
 
 TEST(Str, NoneAndEmpty) {
   Arena* arena = arena_create(MiB(128), KiB(128));
-  str_intern_pool_init(arena);
+  str_intern_pool_init(arena, NULL, 0);
 
   Str x = {0};
   EXPECT_TRUE(str_is_none(x));
 
-  Str y = str_intern("");
+  Str y = str_intern("a");
   EXPECT_TRUE(!str_is_none(y));
   EXPECT_TRUE(!str_eq(x, y));
 
@@ -18,7 +18,7 @@ TEST(Str, NoneAndEmpty) {
 
 TEST(Str, Intern) {
   Arena* arena = arena_create(MiB(128), KiB(128));
-  str_intern_pool_init(arena);
+  str_intern_pool_init(arena, NULL, 0);
 
   char a[] = "hello";
   EXPECT_STREQ(a, cstr(str_intern(a)));
@@ -38,7 +38,7 @@ TEST(Str, Intern) {
 
 TEST(Str, Internf) {
   Arena* arena = arena_create(MiB(128), KiB(128));
-  str_intern_pool_init(arena);
+  str_intern_pool_init(arena, NULL, 0);
 
   Str x = str_internf("hi%d", 44);
   EXPECT_STREQ(cstr(x), "hi44");

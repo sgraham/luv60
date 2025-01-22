@@ -301,7 +301,8 @@ typedef struct NameSymPair {
 static size_t namesym_hash_func(void* vnsp) {
   NameSymPair* nsp = (NameSymPair*)vnsp;
   size_t hash = 0;
-  dict_hash_write(&hash, &nsp->name, sizeof(Str));
+  const char* str_data = str_raw_ptr(nsp->name);
+  dict_hash_write(&hash, (void*)str_data, str_len(nsp->name));
   return hash;
 }
 
@@ -459,12 +460,7 @@ static void leave_function(void) {
   }
 
   if (parser.verbose) {
-    ir_dump(_ir_CTX, stderr);
-    Str dotname = str_internf("%s.dot", cstr(parser.cur_func->sym->name));
-    FILE* dot = fopen(cstr(dotname), "wb");
-    ir_dump_dot(_ir_CTX, cstr(parser.cur_func->sym->name), dot);
-    fclose(dot);
-    base_writef_stderr("=> saved '%s'\n", cstr(dotname));
+    ir_save(_ir_CTX, -1, stderr);
   }
 
   if (!ir_check(_ir_CTX)) {
@@ -1185,27 +1181,31 @@ static Operand parse_sizeof(bool can_assign, Type* expected) {
   return operand_null;
 }
 
-static ir_ref emit_string_obj(Str str) {
+static ir_ref emit_string_obj(StrView str) {
   // TODO: I think IR doesn't do much with data? So the str bytes can go into
   // the intern table, and then the Str object probably needs a data segment
   // that lives with the code segment that we shove all these into.
-  RuntimeStr* p = arena_push(parser.arena, sizeof(RuntimeStr), _Alignof(RuntimeStr));
-  p->data = (uint8_t*)cstr(str);  // Maybe we want to use str_intern for RuntimeStr too?
-  p->length = str_len(str);
+  RuntimeStr* p = arena_push(parser.arena, sizeof(RuntimeStr) + str.size + 1, _Alignof(RuntimeStr));
+  uint8_t* strp = (uint8_t*)(((RuntimeStr*)p) + 1);
+  p->data = strp;
+  memcpy(strp, str.data, str.size);
+  p->length = str.size;
   return ir_CONST_ADDR(p);
 }
 
 static Operand parse_string(bool can_assign, Type* expected) {
   StrView strview = get_strview_for_offsets(prev_offset(), cur_offset());
-  if (memchr(strview.data, '\\', strview.size) != NULL) { // worthwhile?
-    Str str = str_process_escapes(strview.data + 1, strview.size - 2);
-    if (str.i == 0) {
+  StrView inside_quotes = {strview.data + 1, strview.size - 2};
+  if (memchr(strview.data, '\\', strview.size) != NULL) {  // worthwhile?
+    // Mutates sourcse buffer!
+    uint32_t new_len = str_process_escapes((char*)inside_quotes.data, inside_quotes.size);
+    if (new_len == 0) {
       error("Invalid string escape.");
     }
-    return operand_rvalue(type_str, emit_string_obj(str));
+    inside_quotes.size = new_len;
+    return operand_rvalue(type_str, emit_string_obj(inside_quotes));
   } else {
-    return operand_rvalue(type_str,
-                          emit_string_obj(str_intern_len(strview.data + 1, strview.size - 2)));
+    return operand_rvalue(type_str, emit_string_obj(inside_quotes));
   }
 }
 

@@ -1,8 +1,9 @@
 #include "luv60.h"
 
+// Cannot use Str as it's not initialized yet.
 static void parse_commandline(int argc,
                               char** argv,
-                              Str* input,
+                              char** input,
                               bool* verbose,
                               bool* syntax_only,
                               bool* ir_only,
@@ -13,7 +14,7 @@ static void parse_commandline(int argc,
   *return_main_rc = false;
   *syntax_only = false;
   *ir_only = false;
-  *input = (Str){0};
+  *input = NULL;
   *opt_level = 1;
   while (i < argc) {
     if (strcmp(argv[i], "-v") == 0) {
@@ -36,11 +37,11 @@ static void parse_commandline(int argc,
       }
       i += 2;
     } else {
-      if (!str_is_none(*input)) {
+      if (*input) {
         base_writef_stderr("Can only specify a single input file.\n");
         base_exit(1);
       }
-      *input = str_intern(argv[i]);
+      *input = argv[i];
       ++i;
     }
   }
@@ -50,7 +51,7 @@ static void parse_commandline(int argc,
     base_exit(1);
   }
 
-  if (str_is_none(*input)) {
+  if (!*input) {
     base_writef_stderr("No input file specified.\n");
     base_exit(1);
   }
@@ -62,9 +63,7 @@ int main(int argc, char** argv) {
   Arena* str_arena = arena_create(MiB(256), KiB(128));
   arena_ir = arena_create(MiB(256), KiB(128));
 
-  str_intern_pool_init(str_arena);
-
-  Str input;
+  char* input;
   bool verbose;
   bool syntax_only;
   bool ir_only;
@@ -73,19 +72,20 @@ int main(int argc, char** argv) {
   parse_commandline(argc, argv, &input, &verbose, &syntax_only, &ir_only, &return_main_rc,
                     &opt_level);
 
-  ReadFileResult file = base_read_file(cstr(input));
+  ReadFileResult file = base_read_file(input);
   if (!file.buffer) {
-    base_writef_stderr("Couldn't read '%s'\n", cstr(input));
+    base_writef_stderr("Couldn't read '%s'\n", input);
     return 1;
   }
 
+  str_intern_pool_init(str_arena, (char*)file.buffer, file.file_size);
+
   if (syntax_only) {
-    parse_syntax_check(main_arena, parse_temp_arena, cstr(input), file, verbose, ir_only,
-                       opt_level);
+    parse_syntax_check(main_arena, parse_temp_arena, input, file, verbose, ir_only, opt_level);
     return 0;
   } else {
-    void* entry = parse_code_gen(main_arena, parse_temp_arena, cstr(input), file, verbose, ir_only,
-                                 opt_level);
+    void* entry =
+        parse_code_gen(main_arena, parse_temp_arena, input, file, verbose, ir_only, opt_level);
     int rc = 0;
     if (entry) {
       int entry_returned = ((int (*)())entry)();

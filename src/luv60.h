@@ -60,34 +60,45 @@ uint64_t base_timer_now(void);
 // str.c
 
 typedef struct Str {
-  uint32_t i;
+  uint64_t i;
 } Str;
 
-extern char* str_intern_pool;
-
-void str_intern_pool_init(Arena* arena);
+void str_intern_pool_init(Arena* arena, char* parse_buffer, size_t buffer_size);
 void str_intern_pool_destroy_for_tests(void);
 
 Str str_intern_len(const char* str, uint32_t len);
 Str str_intern(const char* str);
 Str str_internf(const char* fmt, ...);
-Str str_process_escapes(const char* str, uint32_t len);
+uint32_t str_process_escapes(char* str, uint32_t len);
 
-static inline FORCE_INLINE const char* cstr(Str str) {
-  return &str_intern_pool[str.i];
-}
+uint32_t str_len(Str str);
+const char* str_raw_ptr_impl_long_string(Str str);
+#define str_raw_ptr(str) \
+  ((((str).i) >> 63) ? str_raw_ptr_impl_long_string(str) : (const char*)&(str).i)
 
-static inline FORCE_INLINE uint32_t str_len(Str str) {
-  return *(uint32_t*)&str_intern_pool[str.i - sizeof(uint32_t)];
-}
+bool str_eq_impl_long_strings(Str a, Str b);
 
 static inline FORCE_INLINE bool str_eq(Str a, Str b) {
-  return a.i == b.i;
+  if ((a.i >> 63) + (b.i >> 63) == 0) {
+    return a.i == b.i;
+  } else {
+    return str_eq_impl_long_strings(a, b);
+  }
 }
 
 static inline FORCE_INLINE bool str_is_none(Str s) {
   return s.i == 0;
 }
+
+static inline FORCE_INLINE char* cstr(Str s) {
+  // TODO: weeeeee
+  uint32_t len = str_len(s);
+  char* copy = malloc(len + 1);
+  memcpy(copy, str_raw_ptr(s), len);
+  copy[len] = 0;
+  return copy;
+}
+
 
 // lex.c
 
