@@ -1,0 +1,5 @@
+# RET: 1
+# ERR: {self}:3:11:    print wee()
+# ERR: {ssss}                ^ error: Undefined reference to 'wee'.
+def int main():
+    print wee()

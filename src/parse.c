@@ -642,6 +642,10 @@ static Type parse_type(void) {
     return t;
   }
 
+  if (match(TOK_IDENT_TYPE)) {
+    ASSERT(false); abort();
+  }
+
   return type_none;
 }
 
