@@ -165,7 +165,7 @@ a lot of time in memory futzing again, probably giving IR a slice of a buffer
 would be a lot better.
 with code_buffer pre-alloc, --opt 1
 win 3900x:
-  Time (mean ± σ):      7.727 s ±  0.078 s    [User: 7.475 s, System: 0.234 s]
+  Time (mean ± σ):      7.306 s ±  0.056 s    [User: 7.094 s, System: 0.186 s]
 mac m3a:
   Time (mean ± σ):      4.747 s ±  0.033 s    [User: 4.639 s, System: 0.091 s]
 
