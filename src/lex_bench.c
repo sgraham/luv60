@@ -12,7 +12,7 @@ int main(int argc, char** argv) {
 #if BUILD_DEBUG
   base_writef_stderr("warning: this is a debug build, probably not a useful benchmark binary.\n");
 #endif
-  base_timer_init();
+  //base_timer_init();
 
   const char* filename = FILENAME;
   ReadFileResult file = base_read_file(filename);

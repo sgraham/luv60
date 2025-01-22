@@ -32,6 +32,14 @@ bool base_mem_commit(void* ptr, uint64_t size) {
   return true;
 }
 
+void* base_mem_large_alloc(uint64_t size) {
+  void* result = mmap(0, size, PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (result == MAP_FAILED) {
+    result = NULL;
+  }
+  return result;
+}
+
 void base_mem_decommit(void* ptr, uint64_t size) {
   madvise(ptr, size, MADV_DONTNEED);
   mprotect(ptr, size, PROT_NONE);
@@ -41,7 +49,7 @@ void base_mem_release(void* ptr, uint64_t size) {
   munmap(ptr, size);
 }
 
-ReadFileResult base_read_file(Arena* arena, const char* filename) {
+ReadFileResult base_read_file(const char* filename) {
   FILE* f = fopen(filename, "rb");
   if (!f) {
     return (ReadFileResult){0};
@@ -53,7 +61,7 @@ ReadFileResult base_read_file(Arena* arena, const char* filename) {
 
   size_t page_size = base_page_size();
   size_t to_alloc = ALIGN_UP(len + 64, page_size);
-  unsigned char* read_buf = arena_push(arena, to_alloc, page_size);
+  unsigned char* read_buf = base_mem_large_alloc(to_alloc);
   if (!read_buf) {
     fclose(f);
     return (ReadFileResult){0};
@@ -63,6 +71,7 @@ ReadFileResult base_read_file(Arena* arena, const char* filename) {
   fclose(f);
 
   if (bytes_read != len) {
+    base_mem_release(read_buf, to_alloc);
     return (ReadFileResult){0};
   }
 
