@@ -48,6 +48,7 @@ static int num_typedata;
 
 static DictImpl cached_func_types;
 static DictImpl cached_ptr_types;
+static Arena* arena_;
 
 const char* natural_builtin_type_names[NUM_TYPE_KINDS] = {
     [TYPE_VOID] = "opaque",    //
@@ -226,14 +227,14 @@ const char* type_as_str(Type type) {
           str_internf("def %s (", type_eq(type_void, return_type) ? "" : type_as_str(return_type));
       uint32_t num = type_func_num_params(type);
       for (uint32_t i = 0; i < num; ++i) {
-        head = str_internf("%s%s%s", cstr(head), type_as_str(type_func_param(type, i)),
+        head = str_internf("%s%s%s", cstr_copy(arena_, head), type_as_str(type_func_param(type, i)),
                            i < num - 1 ? ", " : "");
       }
-      return cstr(str_internf("%s)", cstr(head)));
+      return cstr_copy(arena_, str_internf("%s)", cstr_copy(arena_, head)));
     }
     case TYPE_PTR: {
       Str ptr = str_internf("*%s", type_as_str(type_ptr_subtype(type)));
-      return cstr(ptr);
+      return cstr_copy(arena_, ptr);
     }
     default:
       ASSERT(false && "todo");
@@ -242,6 +243,7 @@ const char* type_as_str(Type type) {
 }
 
 void type_init(Arena* arena) {
+  arena_ = arena;
   cached_func_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
   cached_ptr_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
 

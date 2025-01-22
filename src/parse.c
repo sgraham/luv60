@@ -381,14 +381,26 @@ static void print_range(Operand* op) {
 
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
   Sym* new = sym_new(kind, name, type);
-  new->ref = ir_VAR(type_to_ir_type(type), cstr(name));
+  new->ref = ir_VAR(type_to_ir_type(type),
+#if BUILD_DEBUG
+                    cstr_copy(parser.arena, name)
+#else
+                    ""
+#endif
+  );
   new->scope_decl = SSD_DECLARED_LOCAL;
   return new;
 }
 
 static Sym* make_param(Str name, Type type, int index) {
   Sym* new = sym_new(SYM_VAR, name, type);
-  new->ref = ir_PARAM(type_to_ir_type(type), cstr(name), index + 1);
+  new->ref = ir_PARAM(type_to_ir_type(type),
+#if BUILD_DEBUG
+                      cstr_copy(parser.arena, name),
+#else
+                      "",
+#endif
+                      index + 1);
   new->scope_decl = SSD_DECLARED_PARAMETER;
   return new;
 }
@@ -479,10 +491,11 @@ static void leave_function(void) {
     if (entry) {
       if (parser.verbose) {
         fprintf(stderr, "=> codegen to %zu bytes for '%s'\n", size,
-                cstr(parser.cur_func->sym->name));
+                cstr_copy(parser.arena, parser.cur_func->sym->name));
 #  if !OS_WINDOWS  // TODO: don't have capstone or ir_disasm on win32 right now
         ir_disasm_init();
-        ir_disasm(cstr(parser.cur_func->sym->name), entry, size, false, _ir_CTX, stderr);
+        ir_disasm(cstr_copy(parser.arena, parser.cur_func->sym->name), entry, size, false, _ir_CTX,
+                  stderr);
         ir_disasm_free();
 #  endif
       }
@@ -490,7 +503,8 @@ static void leave_function(void) {
         parser.main_func_entry = entry;
       }
     } else {
-      base_writef_stderr("compilation failed '%s'\n", cstr(parser.cur_func->sym->name));
+      base_writef_stderr("compilation failed '%s'\n",
+                         cstr_copy(parser.arena, parser.cur_func->sym->name));
     }
     parser.cur_func->sym->addr = entry;
   }
@@ -1332,7 +1346,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
     (void)eq_kind;
     (void)eq_offset;
     if (scope_result == SCOPE_RESULT_UNDEFINED && scope_decl == SSD_ASSUMED_GLOBAL) {
-      errorf("Local variable '%s' referenced before assignment.", cstr(target));
+      errorf("Local variable '%s' referenced before assignment.", cstr_copy(parser.arena, target));
     } else if (scope_result == SCOPE_RESULT_LOCAL) {
       ASSERT(sym);
       Operand op = parse_expression(NULL);
@@ -1376,7 +1390,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
       // - need to parse body to get those hmm
       error("todo, upval");
     } else {
-      errorf("Undefined reference to '%s'.\n", cstr(target));
+      errorf("Undefined reference to '%s'.\n", cstr_copy(parser.arena, target));
     }
   }
 

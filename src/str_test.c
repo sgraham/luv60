@@ -21,9 +21,9 @@ TEST(Str, Intern) {
   str_intern_pool_init(arena, NULL, 0);
 
   char a[] = "hello";
-  EXPECT_STREQ(a, cstr(str_intern(a)));
+  EXPECT_STREQ(a, cstr_copy(arena, str_intern(a)));
   EXPECT_EQ(str_intern(a).i, str_intern(a).i);
-  EXPECT_EQ(str_intern(cstr(str_intern(a))).i, str_intern(a).i);
+  EXPECT_EQ(str_intern(cstr_copy(arena, str_intern(a))).i, str_intern(a).i);
   char b[] = "hello";
   EXPECT_TRUE(a != b);
   EXPECT_EQ(str_intern(a).i, str_intern(b).i);
@@ -41,7 +41,7 @@ TEST(Str, Internf) {
   str_intern_pool_init(arena, NULL, 0);
 
   Str x = str_internf("hi%d", 44);
-  EXPECT_STREQ(cstr(x), "hi44");
+  EXPECT_STREQ(cstr_copy(arena, x), "hi44");
 
   Str y = str_intern("hi44");
   EXPECT_EQ(x.i, y.i);

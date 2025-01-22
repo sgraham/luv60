@@ -90,10 +90,9 @@ static inline FORCE_INLINE bool str_is_none(Str s) {
   return s.i == 0;
 }
 
-static inline FORCE_INLINE char* cstr(Str s) {
-  // TODO: weeeeee
+static inline char* cstr_copy(Arena* arena, Str s) {
   uint32_t len = str_len(s);
-  char* copy = malloc(len + 1);
+  char* copy = arena_push(arena, len + 1, 1);
   memcpy(copy, str_raw_ptr(s), len);
   copy[len] = 0;
   return copy;
@@ -181,7 +180,7 @@ typedef enum TypeKind {
 
 void type_init(Arena* arena);
 void type_destroy_for_tests(void);
-// returned str is either the cstr() of an interned string, or a constant.
+// returned str is either allocated into the arena passed to type_init(), or a constant.
 const char* type_as_str(Type type);
 
 size_t type_size(Type type);
