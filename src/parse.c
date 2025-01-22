@@ -301,7 +301,8 @@ typedef struct NameSymPair {
 static size_t namesym_hash_func(void* vnsp) {
   NameSymPair* nsp = (NameSymPair*)vnsp;
   size_t hash = 0;
-  dict_hash_write(&hash, &nsp->name, sizeof(Str));
+  const char* str_data = str_raw_ptr(nsp->name);
+  dict_hash_write(&hash, (void*)str_data, str_len(nsp->name));
   return hash;
 }
 
