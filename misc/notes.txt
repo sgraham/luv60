@@ -176,6 +176,7 @@ get rid of cstr mallocs (and don't pass name for var in debug):
 win:
   Time (mean ± σ):      6.706 s ±  0.071 s    [User: 6.522 s, System: 0.167 s]
 mac:
+  Time (mean ± σ):      4.384 s ±  0.029 s    [User: 4.284 s, System: 0.079 s]
 
 
 
