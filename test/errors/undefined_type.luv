@@ -1,0 +1,5 @@
+# RET: 1
+# ERR: {self}:4:5:def Blorp myfunc():
+# ERR: {ssss}         ^ error: Undefined type Blorp.
+def Blorp myfunc():
+    pass

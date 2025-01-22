@@ -118,7 +118,7 @@ CONFIGS = {
 
 def get_tests():
     tests = {}
-    for test in glob.glob(os.path.join("test", "**.luv")):
+    for test in glob.glob(os.path.join("test", "**", "*.luv")):
         test = test.replace("\\", "/")
         run = "{self}"
         ret = "0"

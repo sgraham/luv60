@@ -177,6 +177,17 @@ static ir_type type_to_ir_type(Type type) {
   }
 }
 
+typedef enum ScopeResult {
+  SCOPE_RESULT_GLOBAL,
+  SCOPE_RESULT_UNDEFINED,
+  SCOPE_RESULT_LOCAL,
+  SCOPE_RESULT_PARAMETER,
+  SCOPE_RESULT_UPVALUE,
+  NUM_SCOPE_RESULTS,
+} ScopeResult;
+
+static ScopeResult scope_lookup(Str name, Sym** sym, SymScopeDecl* scope_decl);
+
 #if 0
 static Operand operand_sym(Type type, LqSymbol lqsym) {
   return (Operand){.type = type, .opkind = OpKindSymbol, .lqsym = lqsym};
@@ -607,6 +618,20 @@ static Type basic_tok_to_type[NUM_TOKEN_KINDS] = {
     [TOK_UINT] = type_u32,       //
 };
 
+static Str str_from_previous(void) {
+  StrView view = get_strview_for_offsets(prev_offset(), cur_offset());
+  ASSERT(view.size > 0);
+  while (view.data[view.size - 1] == ' ') {
+    --view.size;
+  }
+  return str_intern_len(view.data, view.size);
+}
+
+static Str parse_name(const char* err) {
+  consume(TOK_IDENT_VAR, err);
+  return str_from_previous();
+}
+
 static Type parse_type(void) {
   if (match(TOK_STAR)) {
     return type_ptr(parse_type());
@@ -643,24 +668,16 @@ static Type parse_type(void) {
   }
 
   if (match(TOK_IDENT_TYPE)) {
-    ASSERT(false); abort();
+    Sym* sym;
+    SymScopeDecl scope_decl;
+    Str type_name = str_from_previous();
+    ScopeResult scope_result = scope_lookup(type_name, &sym, &scope_decl);
+    if (scope_result == SCOPE_RESULT_UNDEFINED) {
+      errorf("Undefined type %s.", cstr_copy(parser.arena, type_name));
+    }
   }
 
   return type_none;
-}
-
-static Str str_from_previous(void) {
-  StrView view = get_strview_for_offsets(prev_offset(), cur_offset());
-  ASSERT(view.size > 0);
-  while (view.data[view.size - 1] == ' ') {
-    --view.size;
-  }
-  return str_intern_len(view.data, view.size);
-}
-
-static Str parse_name(const char* err) {
-  consume(TOK_IDENT_VAR, err);
-  return str_from_previous();
 }
 
 static uint32_t parse_func_params(Type out_types[MAX_FUNC_PARAMS], Str out_names[MAX_FUNC_PARAMS]) {
@@ -1255,15 +1272,6 @@ static Operand parse_unary(bool can_assign, Type* expected) {
   }
 }
 
-typedef enum ScopeResult {
-  SCOPE_RESULT_GLOBAL,
-  SCOPE_RESULT_UNDEFINED,
-  SCOPE_RESULT_LOCAL,
-  SCOPE_RESULT_PARAMETER,
-  SCOPE_RESULT_UPVALUE,
-  NUM_SCOPE_RESULTS,
-} ScopeResult;
-
 static Sym* find_in_scope(VarScope* scope, Str name) {
   if (BRANCH_UNLIKELY(scope->is_full_dict)) {
     DictRawIter iter =
@@ -1394,7 +1402,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
       // - need to parse body to get those hmm
       error("todo, upval");
     } else {
-      errorf("Undefined reference to '%s'.\n", cstr_copy(parser.arena, target));
+      errorf("Undefined reference to '%s'.", cstr_copy(parser.arena, target));
     }
   }
 
