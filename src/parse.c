@@ -1845,6 +1845,8 @@ static void* parse_impl(Arena* main_arena,
 #if ENABLE_CODE_GEN
   size_t code_buffer_size = MiB(512);
   parser.code_buffer.start = ir_mem_mmap(code_buffer_size);
+  ASSERT(parser.code_buffer.start);
+  ir_mem_unprotect(parser.code_buffer.start, code_buffer_size);
   parser.code_buffer.end = (uint8_t*)parser.code_buffer.start + code_buffer_size;
   parser.code_buffer.pos = parser.code_buffer.start;
 #endif
@@ -1859,6 +1861,10 @@ static void* parse_impl(Arena* main_arena,
   while (parser.cur_kind != TOK_EOF) {
     parse_statement(/*toplevel=*/true);
   }
+
+#if ENABLE_CODE_GEN
+  ir_mem_protect(parser.code_buffer.start, code_buffer_size);
+#endif
 
   return parser.main_func_entry;
 }
