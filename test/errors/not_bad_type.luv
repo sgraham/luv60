@@ -1,0 +1,6 @@
+# RET: 1
+# ERR: {self}:5:12:    if not 5:
+# ERR: {ssss}                 ^ error: Type i32 cannot be used in a boolean not.
+def int main():
+    if not 5:
+        pass
