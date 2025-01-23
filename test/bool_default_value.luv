@@ -1,0 +1,6 @@
+# TXT: hi
+def int main():
+    bool x
+    if not x:
+        print "hi"
+    return 0

@@ -1878,6 +1878,11 @@ static void parse_variable_statement(Type type) {
     }
     Sym* new = make_local_and_alloc(SYM_VAR, name, op.type);
     ir_VSTORE(new->ref, op.ref);
+  } else {
+    Sym* new = make_local_and_alloc(SYM_VAR, name, type);
+    ir_val irval;
+    irval.u64 = 0;
+    ir_VSTORE(new->ref, ir_const(_ir_CTX, irval, type_to_ir_type(type)));
   }
 
   expect_end_of_statement("variable declaration");
