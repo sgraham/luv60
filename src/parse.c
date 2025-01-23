@@ -961,6 +961,96 @@ static Operand parse_and(Operand left, bool can_assign, Type* expected) {
   return operand_null;
 }
 
+static void promote_small_integers(Operand* operand) {
+  switch (type_kind(operand->type)) {
+    case TYPE_I8:
+    case TYPE_I16:
+    case TYPE_ENUM:
+      cast_operand(operand, type_i32);
+      break;
+    case TYPE_U8:
+    case TYPE_U16:
+      cast_operand(operand, type_u32);
+      break;
+
+    default:
+      // Do nothing
+      break;
+  }
+}
+
+static int type_ranks[NUM_TYPE_KINDS] = {
+    [TYPE_BOOL] = 1,  //
+    [TYPE_U8] = 2,    //
+    [TYPE_I8] = 2,    //
+    [TYPE_U16] = 3,   //
+    [TYPE_I16] = 3,   //
+    [TYPE_U32] = 4,   //
+    [TYPE_I32] = 4,   //
+    [TYPE_U64] = 5,   //
+    [TYPE_I64] = 5,   //
+};
+
+static int type_rank(Type type) {
+  int rank = type_ranks[type_kind(type)];
+  ASSERT(rank != 0);
+  return rank;
+}
+
+static void unify_arithmetic_operands(Operand* left, Operand* right) {
+  // TODO: floats aren't even parsed yet
+  ASSERT(type_is_integer(left->type));
+  ASSERT(type_is_integer(right->type));
+  promote_small_integers(left);
+  promote_small_integers(right);
+  if (!type_eq(left->type, right->type)) {
+    if (type_is_signed(left->type) == type_is_signed(right->type)) {
+      if (type_rank(left->type) <= type_rank(right->type)) {
+        cast_operand(left, right->type);
+      } else {
+        cast_operand(right, left->type);
+      }
+    } else if (type_is_signed(left->type) && left->is_const &&
+               type_rank(right->type) >= type_rank(left->type)) {
+      // i32 == u64 -- only want do do this when the thing we're casting is
+      // const so that overflow can be checked.
+      cast_operand(left, right->type);
+    } else if (type_is_signed(right->type) && right->is_const &&
+               type_rank(left->type) >= type_rank(right->type)) {
+      // u64 == i32 -- only want to do this when the thing we're casting is
+      // const so that overflow can be checked.
+      cast_operand(right, left->type);
+    } else if (type_is_signed(left->type) && type_size(left->type) > type_size(right->type)) {
+      // If the left is signed but strictly larger then we can also cast the
+      // right (i.e. i32 == u16).
+      cast_operand(right, left->type);
+    } else if (type_is_signed(right->type) && type_size(right->type) > type_size(left->type)) {
+      // If the right is signed but strictly larger then we can also cast the
+      // left (i.e. u16 == i32).
+      cast_operand(left, right->type);
+    }
+  }
+  ASSERT(type_eq(left->type, right->type));
+}
+
+static Operand resolve_binary_op(ir_op op, Operand left, Operand right, uint32_t loc) {
+  ASSERT(type_eq(left.type, right.type));
+  if (left.is_const && right.is_const) {
+    ASSERT(false && "todo; const eval");
+    //return operand_const(left.type, eval_binary_op(op, left.type, left.val, right.val, loc));
+  } else {
+    ir_type irt = type_to_ir_type(left.type);
+    ir_ref result =
+        ir_BINARY_OP(op, irt, load_operand_if_necessary(&left), load_operand_if_necessary(&right));
+    return operand_rvalue_imm(left.type, result);
+  }
+}
+
+static Operand resolve_binary_arithmetic_op(ir_op op, Operand left, Operand right, uint32_t loc) {
+  unify_arithmetic_operands(&left, &right);
+  return resolve_binary_op(op, left, right, loc);
+}
+
 static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
   // Remember the operator.
   TokenKind op = parser.prev_kind;
@@ -1006,17 +1096,13 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
     return operand_rvalue_imm(type_bool, cmp);
   } else if (tok_to_bin_op[op].err_msg /* anything nonzero in slot*/) {
     if (type_is_arithmetic(left.type) && type_is_arithmetic(rhs.type)) {
-      ASSERT(false && "resolve binary arithmetic here");
+      return resolve_binary_arithmetic_op(tok_to_bin_op[op].op, left, rhs, op_offset);
     } else {
       // TODO: special case str here
 
       errorf_offset(op_offset, tok_to_bin_op[op].err_msg, type_as_str(left.type),
                     type_as_str(rhs.type));
     }
-    ir_op irop = tok_to_bin_op[op].op;
-    ir_ref result = ir_BINARY_OP(irop, type_to_ir_type(left.type), load_operand_if_necessary(&left),
-                                 load_operand_if_necessary(&rhs));
-    return operand_rvalue_imm(left.type, result);
   } else if (op == TOK_RSHIFT) {
     ir_op irop = type_is_unsigned(left.type) ? IR_SHR : IR_SAR;
     ir_ref result = ir_BINARY_OP(irop, type_to_ir_type(left.type), load_operand_if_necessary(&left),

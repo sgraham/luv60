@@ -61,8 +61,7 @@ CONFIGS = {
         "d": {
             "COMPILE": CLANG_CL_WIN
             + " /showIncludes /nologo /TC /FS /Od /Zi /DIR_DEBUG /D_DEBUG /DBUILD_DEBUG=1 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo:$out /Fd:$out.pdb",
-            "LINK": LLD_LINK_WIN
-            + " /nologo /DEBUG $in /out:$out /pdb:$out.pdb",
+            "LINK": LLD_LINK_WIN + " /nologo /DEBUG $in /out:$out /pdb:$out.pdb",
             "ML": CLANG_CL_WIN
             + " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
         },
@@ -118,7 +117,10 @@ CONFIGS = {
 
 def get_tests():
     tests = {}
-    for test in glob.glob(os.path.join("test", "**", "*.luv")):
+    files = glob.glob(os.path.join("test", "*.luv")) + glob.glob(
+        os.path.join("test", "**", "*.luv")
+    )
+    for test in files:
         test = test.replace("\\", "/")
         run = "{self}"
         ret = "0"
@@ -252,10 +254,10 @@ def generate(platform, config, settings, cmdlines, tests):
             return os.path.splitext(src)[0].replace("..", "__") + obj_ext
 
         def get_extra(src):
-            if platform == 'w':
-                return ' /FI $src/force_include.h'
+            if platform == "w":
+                return " /FI $src/force_include.h"
             else:
-                return ' -include $src/force_include.h'
+                return " -include $src/force_include.h"
 
         common_objs = []
         for src in COMMON_FILELIST:
@@ -287,7 +289,9 @@ def generate(platform, config, settings, cmdlines, tests):
             obj = getobj(tracy_cpp)
             common_objs.append(obj)
             f.write("build %s: cc $src/%s\n" % (obj, tracy_cpp))
-            f.write("  extra=-Wno-missing-field-initializers -Wno-unused-variable -Wno-cast-function-type-mismatch -Wno-microsoft-cast -Wno-unused-function -Wno-unused-but-set-variable\n")
+            f.write(
+                "  extra=-Wno-missing-field-initializers -Wno-unused-variable -Wno-cast-function-type-mismatch -Wno-microsoft-cast -Wno-unused-function -Wno-unused-but-set-variable\n"
+            )
 
         luvc_objs = []
         for src in LUVC_FILELIST:
@@ -366,10 +370,7 @@ def generate(platform, config, settings, cmdlines, tests):
         alltests.append("run_unittests")
 
         common_without_higher_level = [
-            x
-            for x in common_objs
-            if "parse_" not in x
-            and "type." not in x
+            x for x in common_objs if "parse_" not in x and "type." not in x
         ]
         f.write(
             "build %s: link %s | dumbbench.luv\n"
