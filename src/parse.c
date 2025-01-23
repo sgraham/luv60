@@ -476,7 +476,6 @@ static void enter_function(Sym* sym,
 }
 
 static void leave_function(void) {
-
   Type ret_type = type_func_return_type(parser.cur_func->sym->type);
   if (type_eq(ret_type, type_void)) {
     ir_RETURN(IR_UNUSED);
@@ -486,6 +485,12 @@ static void leave_function(void) {
 
   if (parser.verbose) {
     ir_save(_ir_CTX, -1, stderr);
+#if BUILD_DEBUG
+    FILE* f = fopen("tmp.dot", "wb");
+    ir_dump_dot(_ir_CTX, cstr_copy(parser.arena, parser.cur_func->sym->name), f);
+    base_writef_stderr("Wrote tmp.dot\n");
+    fclose(f);
+#endif
   }
 
 #if BUILD_DEBUG
@@ -503,7 +508,7 @@ static void leave_function(void) {
       if (parser.verbose) {
         fprintf(stderr, "=> codegen to %zu bytes for '%s'\n", size,
                 cstr_copy(parser.arena, parser.cur_func->sym->name));
-#  if !OS_WINDOWS  // TODO: don't have capstone or ir_disasm on win32 right now
+#if  1//if !OS_WINDOWS  // TODO: don't have capstone or ir_disasm on win32 right now
         ir_disasm_init();
         ir_disasm(cstr_copy(parser.arena, parser.cur_func->sym->name), entry, size, false, _ir_CTX,
                   stderr);
@@ -1284,10 +1289,23 @@ static Operand parse_offsetof(bool can_assign, Type* expected) {
 }
 
 static Operand parse_or(Operand left, bool can_assign, Type* expected) {
-  Operand rhs = parse_precedence(PREC_OR, &type_bool);
-  // TODO: check clang -> ir; needs to be short circuit
-  (void)rhs;
-  return operand_null;
+  if (!type_is_condition(left.type)) {
+    errorf("Left-hand side of or cannot be type %s.", type_as_str(left.type));
+  }
+  ir_ref lcond = ir_IF(load_operand_if_necessary(&left));
+  ir_IF_TRUE(lcond);
+  ir_ref if_true = ir_END();
+  ir_IF_FALSE(lcond);
+
+  Operand right = parse_precedence(PREC_OR, &type_bool);
+  if (!type_is_condition(right.type)) {
+    errorf("Right-hand side of or cannot be type %s.", type_as_str(right.type));
+  }
+  ir_ref if_false = ir_END();
+  ir_ref rcond = load_operand_if_necessary(&right);
+  ir_MERGE_2(if_true, if_false);
+  ir_ref result = ir_PHI_2(IR_BOOL, ir_CONST_BOOL(true), rcond);
+  return operand_const(type_bool, result);
 }
 
 static Operand parse_range(bool can_assign, Type* expected) {
