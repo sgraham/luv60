@@ -1,0 +1,8 @@
+# TXT: hi
+# TXT: after
+def int main():
+    bool x
+    if x or true:
+        print "hi"
+    print "after"
+    return 0

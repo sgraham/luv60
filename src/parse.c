@@ -1282,8 +1282,11 @@ static Operand parse_offsetof(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
+
 static Operand parse_or(Operand left, bool can_assign, Type* expected) {
-  ASSERT(false && "not implemented");
+  Operand rhs = parse_precedence(PREC_OR, &type_bool);
+  // TODO: check clang -> ir; needs to be short circuit
+  (void)rhs;
   return operand_null;
 }
 
