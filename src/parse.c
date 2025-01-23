@@ -634,6 +634,24 @@ static Type basic_tok_to_type[NUM_TOKEN_KINDS] = {
     [TOK_UINT] = type_u32,       //
 };
 
+static int type_ranks[NUM_TYPE_KINDS] = {
+    [TYPE_BOOL] = 1,  //
+    [TYPE_U8] = 2,    //
+    [TYPE_I8] = 2,    //
+    [TYPE_U16] = 3,   //
+    [TYPE_I16] = 3,   //
+    [TYPE_U32] = 4,   //
+    [TYPE_I32] = 4,   //
+    [TYPE_U64] = 5,   //
+    [TYPE_I64] = 5,   //
+};
+
+static int type_rank(Type type) {
+  int rank = type_ranks[type_kind(type)];
+  ASSERT(rank != 0);
+  return rank;
+}
+
 static Str str_from_previous(void) {
   StrView view = get_strview_for_offsets(prev_offset(), cur_offset());
   ASSERT(view.size > 0);
@@ -739,7 +757,14 @@ static bool is_convertible(Operand* operand, Type dest) {
     return true;
   } else if (type_kind(dest) == TYPE_VOID) {
     return true;
-  } else if (type_is_arithmetic(dest) && type_is_arithmetic(src)) {
+  } else if (type_is_arithmetic(dest) && type_is_arithmetic(src)){
+    // TODO: This would make sense, but have to have small things work
+    // automatically somehow, e.g.
+    //   u64 u = 123
+    // wouldn't compile because 123 is i32 without an explicit suffix, which is
+    // annoying -- should be able to have the RHS know what it's expecting to be
+    // and return the right type if it fits?
+    //&& type_rank(dest) >= type_rank(src) && type_signs_match(dest, src)) {
     return true;
   }
   // TODO: various pointer, null, etc.
@@ -1011,24 +1036,6 @@ static void promote_small_integers(Operand* operand) {
   }
 }
 
-static int type_ranks[NUM_TYPE_KINDS] = {
-    [TYPE_BOOL] = 1,  //
-    [TYPE_U8] = 2,    //
-    [TYPE_I8] = 2,    //
-    [TYPE_U16] = 3,   //
-    [TYPE_I16] = 3,   //
-    [TYPE_U32] = 4,   //
-    [TYPE_I32] = 4,   //
-    [TYPE_U64] = 5,   //
-    [TYPE_I64] = 5,   //
-};
-
-static int type_rank(Type type) {
-  int rank = type_ranks[type_kind(type)];
-  ASSERT(rank != 0);
-  return rank;
-}
-
 static void unify_arithmetic_operands(Operand* left, Operand* right) {
   // TODO: floats aren't even parsed yet
   ASSERT(type_is_integer(left->type));
@@ -1142,7 +1149,7 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
   };
   if (tok_to_cmp_op[op].sign /*anything nonzero in slot*/) {
     if (type_is_arithmetic(left.type) && type_is_arithmetic(rhs.type)) {
-      if (type_is_signed(left.type) ^ type_is_signed(rhs.type)) {
+      if (!type_signs_match(left.type, rhs.type)) {
         errorf_offset(op_offset, "Comparison with different signs: %s and %s.",
                       type_as_str(left.type), type_as_str(rhs.type));
       } else {

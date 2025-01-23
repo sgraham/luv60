@@ -1,0 +1,10 @@
+# DISABLED
+# RET: 1
+# RUN: {self} --main-rc
+# ERR: {self}:4:12:    return 123i32
+# ERR: {ssss}                 ^ error: Cannot convert type i32 to expected return type i16.
+def i16 func16():
+    return 123i32
+
+def i16 main():
+    return func16()

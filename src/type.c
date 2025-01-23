@@ -306,6 +306,12 @@ bool type_is_arithmetic(Type type) {
   return type_kind(type) >= TYPE_U8 && type_kind(type) <= TYPE_DOUBLE;
 }
 
+bool type_signs_match(Type a, Type b) {
+  ASSERT(type_is_arithmetic(a));
+  ASSERT(type_is_arithmetic(b));
+  return (type_is_signed(a) ^ type_is_signed(b)) == 0;
+}
+
 bool type_is_integer(Type type) {
   return type_kind(type) >= TYPE_U8 && type_kind(type) <= TYPE_ENUM;
 }

@@ -1,0 +1,7 @@
+# RUN: {self} --main-rc
+# RET: 123
+def i64 func64():
+    return 123i32
+
+def i64 main():
+    return func64()
