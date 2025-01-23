@@ -1079,9 +1079,27 @@ static Operand resolve_binary_op(ir_op op, Operand left, Operand right, uint32_t
   }
 }
 
+static Operand resolve_cmp_op(ir_op op, Operand left, Operand right, uint32_t loc) {
+  ASSERT(type_eq(left.type, right.type));
+  if (left.is_const && right.is_const) {
+    ASSERT(false && "todo; const eval");
+    abort();
+    //return operand_const(left.type, eval_binary_op(op, left.type, left.val, right.val, loc));
+  } else {
+    ir_ref result =
+        ir_CMP_OP(op, load_operand_if_necessary(&left), load_operand_if_necessary(&right));
+    return operand_rvalue_imm(type_bool, result);
+  }
+}
+
 static Operand resolve_binary_arithmetic_op(ir_op op, Operand left, Operand right, uint32_t loc) {
   unify_arithmetic_operands(&left, &right);
   return resolve_binary_op(op, left, right, loc);
+}
+
+static Operand resolve_binary_cmp_op(ir_op op, Operand left, Operand right, uint32_t loc) {
+  unify_arithmetic_operands(&left, &right);
+  return resolve_cmp_op(op, left, right, loc);
 }
 
 static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
@@ -1093,18 +1111,17 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
   Rule* rule = get_rule(op);
   Operand rhs = parse_precedence(rule->prec_for_infix + 1, expected);
 
-  typedef struct IrOpPairAndErr {
+  typedef struct IrOpPair {
     ir_op sign;
     ir_op unsign;
-    const char* err_msg;
-  } IrOpPairAndErr;
-  static IrOpPairAndErr tok_to_cmp_op[NUM_TOKEN_KINDS] = {
-      [TOK_EQEQ] = {IR_EQ, IR_EQ, "TODO %s %s"},
-      [TOK_BANGEQ] = {IR_NE, IR_NE, "TODO %s %s"},
-      [TOK_LEQ] = {IR_LE, IR_ULE, "TODO %s %s"},
-      [TOK_LT] = {IR_LT, IR_ULT, "TODO %s %s"},
-      [TOK_GEQ] = {IR_GE, IR_UGE, "TODO %s %s"},
-      [TOK_GT] = {IR_GT, IR_UGT, "TODO %s %s"},
+  } IrOpPair;
+  static IrOpPair tok_to_cmp_op[NUM_TOKEN_KINDS] = {
+      [TOK_EQEQ] = {IR_EQ, IR_EQ},
+      [TOK_BANGEQ] = {IR_NE, IR_NE},
+      [TOK_LEQ] = {IR_LE, IR_ULE},
+      [TOK_LT] = {IR_LT, IR_ULT},
+      [TOK_GEQ] = {IR_GE, IR_UGE},
+      [TOK_GT] = {IR_GT, IR_UGT},
   };
   typedef struct IrOpAndErr {
     ir_op op;
@@ -1123,7 +1140,20 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
       [TOK_LSHIFT] = {IR_SHL, "TODO %s %s"},
       // TOK_RSHIFT handled below to do SHR vs SAR
   };
-  if (tok_to_cmp_op[op].err_msg /*anything nonzero in slot*/) {
+  if (tok_to_cmp_op[op].sign /*anything nonzero in slot*/) {
+    if (type_is_arithmetic(left.type) && type_is_arithmetic(rhs.type)) {
+      if (type_is_signed(left.type) ^ type_is_signed(rhs.type)) {
+        errorf_offset(op_offset, "Comparison with different signs: %s and %s.",
+                      type_as_str(left.type), type_as_str(rhs.type));
+      } else {
+        bool is_signed = type_is_signed(left.type);
+        return resolve_binary_cmp_op(is_signed ? tok_to_cmp_op[op].sign : tok_to_cmp_op[op].unsign,
+                                     left, rhs, op_offset);
+      }
+    } else {
+      errorf_offset(op_offset, "Cannot compare %s and %s.", type_as_str(left.type),
+                    type_as_str(rhs.type));
+    }
     ir_op irop = type_is_unsigned(left.type) ? tok_to_cmp_op[op].unsign : tok_to_cmp_op[op].sign;
     ir_ref cmp = ir_CMP_OP(irop, load_operand_if_necessary(&left), load_operand_if_necessary(&rhs));
     return operand_rvalue_imm(type_bool, cmp);

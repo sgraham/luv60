@@ -1,0 +1,7 @@
+# RET: 1
+# ERR: {self}:6:10:    if x > 0:
+# ERR: {ssss}               ^ error: Cannot compare str and i32.
+def int main():
+    x = ""
+    if x > 0:
+        print true
