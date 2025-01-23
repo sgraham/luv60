@@ -198,6 +198,7 @@ bool type_is_arithmetic(Type type);
 bool type_is_integer(Type type);
 bool type_is_ptr_like(Type type);
 bool type_is_aggregate(Type type);
+bool type_is_condition(Type type);
 
 uint32_t type_func_num_params(Type type);
 Type type_func_return_type(Type type);

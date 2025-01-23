@@ -329,6 +329,19 @@ bool type_is_aggregate(Type type) {
   }
 }
 
+bool type_is_condition(Type type) {
+  switch (type_kind(type)) {
+    case TYPE_BOOL:
+    case TYPE_STR:
+    case TYPE_SLICE:
+    case TYPE_PTR:
+      return true;
+    default:
+      return false;
+  }
+}
+
+
 uint32_t type_func_num_params(Type type) {
   ASSERT(type_kind(type) == TYPE_FUNC);
   TypeData* td = type_td(type);

@@ -1372,6 +1372,13 @@ static Operand parse_unary(bool can_assign, Type* expected) {
   if (op_kind == TOK_MINUS) {
     return operand_rvalue_imm(expr.type,
                               ir_NEG(type_to_ir_type(expr.type), load_operand_if_necessary(&expr)));
+  } else if (op_kind == TOK_NOT) {
+    if (type_is_condition(expr.type)) {
+      return operand_rvalue_imm(
+          expr.type, ir_NOT(type_to_ir_type(expr.type), load_operand_if_necessary(&expr)));
+    } else {
+      errorf("Type %s cannot be used in a boolean not.", type_as_str(expr.type));
+    }
   } else {
     error("unary operator not implemented");
   }
@@ -1675,21 +1682,9 @@ static void expect_end_of_statement(const char* after_what) {
   }
 }
 
-static bool is_condition_type(Type type) {
-  switch (type_kind(type)) {
-    case TYPE_BOOL:
-    case TYPE_STR:
-    case TYPE_SLICE:
-    case TYPE_PTR:
-      return true;
-    default:
-      return false;
-  }
-}
-
 static Operand if_statement_cond_helper(void) {
   Operand cond = parse_expression(NULL);
-  if (!is_condition_type(cond.type)) {
+  if (!type_is_condition(cond.type)) {
     errorf("Result of condition expression cannot be type %s.", type_as_str(cond.type));
   }
   consume(TOK_COLON, "Expect ':' to start if/elif.");
