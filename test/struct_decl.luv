@@ -1,0 +1,10 @@
+# RET: 0
+# This is really just a parse test for now.
+
+struct Stuff:
+    int x
+    bool y
+
+def int main():
+    Stuff s
+    return 0

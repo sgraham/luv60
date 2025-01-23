@@ -391,15 +391,31 @@ static void print_range(Operand* op) {
   ir_CALL_1(IR_VOID, addr, load_operand_if_necessary(op));
 }
 
-static Sym* make_local_and_alloc(SymKind kind, Str name, Type type) {
+static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* initial_value) {
   Sym* new = sym_new(kind, name, type);
-  new->ref = ir_VAR(type_to_ir_type(type),
+  // TODO: figure out str/range
+  if (type_is_aggregate(type) && type_kind(type) != TYPE_STR && type_kind(type) != TYPE_RANGE) {
+    uint32_t size = type_size(type);
+    new->ref = ir_ALLOCA(ir_CONST_U64(size));
+    ASSERT(!initial_value && "todo");
+    ir_ref addr = ir_CONST_ADDR(memset);
+    ir_CALL_3(IR_VOID, addr, new->ref, ir_CONST_U8(0), ir_CONST_U64(size));
+  } else {
+    new->ref = ir_VAR(type_to_ir_type(type),
 #if BUILD_DEBUG
-                    cstr_copy(parser.arena, name)
+                      cstr_copy(parser.arena, name)
 #else
-                    ""
+                      ""
 #endif
-  );
+    );
+    if (initial_value) {
+      ir_VSTORE(new->ref, load_operand_if_necessary(initial_value));
+    } else {
+      ir_val irval;
+      irval.u64 = 0;
+      ir_VSTORE(new->ref, ir_const(_ir_CTX, irval, type_to_ir_type(type)));
+    }
+  }
   new->scope_decl = SSD_DECLARED_LOCAL;
   return new;
 }
@@ -472,7 +488,8 @@ static void enter_function(Sym* sym,
   if (type_eq(ret_type, type_void)) {
     parser.cur_func->return_slot = NULL;
   } else {
-    parser.cur_func->return_slot = make_local_and_alloc(SYM_VAR, str_intern("$ret"), ret_type);
+    parser.cur_func->return_slot =
+        make_local_and_alloc(SYM_VAR, str_intern("$ret"), ret_type, NULL);
   }
 }
 
@@ -714,6 +731,10 @@ static Type parse_type(void) {
     ScopeResult scope_result = scope_lookup(type_name, &sym, &scope_decl);
     if (scope_result == SCOPE_RESULT_UNDEFINED) {
       errorf("Undefined type %s.", cstr_copy(parser.arena, type_name));
+    } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_TYPE) {
+      return sym->type;
+    } else {
+      ASSERT(false && "todo");
     }
   }
 
@@ -1559,8 +1580,6 @@ static Operand parse_variable(bool can_assign, Type* expected) {
   if (can_assign && match_assignment()) {
     TokenKind eq_kind = parser.prev_kind;
     TokenKind eq_offset = prev_offset();
-    (void)eq_kind;
-    (void)eq_offset;
     if (scope_result == SCOPE_RESULT_UNDEFINED && scope_decl == SSD_ASSUMED_GLOBAL) {
       errorf("Local variable '%s' referenced before assignment.", cstr_copy(parser.arena, target));
     } else if (scope_result == SCOPE_RESULT_LOCAL) {
@@ -1579,8 +1598,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
       if (eq_kind == TOK_EQ) {
         // Variable declaration without a type.
         Operand op = parse_expression(NULL);
-        Sym* new = make_local_and_alloc(SYM_VAR, target, op.type);
-        ir_VSTORE(new->ref, load_operand_if_necessary(&op));
+        make_local_and_alloc(SYM_VAR, target, op.type, &op);
         return operand_null;
       } else {
         error_offset(eq_offset,
@@ -1850,7 +1868,9 @@ static void for_statement(void) {
 
       ir_ref is_neg = ir_LT(step, ir_CONST_I64(0));
 
-      Sym* it = make_local_and_alloc(SYM_VAR, it_name, type_i64);
+      // TODO: This probably needs work if the Range isn't trivial, start
+      // should be using the Operand expr or something maybe
+      Sym* it = make_local_and_alloc(SYM_VAR, it_name, type_i64, NULL);
       ir_VSTORE(it->ref, start);
 
       ir_ref loop = ir_LOOP_BEGIN(ir_END());
@@ -2004,13 +2024,9 @@ static void parse_variable_statement(Type type) {
       errorf("Initializer cannot be converted from type %s to declared type %s.",
              type_as_str(op.type), type_as_str(type));
     }
-    Sym* new = make_local_and_alloc(SYM_VAR, name, op.type);
-    ir_VSTORE(new->ref, op.ref);
+    make_local_and_alloc(SYM_VAR, name, op.type, &op);
   } else {
-    Sym* new = make_local_and_alloc(SYM_VAR, name, type);
-    ir_val irval;
-    irval.u64 = 0;
-    ir_VSTORE(new->ref, ir_const(_ir_CTX, irval, type_to_ir_type(type)));
+    make_local_and_alloc(SYM_VAR, name, type, NULL);
   }
 
   expect_end_of_statement("variable declaration");
