@@ -1121,11 +1121,14 @@ static void unify_arithmetic_operands(Operand* left, Operand* right) {
 
 static Operand resolve_binary_op(ir_op op, Operand left, Operand right, uint32_t loc) {
   ASSERT(type_eq(left.type, right.type));
-  if (left.is_const && right.is_const) {
+  // It doesn't seem worth doing const eval because the jit ops are going to
+  // fold right when they're created anyway. So just don't for now, but might
+  // need to revisit for `const` keyword, and struct initializers.
+  /*if (left.is_const && right.is_const) {
     ASSERT(false && "todo; const eval");
     abort();
     //return operand_const(left.type, eval_binary_op(op, left.type, left.val, right.val, loc));
-  } else {
+  } else*/ {
     ir_type irt = type_to_ir_type(left.type);
     ir_ref result =
         ir_BINARY_OP(op, irt, load_operand_if_necessary(&left), load_operand_if_necessary(&right));
@@ -1135,11 +1138,11 @@ static Operand resolve_binary_op(ir_op op, Operand left, Operand right, uint32_t
 
 static Operand resolve_cmp_op(ir_op op, Operand left, Operand right, uint32_t loc) {
   ASSERT(type_eq(left.type, right.type));
-  if (left.is_const && right.is_const) {
+  /*if (left.is_const && right.is_const) {
     ASSERT(false && "todo; const eval");
     abort();
     //return operand_const(left.type, eval_binary_op(op, left.type, left.val, right.val, loc));
-  } else {
+  } else */ {
     ir_ref result =
         ir_CMP_OP(op, load_operand_if_necessary(&left), load_operand_if_necessary(&right));
     return operand_rvalue_imm(type_bool, result);

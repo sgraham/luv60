@@ -1,0 +1,4 @@
+# RUN: {self} --main-rc
+# RET: 6
+def int main():
+    return 10 - 4

@@ -1,0 +1,4 @@
+# RUN: {self} --main-rc
+# RET: 23
+def int main():
+    return 3 + 4 * 5
