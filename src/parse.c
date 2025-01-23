@@ -543,6 +543,11 @@ again:
     parser.cur_kind = parser.token_buffer[--parser.num_buffered_tokens];
     // TODO: will need to revisit if we add peek().
     ASSERT(parser.cur_kind == TOK_INDENT || parser.cur_kind == TOK_DEDENT);
+#if BUILD_DEBUG
+    if (parser.verbose) {
+      base_writef_stderr("token %s (buffered)\n", token_enum_name(parser.cur_kind));
+    }
+#endif
     return;
   } else {
     ++parser.cur_token_index;
@@ -571,6 +576,12 @@ again:
       parser.cur_kind = TOK_NEWLINE;
     }
   }
+
+#if BUILD_DEBUG
+  if (parser.verbose) {
+      base_writef_stderr("token %s\n", token_enum_name(parser.cur_kind));
+  }
+#endif
 }
 
 static bool match(TokenKind tok_kind) {
@@ -1037,6 +1048,7 @@ static Operand resolve_binary_op(ir_op op, Operand left, Operand right, uint32_t
   ASSERT(type_eq(left.type, right.type));
   if (left.is_const && right.is_const) {
     ASSERT(false && "todo; const eval");
+    abort();
     //return operand_const(left.type, eval_binary_op(op, left.type, left.val, right.val, loc));
   } else {
     ir_type irt = type_to_ir_type(left.type);
@@ -1832,8 +1844,8 @@ static void def_statement(void) {
 
   consume(TOK_COLON, "Expect ':' before function body.");
   consume(TOK_NEWLINE, "Expect newline before function body. (TODO: single line)");
-  consume(TOK_INDENT, "Expect indent before function body. (TODO: single line)");
   skip_newlines();
+  consume(TOK_INDENT, "Expect indent before function body. (TODO: single line)");
 
   Type functype = type_function(param_types, num_params, return_type);
 

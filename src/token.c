@@ -48,3 +48,14 @@ void token_dump_offsets(uint32_t num_tokens, uint32_t* token_offsets, size_t fil
   }
   base_writef_stderr("\033[0m");
 }
+
+static const char* token_names[NUM_TOKEN_KINDS] = {
+#define TOKEN(n) #n,
+#include "tokens.inc"
+#undef TOKEN
+};
+
+const char* token_enum_name(TokenKind kind) {
+  ASSERT(kind >= 0 && kind < NUM_TOKEN_KINDS);
+  return token_names[kind];
+}

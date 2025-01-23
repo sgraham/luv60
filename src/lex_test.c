@@ -1,12 +1,6 @@
 #include "luv60.h"
 #include "test.h"
 
-static const char* token_names[NUM_TOKEN_KINDS] = {
-#define TOKEN(n) #n,
-#include "tokens.inc"
-#undef TOKEN
-};
-
 typedef struct KindAndOffset {
   TokenKind kind;
   uint32_t offset;
@@ -29,14 +23,14 @@ static bool lex_test(const char* buf, KindAndOffset* exp, size_t num_exp) {
     TokenKind kind = token_categorize(token_offsets[i]);
 
     if (kind != exp[i].kind) {
-      base_writef_stderr("\nindex %zd: got %s, wanted %s\n", i, token_names[kind],
-                         token_names[exp[i].kind]);
+      base_writef_stderr("\nindex %zd: got %s, wanted %s\n", i, token_enum_name(kind),
+                         token_enum_name(exp[i].kind));
       ok = false;
       goto done;
     }
     if (token_offsets[i] != exp[i].offset) {
-      base_writef_stderr("\nindex %zd was %s, but got off %d, wanted %d\n", i, token_names[kind],
-                         token_offsets[i], exp[i].offset);
+      base_writef_stderr("\nindex %zd was %s, but got off %d, wanted %d\n", i,
+                         token_enum_name(kind), token_offsets[i], exp[i].offset);
       ok = false;
       goto done;
     }
