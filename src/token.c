@@ -21,3 +21,30 @@ TokenKind token_categorize(uint32_t offset) {
 
 #include "categorizer.c"
 }
+
+static void print_with_visible_unprintable(char ch) {
+  if (ch == '\n') {
+    base_writef_stderr("↵\n");
+  } else if (ch == ' ') {
+    base_writef_stderr("⚬");
+  } else if (ch < ' ' || ch >= 0x7f) {
+    base_writef_stderr("·");
+  } else {
+    base_writef_stderr("%c", ch);
+  }
+}
+
+void token_dump_offsets(uint32_t num_tokens, uint32_t* token_offsets, size_t file_size) {
+  base_writef_stderr("TOKEN OFFSETS (%u tokens)\n", num_tokens);
+  uint32_t cur_tok = 0;
+  for (uint32_t offset = 0; offset < file_size; ++offset) {
+    if (token_offsets[cur_tok] == offset) {
+      base_writef_stderr("\033[31m");  // red
+      ++cur_tok;
+    } else {
+      base_writef_stderr("\033[0m");  // default
+    }
+    print_with_visible_unprintable(token_file_contents[offset]);
+  }
+  base_writef_stderr("\033[0m");
+}

@@ -1980,6 +1980,9 @@ static void* parse_impl(Arena* main_arena,
 
   parser.num_tokens = lex_indexer(file.buffer, file.allocated_size, parser.token_offsets);
   token_init(file.buffer);
+  if (parser.verbose) {
+    token_dump_offsets(parser.num_tokens, parser.token_offsets, file.file_size);
+  }
   advance();
 
   while (parser.cur_kind != TOK_EOF) {

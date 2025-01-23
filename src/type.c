@@ -341,7 +341,6 @@ bool type_is_condition(Type type) {
   }
 }
 
-
 uint32_t type_func_num_params(Type type) {
   ASSERT(type_kind(type) == TYPE_FUNC);
   TypeData* td = type_td(type);

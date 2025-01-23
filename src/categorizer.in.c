@@ -109,8 +109,8 @@ decorator = '@' [a-z_][a-zA-Z0-9_]*;
   // Because the indexer determines where we look next, the next token will
   // start at the ending newline, even though it looks like it's being
   // "consumed" here.
-  "\n"[ ]*"#.*\n" { return token_continuation_paren_level ? TOK_NL : TOK_NEWLINE_BLANK; }
-  "\n"[ ]*"\n" { return token_continuation_paren_level ? TOK_NL : TOK_NEWLINE_BLANK; }
+  "\n" [ ]* "#" [^\n\000]* "\n" { return token_continuation_paren_level ? TOK_NL : TOK_NEWLINE_BLANK; }
+  "\n" [ ]* "\n" { return token_continuation_paren_level ? TOK_NL : TOK_NEWLINE_BLANK; }
 
   "\n                                            "    { return TOK_ERROR; }
   "\n                                        "    { NEWLINE_INDENT_ADJUST(40); }

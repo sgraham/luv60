@@ -109,6 +109,7 @@ typedef enum TokenKind {
 } TokenKind;
 
 uint32_t lex_indexer(const uint8_t* buf, uint32_t byte_count_rounded_up, uint32_t* token_offsets);
+void token_dump_offsets(uint32_t num_tokens, uint32_t* token_offsets, size_t file_size);
 
 
 // token.c
