@@ -187,14 +187,14 @@ const char* type_as_str(Type type);
 
 size_t type_size(Type type);
 size_t type_align(Type type);
+size_t type_padding(Type type);
 
 Type type_function(Type* params, size_t num_params, Type return_type);
 Type type_ptr(Type subtype);
-Type type_struct(Str name,
-                 size_t num_fields,
-                 Str* field_names,
-                 Type* field_types,
-                 uint32_t field_offsets);
+// structs are different than e.g. ptrs in that they're never the same as
+// another one, so this is not 'intern'ing, but simply creating the Type value,
+// and every call will result in a different (new) Type being returned.
+Type type_new_struct(Str name, uint32_t num_fields, Str* field_names, Type* field_types);
 
 static inline FORCE_INLINE bool type_is_none(Type a) { return a.u == 0; }
 static inline FORCE_INLINE bool type_eq(Type a, Type b) { return a.u == b.u; }
@@ -213,6 +213,11 @@ Type type_func_return_type(Type type);
 Type type_func_param(Type type, uint32_t i);
 
 Type type_ptr_subtype(Type type);
+
+uint32_t type_struct_num_fields(Type type);
+Str type_struct_field_name(Type type, uint32_t i);
+Type type_struct_field_type(Type type, uint32_t i);
+uint32_t type_struct_field_offset(Type type, uint32_t i);
 
 
 // parse.c

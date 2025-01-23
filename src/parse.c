@@ -1948,9 +1948,10 @@ static void struct_statement() {
   consume(TOK_COLON, "Expect ':' after struct name.");
   consume(TOK_NEWLINE, "Expect newline to start struct.");
   consume(TOK_INDENT, "Expect indented struct body.");
+
   Str field_names[MAX_STRUCT_FIELDS];
   Type field_types[MAX_STRUCT_FIELDS];
-  uint32_t field_offsets[MAX_STRUCT_FIELDS];
+  uint32_t num_fields = 0;
   for (;;) {
     if (check(TOK_DEDENT)) {
       break;
@@ -1960,9 +1961,16 @@ static void struct_statement() {
     if (type_is_none(field_type)) {
       error("Expect struct field type.");
     }
+    field_types[num_fields] = field_type;
 
     Str field_name = parse_name("Expect struct field name.");
-    (void)field_name;
+    for (uint32_t i = 0; i < num_fields; ++i) {
+      if (str_eq(field_names[i], field_name)) {
+        errorf("Duplicate struct field name '%s'.", cstr_copy(parser.arena, field_name));
+      }
+    }
+    field_names[num_fields] = field_name;
+
     if (match(TOK_EQ)) {
       ASSERT(false && "todo");
       // TODO: either have to do const eval, or defer into a thunk. we kind of
@@ -1970,15 +1978,17 @@ static void struct_statement() {
       // call the thunk before every ctor
       //field_initializer = parse_expression();
     }
+
+    ++num_fields;
+
     do {
       consume(TOK_NEWLINE, "Expect newline after struct field.");
     } while (check(TOK_NEWLINE));
   }
   consume(TOK_DEDENT, "Expecting dedent after struct definition.");
 
-  (void)name;
-  // TODO type_struct();
-  // TODO: new sym
+  Type strukt = type_new_struct(name, num_fields, field_names, field_types);
+  sym_new(SYM_TYPE, name, strukt);
 }
 
 static void parse_variable_statement(Type type) {

@@ -33,6 +33,7 @@
 #define ALIGN_UP(n, a) ALIGN_DOWN((n) + (a)-1, (a))
 #define ALIGN_DOWN_PTR(p, a) ((void*)ALIGN_DOWN((uintptr_t)(p), (a)))
 #define ALIGN_UP_PTR(p, a) ((void*)ALIGN_UP((uintptr_t)(p), (a)))
+#define ROUND_UP(v, n) (((v) + (n)-1) / n)
 
 #define COUNTOF(a) (sizeof(a)/sizeof(a[0]))
 #define COUNTOFI(a) ((int)(sizeof(a)/sizeof(a[0])))

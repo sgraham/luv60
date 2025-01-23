@@ -85,3 +85,37 @@ TEST(Type, Ptr) {
   type_destroy_for_tests();
   arena_destroy(arena);
 }
+
+TEST(Type, StructBasic) {
+  Arena* arena = arena_create(KiB(128), KiB(128));
+  type_init(arena);
+
+  Str name = str_intern("Testy");
+  Str names[3] = {str_intern("a"), str_intern("b"), str_intern("c")};
+  Type types[3] = {type_i32, type_bool, type_i32};
+
+  Type strukt = type_new_struct(name, 3, names, types);
+  Type strukt2 = type_new_struct(name, 3, names, types);
+  EXPECT_TRUE(!type_eq(strukt, strukt2));
+
+  EXPECT_EQ(type_struct_num_fields(strukt), 3);
+
+  EXPECT_TRUE(str_eq(type_struct_field_name(strukt, 0), str_intern("a")));
+  EXPECT_TRUE(str_eq(type_struct_field_name(strukt, 1), str_intern("b")));
+  EXPECT_TRUE(str_eq(type_struct_field_name(strukt, 2), str_intern("c")));
+
+  EXPECT_TRUE(type_eq(type_struct_field_type(strukt, 0), type_i32));
+  EXPECT_TRUE(type_eq(type_struct_field_type(strukt, 1), type_bool));
+  EXPECT_TRUE(type_eq(type_struct_field_type(strukt, 2), type_i32));
+
+  EXPECT_EQ(type_struct_field_offset(strukt, 0), 0);
+  EXPECT_EQ(type_struct_field_offset(strukt, 1), 4);
+  EXPECT_EQ(type_struct_field_offset(strukt, 2), 8);
+
+  EXPECT_EQ(type_size(strukt), 12);
+  EXPECT_EQ(type_align(strukt), 4);
+  EXPECT_EQ(type_padding(strukt), 3);
+
+  type_destroy_for_tests();
+  arena_destroy(arena);
+}

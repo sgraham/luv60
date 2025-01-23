@@ -1,5 +1,7 @@
 #include "luv60.h"
 
+#include "dict.h"
+
 /* Initial string interning was a DictImpl holding a set of Str, and a large
  * buffer containing all the string data with a uint32_t header containing the
  * size and \0 after the string data for simple/fast cstr(). The Str object was

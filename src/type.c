@@ -6,7 +6,7 @@ _Static_assert(NUM_TYPE_KINDS < (1<<8), "Too many TypeKind");
 
 typedef struct TypeData {
   // TODO: maybe drop kind and padding, make align 6 bits, then array size max 1<<26
-  uint32_t kaps;  // 8 kind 8 align 8 padding 8 size(for non-array)
+  uint32_t kaps;  // 8 kind 8 align 8 padding 8 size(for basic types)
   union {
     struct {
       Type subtype;
@@ -25,13 +25,13 @@ typedef struct TypeData {
     } DICT;
     struct {
       uint32_t num_fields;
+      uint32_t total_size;
       uint32_t unused0;
-      uint32_t unused1;
     } STRUCT;
     struct {
       uint32_t num_params;
       Type return_type;
-      uint32_t unused0;
+      uint32_t unused0;  // TODO: maybe flags for memfn, etc
     } FUNC;
   };
 } TypeData;
@@ -41,8 +41,8 @@ typedef struct TypeData {
 // useful, and others have a bunch of unused fields. But easier to have
 // TypeDataExtra not be some weird 12 byte allocation of 16-sized chunks for
 // structs.
-//
-// oh wait i need space for the initializers somehow...............
+
+#define WORDS_IN_EXTRA 4
 typedef union TypeDataExtra {
   struct {
     Str field_name;
@@ -50,12 +50,13 @@ typedef union TypeDataExtra {
     uint32_t field_offset;
   } STRUCT_EXTRA;
   struct {
-    Type param[4];
+    Type param[WORDS_IN_EXTRA];
   } FUNC_EXTRA;
 } TypeDataExtra;
 
-_Static_assert(sizeof(TypeData) == sizeof(uint32_t) * 4, "TypeData unexpected size");
-_Static_assert(sizeof(TypeDataExtra) == sizeof(uint32_t) * 4, "TypeDataExtra unexpected size");
+_Static_assert(sizeof(TypeData) == sizeof(uint32_t) * WORDS_IN_EXTRA, "TypeData unexpected size");
+_Static_assert(sizeof(TypeDataExtra) == sizeof(uint32_t) * WORDS_IN_EXTRA,
+               "TypeDataExtra unexpected size");
 _Static_assert(sizeof(TypeData) == sizeof(TypeDataExtra),
                "TypeData and TypeDataExtra have to match");
 
@@ -107,6 +108,8 @@ size_t type_size(Type type) {
   if (kind == TYPE_ARRAY) {
     ASSERT(false && "todo");
     abort();
+  } else if (kind == TYPE_STRUCT) {
+    return type_td(type)->STRUCT.total_size;
   } else {
     ASSERT((type_td(type)->kaps & 0xff) == kind);
     return type_td(type)->kaps >> 24;
@@ -117,6 +120,12 @@ size_t type_align(Type type) {
   TypeKind kind = type_kind(type);
   ASSERT((type_td(type)->kaps & 0xff) == kind);
   return (type_td(type)->kaps >> 8) & 0xff;
+}
+
+size_t type_padding(Type type) {
+  TypeKind kind = type_kind(type);
+  ASSERT((type_td(type)->kaps & 0xff) == kind);
+  return (type_td(type)->kaps >> 16) & 0xff;
 }
 
 static Type type_alloc(TypeKind kind, int extra, uint32_t* out_rewind_location) {
@@ -130,7 +139,7 @@ static size_t functype_hash_func(void* functype) {
   Type t = *(Type*)functype;
   size_t hash = 0;
   TypeData* td = type_td(t);
-  size_t typedata_blocks = 1 + (td->FUNC.num_params + 3) / 4;
+  size_t typedata_blocks = 1 + ROUND_UP(td->FUNC.num_params, WORDS_IN_EXTRA);
   dict_hash_write(&hash, td, typedata_blocks * sizeof(TypeData));
   return hash;
 }
@@ -146,13 +155,14 @@ static bool functype_eq_func(void* keyvoid, void* slotvoid) {
   if (!type_eq(ktd->FUNC.return_type, std->FUNC.return_type)) {
     return false;
   }
-  size_t extra_typedata_blocks = (ktd->FUNC.num_params + 3) / 4;
+  size_t extra_typedata_blocks = ROUND_UP(ktd->FUNC.num_params, WORDS_IN_EXTRA);
   return memcmp(ktd + 1, std + 1, extra_typedata_blocks * sizeof(TypeDataExtra)) == 0;
 }
 
 Type type_function(Type* params, size_t num_params, Type return_type) {
   uint32_t rewind_location;
-  Type func = type_alloc(TYPE_FUNC, /*extra=*/(num_params + 3) / 4, &rewind_location);
+  Type func =
+      type_alloc(TYPE_FUNC, /*extra=*/ROUND_UP(num_params, WORDS_IN_EXTRA), &rewind_location);
 
   // Copy it in to a new slot so that the DictImpl can hash/eq them, dealloc by
   // rewinding num_typedata if it turns out this type already exists.
@@ -166,8 +176,8 @@ Type type_function(Type* params, size_t num_params, Type return_type) {
   /* This would be the typed version, but it's just a memcpy into TypeDataExtra.
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
   for (size_t i = 0; i < num_params; ++i) {
-    tde->FUNC_EXTRA.param[i % 4] = params[i];
-    if (i % 4 == 3) {
+    tde->FUNC_EXTRA.param[i % WORDS_IN_EXTRA] = params[i];
+    if (i % WORDS_IN_EXTRA == WORDS_IN_EXTRA - 1) {
       ++tde;
     }
   }
@@ -185,6 +195,43 @@ Type type_function(Type* params, size_t num_params, Type return_type) {
     num_typedata = rewind_location;
     return *dicttype;
   }
+}
+
+Type type_new_struct(Str name, uint32_t num_fields, Str* field_names, Type* field_types) {
+  uint32_t unused;
+  Type strukt = type_alloc(TYPE_STRUCT, /*extra=*/num_fields, &unused);
+
+  TypeData* td = type_td(strukt);
+
+  uint32_t size = 0;
+  uint32_t align = 0;
+  uint32_t field_sizes = 0;
+  td->STRUCT.num_fields = num_fields;
+  TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
+  for (uint32_t i = 0; i < num_fields; ++i) {
+    Type t = field_types[i];
+    // For {int, bool, int} the second int needs to be natural aligned.
+    size = ALIGN_UP(size, type_align(t));
+    ASSERT(IS_POW2(type_align(t)));
+
+    tde[i].STRUCT_EXTRA.field_name = field_names[i];
+    tde[i].STRUCT_EXTRA.field_type = t;
+    tde[i].STRUCT_EXTRA.field_offset = size;
+
+    field_sizes += type_size(t);
+    align = MAX(align, type_align(t));
+    size = type_size(t) + ALIGN_UP(size, type_align(t));
+  }
+
+  size = ALIGN_UP(size, align);
+  uint32_t padding = size - field_sizes;
+
+  ASSERT(align <= 0xff);
+  ASSERT(padding <= 0xff);
+  td->STRUCT.total_size = size;
+  td->kaps = pack_type(TYPE_STRUCT, 0xff, align, padding);
+
+  return strukt;
 }
 
 // For TypeDatas that don't have extra entries.
@@ -379,14 +426,44 @@ Type type_func_param(Type type, uint32_t i){
   ASSERT(type_kind(type) == TYPE_FUNC);
   ASSERT(i < type_func_num_params(type));
   TypeData* td = type_td(type);
-  TypeDataExtra* tde = (TypeDataExtra*)(td + 1 + (i / 4));
-  return tde->FUNC_EXTRA.param[i % 4];
+  TypeDataExtra* tde = (TypeDataExtra*)(td + 1 + (i / WORDS_IN_EXTRA));
+  return tde->FUNC_EXTRA.param[i % WORDS_IN_EXTRA];
 }
 
 Type type_ptr_subtype(Type type) {
   ASSERT(type_kind(type) == TYPE_PTR);
   TypeData* td = type_td(type);
   return td->PTR.subtype;
+}
+
+uint32_t type_struct_num_fields(Type type) {
+  ASSERT(type_kind(type) == TYPE_STRUCT);
+  TypeData* td = type_td(type);
+  return td->STRUCT.num_fields;
+}
+
+Str type_struct_field_name(Type type, uint32_t i) {
+  ASSERT(type_kind(type) == TYPE_STRUCT);
+  ASSERT(i < type_struct_num_fields(type));
+  TypeData* td = type_td(type);
+  TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
+  return tde[i].STRUCT_EXTRA.field_name;
+}
+
+Type type_struct_field_type(Type type, uint32_t i) {
+  ASSERT(type_kind(type) == TYPE_STRUCT);
+  ASSERT(i < type_struct_num_fields(type));
+  TypeData* td = type_td(type);
+  TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
+  return tde[i].STRUCT_EXTRA.field_type;
+}
+
+uint32_t type_struct_field_offset(Type type, uint32_t i) {
+  ASSERT(type_kind(type) == TYPE_STRUCT);
+  ASSERT(i < type_struct_num_fields(type));
+  TypeData* td = type_td(type);
+  TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
+  return tde[i].STRUCT_EXTRA.field_offset;
 }
 
 void type_destroy_for_tests(void) {
