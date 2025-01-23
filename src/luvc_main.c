@@ -4,13 +4,13 @@
 static void parse_commandline(int argc,
                               char** argv,
                               char** input,
-                              bool* verbose,
+                              int* verbose,
                               bool* syntax_only,
                               bool* ir_only,
                               bool* return_main_rc,
                               int* opt_level) {
   int i = 1;
-  *verbose = false;
+  *verbose = 0;
   *return_main_rc = false;
   *syntax_only = false;
   *ir_only = false;
@@ -18,7 +18,10 @@ static void parse_commandline(int argc,
   *opt_level = 1;
   while (i < argc) {
     if (strcmp(argv[i], "-v") == 0) {
-      *verbose = true;
+      *verbose = 1;
+      ++i;
+    } else if (strcmp(argv[i], "-vv") == 0) {
+      *verbose = 2;
       ++i;
     } else if (strcmp(argv[i], "--main-rc") == 0) {
       *return_main_rc = true;
@@ -64,7 +67,7 @@ int main(int argc, char** argv) {
   arena_ir = arena_create(MiB(256), KiB(128));
 
   char* input;
-  bool verbose;
+  int verbose;
   bool syntax_only;
   bool ir_only;
   bool return_main_rc;

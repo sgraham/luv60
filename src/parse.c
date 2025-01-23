@@ -123,7 +123,7 @@ typedef struct Parser {
   VarScope* cur_var_scope;
 
   void* main_func_entry;
-  bool verbose;
+  int verbose;
   bool ir_only;
   int opt_level;
   ir_code_buffer code_buffer;
@@ -549,7 +549,7 @@ again:
     // TODO: will need to revisit if we add peek().
     ASSERT(parser.cur_kind == TOK_INDENT || parser.cur_kind == TOK_DEDENT);
 #if BUILD_DEBUG
-    if (parser.verbose) {
+    if (parser.verbose > 1) {
       base_writef_stderr("token %s (buffered)\n", token_enum_name(parser.cur_kind));
     }
 #endif
@@ -583,7 +583,7 @@ again:
   }
 
 #if BUILD_DEBUG
-  if (parser.verbose) {
+  if (parser.verbose > 1) {
       base_writef_stderr("token %s\n", token_enum_name(parser.cur_kind));
   }
 #endif
@@ -2024,7 +2024,7 @@ static void* parse_impl(Arena* main_arena,
                    Arena* temp_arena,
                    const char* filename,
                    ReadFileResult file,
-                   bool verbose,
+                   int verbose,
                    bool ir_only,
                    int opt_level) {
   type_init(main_arena);
@@ -2064,7 +2064,7 @@ static void* parse_impl(Arena* main_arena,
 
   parser.num_tokens = lex_indexer(file.buffer, file.allocated_size, parser.token_offsets);
   token_init(file.buffer);
-  if (parser.verbose) {
+  if (parser.verbose > 1) {
     token_dump_offsets(parser.num_tokens, parser.token_offsets, file.file_size);
   }
   advance();

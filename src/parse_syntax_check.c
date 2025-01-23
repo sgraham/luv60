@@ -691,7 +691,7 @@ void* parse_syntax_check(Arena* main_arena,
                          Arena* temp_arena,
                          const char* filename,
                          ReadFileResult file,
-                         bool verbose,
+                         int verbose,
                          bool ir_only,
                          int opt_level) {
   return parse_impl(main_arena, temp_arena, filename, file, verbose, ir_only, opt_level);
