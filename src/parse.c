@@ -340,10 +340,33 @@ static Sym* sym_new(SymKind kind, Str name, Type type) {
     return &((NameSymPair*)dict_rawiter_get(&res.iter))->sym;
   } else {
     SmallFlatNameSymMap* nm = &parser.cur_var_scope->flat_map;
+    int count = nm->num_entries;
+
+    if (count == COUNTOFI(nm->names)) {
+      // flat_map is full, 'rehash' into full dict
+
+      // Can't immediately put into cur_var_scope because the flat_map and
+      // dict_sym are a union.
+      DictImpl new_dict = dict_new(parser.var_scope_arena, COUNTOFI(nm->names) * 4,
+                                   sizeof(NameSymPair), _Alignof(NameSymPair));
+      for (int i = 0; i < count; ++i) {
+        NameSymPair nsp = {.name = nm->names[i], .sym = nm->syms[i]};
+        dict_insert(&new_dict, &nsp, namesym_hash_func, namesym_eq_func,
+                    sizeof(NameSymPair), _Alignof(NameSymPair));
+      }
+
+      // Now flat_map is dead, overrwrite with the dict and update the bool to
+      // indicate we have a full dict.
+      parser.cur_var_scope->is_full_dict = true;
+      parser.cur_var_scope->sym_dict = new_dict;
+
+      // Call the other branch to actually insert the new sym.
+      return sym_new(kind, name, type);
+    }
+
     nm->names[nm->num_entries] = name;
     nm->syms[nm->num_entries] = (Sym){.kind = kind, .name = name, .type = type};
     Sym* ret = &nm->syms[nm->num_entries++];
-    ASSERT(nm->num_entries < COUNTOFI(nm->names) && "todo; 'rehash' into is_full_dict");
     return ret;
   }
 }

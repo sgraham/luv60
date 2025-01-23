@@ -1,0 +1,9 @@
+# RUN: {self} --main-rc
+# RET: 87
+def int stuff(int c):
+    int a = 84 + c
+    int x
+    return a
+
+def int main():
+    return stuff(3)
