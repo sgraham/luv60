@@ -132,12 +132,14 @@ def get_tests():
         err_prefix = "# ERR: "
         out_prefix = "# OUT: "
         disabled_prefix = "# DISABLED"
+        ret_set = False
         with open(test, "r", encoding="utf-8") as f:
             for l in f.readlines():
                 if l.startswith(run_prefix):
                     run = l[len(run_prefix) :].rstrip()
                 if l.startswith(ret_prefix):
                     ret = l[len(ret_prefix) :].rstrip()
+                    ret_set = True
                 if l.startswith(err_prefix):
                     err += l[len(err_prefix) :].rstrip() + "\n"
                 if l.startswith(out_prefix):
@@ -151,6 +153,9 @@ def get_tests():
                 return t.replace("{ssss}", spaces)
 
             if not disabled:
+                if not ret_set and not out and not err:
+                    print("Nothing being tested in %s?" % test)
+                    sys.exit(1)
                 tests[test] = {
                     "run": sub(run),
                     "ret": int(ret),

@@ -7,3 +7,6 @@
 
 def int main():
     return 0
+
+
+# RET: 0

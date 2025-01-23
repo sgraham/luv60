@@ -6,3 +6,4 @@ def int main():
     return x
 
 # This was erroring becase the second line was being treated as an indent.
+# RET: 0

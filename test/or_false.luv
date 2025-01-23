@@ -1,4 +1,4 @@
-# TXT: after
+# OUT: after
 def int main():
     bool x
     if x or false:

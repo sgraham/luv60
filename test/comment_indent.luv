@@ -2,3 +2,7 @@ def int main():
     # XXX wee
         # waa
     return 1
+
+
+# RUN: {self} --main-rc
+# RET: 1
