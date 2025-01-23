@@ -1,0 +1,4 @@
+# RET: 1
+# ERR: {self}:4:1:pass
+# ERR: {ssss}     ^ error: pass statement not allowed at top level.
+pass

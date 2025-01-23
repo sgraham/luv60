@@ -371,9 +371,6 @@ static Sym* sym_new(SymKind kind, Str name, Type type) {
   }
 }
 
-static void init_module_globals(void) {
-}
-
 static void print_i32_impl(int32_t val) {
   printf("%d\n", val);
 }
@@ -2102,6 +2099,11 @@ static LastStatementType parse_statement(bool toplevel) {
       if (toplevel) error("print statement not allowed at top level.");
       print_statement();
       break;
+    case TOK_PASS:
+      advance();
+      if (toplevel) error("pass statement not allowed at top level.");
+      expect_end_of_statement("pass");
+      break;
     case TOK_RETURN:
       advance();
       if (toplevel) error("return statement not allowed at top level.");
@@ -2163,7 +2165,6 @@ static void* parse_impl(Arena* main_arena,
   parser.code_buffer.pos = parser.code_buffer.start;
 #endif
 
-  init_module_globals();
   enter_scope(/*is_module=*/true, /*is_function=*/false);
 
   parser.num_tokens = lex_indexer(file.buffer, file.allocated_size, parser.token_offsets);

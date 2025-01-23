@@ -1,0 +1,8 @@
+# RUN: {self} --main-rc
+# RET: 22
+def stuff():
+    return
+
+def int main():
+    stuff()
+    return 22
