@@ -508,7 +508,7 @@ static void leave_function(void) {
       if (parser.verbose) {
         fprintf(stderr, "=> codegen to %zu bytes for '%s'\n", size,
                 cstr_copy(parser.arena, parser.cur_func->sym->name));
-#if  1//if !OS_WINDOWS  // TODO: don't have capstone or ir_disasm on win32 right now
+#  if !OS_WINDOWS  // TODO: don't have capstone or ir_disasm on win32 right now
         ir_disasm_init();
         ir_disasm(cstr_copy(parser.arena, parser.cur_func->sym->name), entry, size, false, _ir_CTX,
                   stderr);
@@ -972,9 +972,25 @@ static Operand parse_alignof(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
+
 static Operand parse_and(Operand left, bool can_assign, Type* expected) {
-  ASSERT(false && "not implemented");
-  return operand_null;
+  if (!type_is_condition(left.type)) {
+    errorf("Left-hand side of or cannot be type %s.", type_as_str(left.type));
+  }
+  ir_ref lcond = ir_IF(load_operand_if_necessary(&left));
+  ir_IF_FALSE(lcond);
+  ir_ref if_false = ir_END();
+  ir_IF_TRUE(lcond);
+
+  Operand right = parse_precedence(PREC_OR, &type_bool);
+  if (!type_is_condition(right.type)) {
+    errorf("Right-hand side of or cannot be type %s.", type_as_str(right.type));
+  }
+  ir_ref if_true = ir_END();
+  ir_ref rcond = load_operand_if_necessary(&right);
+  ir_MERGE_2(if_false, if_true);
+  ir_ref result = ir_PHI_2(IR_BOOL, ir_CONST_BOOL(false), rcond);
+  return operand_const(type_bool, result);
 }
 
 static void promote_small_integers(Operand* operand) {

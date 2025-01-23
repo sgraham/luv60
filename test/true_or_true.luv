@@ -1,0 +1,8 @@
+# OUT: hi
+# OUT: after
+def int main():
+    bool x = true
+    if x or true:
+        print "hi"
+    print "after"
+    return 0
