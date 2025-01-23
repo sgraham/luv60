@@ -10,36 +10,52 @@ typedef struct TypeData {
   union {
     struct {
       Type subtype;
+      uint32_t unused0;
+      uint32_t unused1;
     } PTR;
     struct {
       Type subtype;
       uint32_t count;
+      uint32_t total_size;
     } ARRAY;
     struct {
       Type key;
       Type value;
+      uint32_t unused0;
     } DICT;
     struct {
-      uint32_t TODO;  // count in base, type, name, offset in followers
+      uint32_t num_fields;
+      uint32_t unused0;
+      uint32_t unused1;
     } STRUCT;
     struct {
       uint32_t num_params;
       Type return_type;
+      uint32_t unused0;
     } FUNC;
   };
 } TypeData;
 
+// Structs were going to fit nicely in 12 bytes, but mucked that up with Str
+// changing to be a u64. So, add total_size to array which is questionably
+// useful, and others have a bunch of unused fields. But easier to have
+// TypeDataExtra not be some weird 12 byte allocation of 16-sized chunks for
+// structs.
+//
+// oh wait i need space for the initializers somehow...............
 typedef union TypeDataExtra {
   struct {
-    uint32_t TODO;
+    Str field_name;
+    Type field_type;
+    uint32_t field_offset;
   } STRUCT_EXTRA;
   struct {
-    Type param[3];
+    Type param[4];
   } FUNC_EXTRA;
 } TypeDataExtra;
 
-_Static_assert(sizeof(TypeData) == sizeof(uint32_t) * 3, "TypeData unexpected size");
-_Static_assert(sizeof(TypeDataExtra) == sizeof(uint32_t) * 3, "TypeDataExtra unexpected size");
+_Static_assert(sizeof(TypeData) == sizeof(uint32_t) * 4, "TypeData unexpected size");
+_Static_assert(sizeof(TypeDataExtra) == sizeof(uint32_t) * 4, "TypeDataExtra unexpected size");
 _Static_assert(sizeof(TypeData) == sizeof(TypeDataExtra),
                "TypeData and TypeDataExtra have to match");
 
@@ -114,7 +130,7 @@ static size_t functype_hash_func(void* functype) {
   Type t = *(Type*)functype;
   size_t hash = 0;
   TypeData* td = type_td(t);
-  size_t typedata_blocks = 1 + (td->FUNC.num_params + 2) / 3;
+  size_t typedata_blocks = 1 + (td->FUNC.num_params + 3) / 4;
   dict_hash_write(&hash, td, typedata_blocks * sizeof(TypeData));
   return hash;
 }
@@ -130,13 +146,13 @@ static bool functype_eq_func(void* keyvoid, void* slotvoid) {
   if (!type_eq(ktd->FUNC.return_type, std->FUNC.return_type)) {
     return false;
   }
-  size_t extra_typedata_blocks = (ktd->FUNC.num_params + 2) / 3;
+  size_t extra_typedata_blocks = (ktd->FUNC.num_params + 3) / 4;
   return memcmp(ktd + 1, std + 1, extra_typedata_blocks * sizeof(TypeDataExtra)) == 0;
 }
 
 Type type_function(Type* params, size_t num_params, Type return_type) {
   uint32_t rewind_location;
-  Type func = type_alloc(TYPE_FUNC, /*extra=*/(num_params + 2) / 3, &rewind_location);
+  Type func = type_alloc(TYPE_FUNC, /*extra=*/(num_params + 3) / 4, &rewind_location);
 
   // Copy it in to a new slot so that the DictImpl can hash/eq them, dealloc by
   // rewinding num_typedata if it turns out this type already exists.
@@ -150,8 +166,8 @@ Type type_function(Type* params, size_t num_params, Type return_type) {
   /* This would be the typed version, but it's just a memcpy into TypeDataExtra.
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
   for (size_t i = 0; i < num_params; ++i) {
-    tde->FUNC_EXTRA.param[i % 3] = params[i];
-    if (i % 3 == 2) {
+    tde->FUNC_EXTRA.param[i % 4] = params[i];
+    if (i % 4 == 3) {
       ++tde;
     }
   }
@@ -363,8 +379,8 @@ Type type_func_param(Type type, uint32_t i){
   ASSERT(type_kind(type) == TYPE_FUNC);
   ASSERT(i < type_func_num_params(type));
   TypeData* td = type_td(type);
-  TypeDataExtra* tde = (TypeDataExtra*)(td + 1 + (i / 3));
-  return tde->FUNC_EXTRA.param[i % 3];
+  TypeDataExtra* tde = (TypeDataExtra*)(td + 1 + (i / 4));
+  return tde->FUNC_EXTRA.param[i % 4];
 }
 
 Type type_ptr_subtype(Type type) {

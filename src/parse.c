@@ -59,6 +59,7 @@ typedef struct Sym {
 #define MAX_FUNC_NESTING 16
 #define MAX_VARIABLE_SCOPES 32
 #define MAX_FUNC_PARAMS 32
+#define MAX_STRUCT_FIELDS 64
 #define MAX_PENDING_CONDS 32
 
 typedef struct PendingCond {
@@ -663,6 +664,11 @@ static Str str_from_previous(void) {
 
 static Str parse_name(const char* err) {
   consume(TOK_IDENT_VAR, err);
+  return str_from_previous();
+}
+
+static Str parse_type_name(const char* err) {
+  consume(TOK_IDENT_TYPE, err);
   return str_from_previous();
 }
 
@@ -1937,6 +1943,44 @@ static void def_statement(void) {
   leave_function();
 }
 
+static void struct_statement() {
+  Str name = parse_type_name("Expect struct type name.");
+  consume(TOK_COLON, "Expect ':' after struct name.");
+  consume(TOK_NEWLINE, "Expect newline to start struct.");
+  consume(TOK_INDENT, "Expect indented struct body.");
+  Str field_names[MAX_STRUCT_FIELDS];
+  Type field_types[MAX_STRUCT_FIELDS];
+  uint32_t field_offsets[MAX_STRUCT_FIELDS];
+  for (;;) {
+    if (check(TOK_DEDENT)) {
+      break;
+    }
+
+    Type field_type = parse_type();
+    if (type_is_none(field_type)) {
+      error("Expect struct field type.");
+    }
+
+    Str field_name = parse_name("Expect struct field name.");
+    (void)field_name;
+    if (match(TOK_EQ)) {
+      ASSERT(false && "todo");
+      // TODO: either have to do const eval, or defer into a thunk. we kind of
+      // want the value right here to build into the Type though, and shouldn't
+      // call the thunk before every ctor
+      //field_initializer = parse_expression();
+    }
+    do {
+      consume(TOK_NEWLINE, "Expect newline after struct field.");
+    } while (check(TOK_NEWLINE));
+  }
+  consume(TOK_DEDENT, "Expecting dedent after struct definition.");
+
+  (void)name;
+  // TODO type_struct();
+  // TODO: new sym
+}
+
 static void parse_variable_statement(Type type) {
   Str name = parse_name("Expect variable or typed variable name.");
   ASSERT(name.i);
@@ -1989,6 +2033,10 @@ static LastStatementType parse_statement(bool toplevel) {
     case TOK_DEF:
       advance();
       def_statement();
+      break;
+    case TOK_STRUCT:
+      advance();
+      struct_statement();
       break;
     case TOK_IF:
       advance();

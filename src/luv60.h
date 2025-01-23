@@ -190,6 +190,11 @@ size_t type_align(Type type);
 
 Type type_function(Type* params, size_t num_params, Type return_type);
 Type type_ptr(Type subtype);
+Type type_struct(Str name,
+                 size_t num_fields,
+                 Str* field_names,
+                 Type* field_types,
+                 uint32_t field_offsets);
 
 static inline FORCE_INLINE bool type_is_none(Type a) { return a.u == 0; }
 static inline FORCE_INLINE bool type_eq(Type a, Type b) { return a.u == b.u; }
