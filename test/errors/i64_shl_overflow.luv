@@ -1,0 +1,5 @@
+# RET: 1
+# ERR: {self}:5:37:    x = 0x4000_0000_0000_0000i64 << 2
+# ERR: {ssss}                                          ^ error: 4611686018427387904 shifted left by 2 requires 65 bits.
+def int main():
+    x = 0x4000_0000_0000_0000i64 << 2
