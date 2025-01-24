@@ -795,10 +795,11 @@ static Type parse_type(void) {
     if (type_is_none(elem)) {
       error("Expecting type of array or slice.");
     }
-    ASSERT(false && "todo");
-    (void)count;
-    abort();
-    //return type_array(cur_offset(), count, elem);
+    if (count == 0) {
+      error("todo; slice");
+    } else {
+      return type_array(elem, count);
+    }
   }
 
   if (match(TOK_LBRACE)) {
@@ -1437,7 +1438,7 @@ static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
 
   if (elems.size == 0) {
     if (!expected) {
-      error("Cannot deduce type of empty list with no explicit type on left-hand size.");
+      error("Cannot deduce type of empty list with no explicit type on left-hand side.");
     }
     if (type_kind(*expected) == TYPE_SLICE || type_kind(*expected) == TYPE_ARRAY) {
       error("todo; empty slice/array");
@@ -1966,7 +1967,7 @@ static Operand parse_precedence(Precedence precedence, Type* expected) {
   advance();
   PrefixFn prefix_rule = get_rule(parser.prev_kind)->prefix;
   if (!prefix_rule) {
-    error("Expect expression.");
+    errorf("Expect expression after prefix %s.", token_enum_name(parser.prev_kind));
   }
 
   bool can_assign = precedence <= PREC_ASSIGNMENT;
@@ -1975,6 +1976,9 @@ static Operand parse_precedence(Precedence precedence, Type* expected) {
   while (precedence <= get_rule(parser.cur_kind)->prec_for_infix) {
     advance();
     InfixFn infix_rule = get_rule(parser.prev_kind)->infix;
+    if (!infix_rule) {
+      errorf("Expect expression after infix %s.", token_enum_name(parser.prev_kind));
+    }
     left = infix_rule(left, can_assign, expected);
   }
 
