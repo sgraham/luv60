@@ -132,14 +132,34 @@ typedef struct Parser {
 
 static Parser parser;
 
+#define OPK_BIT_CONST 0x1
+#define OPK_BIT_RVAL_REF 0x2
+#define OPK_BIT_LVAL_REF 0x4
+#define OPK_BIT_ADDR 0x8
+
+typedef enum OpKind {
+  OPK_CONST = OPK_BIT_CONST,
+  OPK_REF_RVAL = OPK_BIT_RVAL_REF,
+  OPK_REF_RVAL_ADDR = OPK_BIT_RVAL_REF | OPK_BIT_ADDR,
+  OPK_REF_LVAL_ADDR = OPK_BIT_LVAL_REF | OPK_BIT_ADDR,
+} OpKind;
+
 typedef struct Operand {
-  uint64_t val;
+  OpKind kind;
   Type type;
-  ir_ref ref;
-  bool ref_is_addr;
-  bool is_lvalue;
-  bool is_const;
+  union {
+    Val val;
+    ir_ref ref;
+  };
 } Operand;
+
+static inline FORCE_INLINE bool op_is_const(Operand op) {
+  return op.kind == OPK_CONST;
+}
+
+static inline FORCE_INLINE bool op_is_addr(Operand op) {
+  return op.kind & OPK_BIT_ADDR;
+}
 
 typedef struct OpVec {
   union {
@@ -200,7 +220,6 @@ static void opv_append(OpVec* vec, Operand op) {
   ++vec->size;
   opv_set(vec, vec->size - 1, op);
 }
-
 
 static Operand operand_null;
 
@@ -268,35 +287,19 @@ static Operand operand_sym(Type type, LqSymbol lqsym) {
 #endif
 
 static Operand operand_lvalue(Type type, ir_ref ref) {
-  return (Operand){
-      .type = type, .ref = ref, .ref_is_addr = true, .is_lvalue = true, .is_const = false};
+  return (Operand){.kind = OPK_REF_LVAL_ADDR, .type = type, .ref = ref};
 }
 
-static Operand operand_rvalue(Type type, ir_ref ref) {
-  return (Operand){
-      .type = type, .ref = ref, .ref_is_addr = true, .is_lvalue = false, .is_const = false};
+static Operand operand_rvalue_addr(Type type, ir_ref ref) {
+  return (Operand){.kind = OPK_REF_RVAL_ADDR, .type = type, .ref = ref};
 }
 
 static Operand operand_rvalue_imm(Type type, ir_ref ref) {
-  return (Operand){
-      .type = type, .ref = ref, .ref_is_addr = false, .is_lvalue = false, .is_const = false};
+  return (Operand){.kind = OPK_REF_RVAL, .type = type, .ref = ref};
 }
 
-static Operand operand_const(Type type, uint64_t val, ir_ref ref) {
-  return (Operand){.val = val, .type = type, .ref = ref, .ref_is_addr = false, .is_const = true};
-}
-
-#if 0
-void store_into_operand(ir_ref into, Operand* op) {
-}
-#endif
-
-static ir_ref load_operand_if_necessary(Operand* op) {
-  if (op->ref_is_addr && !type_is_aggregate(op->type)) {
-    return ir_VLOAD(type_to_ir_type(op->type), op->ref);
-  } else {
-    return op->ref;
-  }
+static Operand operand_const(Type type, Val val) {
+  return (Operand){.kind = OPK_CONST, .type = type, .val = val};
 }
 
 static inline uint32_t cur_offset(void) {
@@ -378,6 +381,44 @@ NORETURN static void errorf_offset(uint32_t offset, const char* fmt, ...) {
   error_offset(offset, str);
 }
 
+static ir_ref operand_to_irref_imm(Operand* op) {
+  switch (op->kind) {
+    case OPK_CONST: {
+      switch (type_kind(op->type)) {
+        case TYPE_BOOL:
+          return ir_CONST_BOOL(op->val.b);
+        case TYPE_U8:
+          return ir_CONST_U8(op->val.u8);
+        case TYPE_I8:
+          return ir_CONST_I8(op->val.i8);
+        case TYPE_U16:
+          return ir_CONST_U16(op->val.u16);
+        case TYPE_I16:
+          return ir_CONST_I16(op->val.i16);
+        case TYPE_U32:
+          return ir_CONST_U32(op->val.u32);
+        case TYPE_I32:
+          return ir_CONST_I32(op->val.i32);
+        case TYPE_U64:
+          return ir_CONST_U64(op->val.u64);
+        case TYPE_I64:
+          return ir_CONST_I64(op->val.i64);
+        default:
+          error("internal error: unexpected const type.");
+      }
+    }
+    case OPK_REF_RVAL:
+      return op->ref;
+    case OPK_REF_RVAL_ADDR:
+    case OPK_REF_LVAL_ADDR:
+      if (type_is_aggregate(op->type)) {
+        // TODO: This seems questionable.
+        return op->ref;
+      }
+      return ir_VLOAD(type_to_ir_type(op->type), op->ref);
+  }
+}
+
 typedef struct NameSymPair {
   Str name;
   Sym sym;
@@ -449,7 +490,7 @@ static void print_i32_impl(int32_t val) {
 
 static void print_i32(Operand* op) {
   ir_ref addr = ir_CONST_ADDR(print_i32_impl);
-  ir_CALL_1(IR_VOID, addr, load_operand_if_necessary(op));
+  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
 }
 
 static void print_str_impl(RuntimeStr str) {
@@ -461,7 +502,7 @@ static void print_str(Operand* op) {
   // rather than two words.
 #if OS_WINDOWS
   ir_ref addr = ir_CONST_ADDR(print_str_impl);
-  ir_CALL_1(IR_VOID, addr, load_operand_if_necessary(op));
+  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
 #else
   ir_ref addr = ir_CONST_ADDR(print_str_impl);
   ir_ref data = ir_LOAD(IR_ADDR, op->ref);
@@ -480,7 +521,7 @@ static void print_range_impl(RuntimeRange range) {
 
 static void print_range(Operand* op) {
   ir_ref addr = ir_CONST_ADDR(print_range_impl);
-  ir_CALL_1(IR_VOID, addr, load_operand_if_necessary(op));
+  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
 }
 
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* initial_value) {
@@ -512,7 +553,7 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
 #endif
     );
     if (initial_value) {
-      ir_VSTORE(new->ref, load_operand_if_necessary(initial_value));
+      ir_VSTORE(new->ref, operand_to_irref_imm(initial_value));
     } else {
       ir_val irval;
       irval.u64 = 0;
@@ -759,7 +800,7 @@ static void consume(TokenKind tok_kind, const char* message) {
 // if necessary.
 static Operand const_expression(void) {
   Operand expr = parse_expression(&type_u64);
-  if (!expr.is_const) {
+  if (!op_is_const(expr)) {
     error("Expected constant expression.");
   }
   return expr;
@@ -823,6 +864,177 @@ static Str parse_type_name(const char* err) {
   return str_from_previous();
 }
 
+static bool is_convertible(Operand* operand, Type dest) {
+  Type src = operand->type;
+  if (type_eq(dest, src)) {
+    return true;
+  } else if (type_kind(dest) == TYPE_VOID) {
+    return true;
+  } else if (type_is_arithmetic(dest) && type_is_arithmetic(src)){
+    // TODO: This would make sense, but have to have small things work
+    // automatically somehow, e.g.
+    //   u64 u = 123
+    // wouldn't compile because 123 is i32 without an explicit suffix, which is
+    // annoying -- should be able to have the RHS know what it's expecting to be
+    // and return the right type if it fits?
+    //&& type_rank(dest) >= type_rank(src) && type_signs_match(dest, src)) {
+    return true;
+  }
+  // TODO: various pointer, null, etc.
+  else {
+    return false;
+  }
+}
+
+static bool is_castable(Operand* operand, Type dest) {
+  Type src = operand->type;
+  if (is_convertible(operand, dest)) {
+    return true;
+  } else if (type_kind(dest) == TYPE_BOOL) {
+    return type_is_ptr_like(src) || type_is_integer(src);
+  } else if (type_is_integer(dest)) {
+    return type_is_ptr_like(src);
+  } else if (type_is_integer(src)) {
+    return type_is_ptr_like(dest);
+  } else if (type_is_ptr_like(dest) && type_is_ptr_like(src)) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+#ifndef _MSC_VER
+#pragma GCC diagnostic push
+// This is a very good warning, but in the n^2 CASE expansion below, there's
+// lots of code that isn't interesting, so disable for this block.
+#pragma GCC diagnostic ignored "-Wtautological-constant-out-of-range-compare"
+#endif
+
+#define CASE(from_type_kind, from_field)                      \
+  case from_type_kind:                                        \
+    switch (to_type_kind) {                                   \
+      case TYPE_BOOL:                                         \
+        operand->val.b = (bool)operand->val.from_field;       \
+        break;                                                \
+      case TYPE_U8:                                           \
+        if (operand->val.from_field > UINT8_MAX) {            \
+          error("Overflow converting constant to u8.");       \
+        }                                                     \
+        operand->val.u8 = (uint8_t)operand->val.from_field;   \
+        break;                                                \
+      case TYPE_I8:                                           \
+        if (operand->val.from_field > INT8_MAX) {             \
+          error("Overflow converting constant to i8.");       \
+        }                                                     \
+        operand->val.i8 = (int8_t)operand->val.from_field;    \
+        break;                                                \
+      case TYPE_U16:                                          \
+        if (operand->val.from_field > UINT16_MAX) {           \
+          error("Overflow converting constant to u16.");      \
+        }                                                     \
+        operand->val.u16 = (uint16_t)operand->val.from_field; \
+        break;                                                \
+      case TYPE_I16:                                          \
+        if (operand->val.from_field > INT16_MAX) {            \
+          error("Overflow converting constant to i16.");      \
+        }                                                     \
+        operand->val.i16 = (int16_t)operand->val.from_field;  \
+        break;                                                \
+      case TYPE_U32:                                          \
+        if ((int64_t)operand->val.from_field > UINT32_MAX) {  \
+          error("Overflow converting constant to u32.");      \
+        }                                                     \
+        operand->val.u32 = (uint32_t)operand->val.from_field; \
+        break;                                                \
+      case TYPE_I32:                                          \
+        if (operand->val.from_field > INT32_MAX) {            \
+          error("Overflow converting constant to i32.");      \
+        }                                                     \
+        operand->val.i32 = (int32_t)operand->val.from_field;  \
+        break;                                                \
+      case TYPE_U64:                                          \
+        operand->val.u64 = (uint64_t)operand->val.from_field; \
+        break;                                                \
+      case TYPE_I64:                                          \
+        if (operand->val.from_field > INT64_MAX) {            \
+          error("Overflow converting constant to i64.");      \
+        }                                                     \
+        operand->val.i64 = (int64_t)operand->val.from_field;  \
+        break;                                                \
+      case TYPE_PTR:                                          \
+        operand->val.p = (uintptr_t)operand->val.from_field;  \
+        break;                                                \
+      default:                                                \
+        error("internal error in const cast");                \
+    }                                                         \
+    break;
+
+static bool cast_operand(Operand* operand, Type type) {
+  if (type_kind(operand->type) != type_kind(type)) {
+    if (!is_castable(operand, type)) {
+      return false;
+    }
+    if (op_is_const(*operand)) {
+      // TODO: floats
+      // TODO: enums
+      TypeKind from_type_kind = type_kind(operand->type);
+      TypeKind to_type_kind = type_kind(type);
+      switch (from_type_kind) {
+        CASE(TYPE_BOOL, b)
+        CASE(TYPE_U8, u8)
+        CASE(TYPE_I8, i8)
+        CASE(TYPE_U16, u16)
+        CASE(TYPE_I16, i16)
+        CASE(TYPE_U32, u32)
+        CASE(TYPE_I32, i32)
+        CASE(TYPE_U64, u64)
+        CASE(TYPE_I64, i64)
+        CASE(TYPE_PTR, p)
+        default:
+          error("internal error in const cast");
+      }
+    } else {
+      ir_ref ref_to_adjust;
+      if (op_is_addr(*operand)) {
+        ref_to_adjust = operand_to_irref_imm(operand);
+        operand->kind = OPK_REF_RVAL;
+      } else {
+        ref_to_adjust = operand->ref;
+      }
+
+      if (type_size(operand->type) > type_size(type)) {
+        operand->ref = ir_TRUNC(type_to_ir_type(type), ref_to_adjust);
+      } else if (type_size(operand->type) < type_size(type)) {
+        if (type_is_signed(type)) {
+          operand->ref = ir_SEXT(type_to_ir_type(type), ref_to_adjust);
+        } else {
+          operand->ref = ir_ZEXT(type_to_ir_type(type), ref_to_adjust);
+        }
+      } else {
+        // This is int-to-int, probably not necessary? Not sure.
+        operand->ref = ir_BITCAST(type_to_ir_type(type), ref_to_adjust);
+      }
+    }
+  }
+
+  operand->type = type;
+  return true;
+}
+
+#undef CASE
+
+#ifndef _MSC_VER
+#pragma GCC diagnostic pop
+#endif
+
+static bool convert_operand(Operand* operand, Type type) {
+  if (is_convertible(operand, type)) {
+    cast_operand(operand, type);
+    return true;
+  }
+  return false;
+}
+
 static Type parse_type(void) {
   if (match(TOK_STAR)) {
     return type_ptr(parse_type());
@@ -830,9 +1042,12 @@ static Type parse_type(void) {
   if (match(TOK_LSQUARE)) {
     size_t count = 0;
     if (!check(TOK_RSQUARE)) {
-      Operand count_expr = const_expression();
-      ASSERT(count_expr.is_const);
-      count = count_expr.val;
+      Operand count_op = const_expression();
+      cast_operand(&count_op, type_i64);
+      count = count_op.val.i64;
+      if (count < 0) {
+        error("Negative array size.");
+      }
     }
     consume(TOK_RSQUARE, "Expect ']' to close array type.");
     Type elem = parse_type();
@@ -914,99 +1129,6 @@ static bool is_floating_type(Type type) {
   return type.i >= TYPE_FLOAT && type.i <= TYPE_DOUBLE;
 }
 #endif
-
-static bool is_convertible(Operand* operand, Type dest) {
-  Type src = operand->type;
-  if (type_eq(dest, src)) {
-    return true;
-  } else if (type_kind(dest) == TYPE_VOID) {
-    return true;
-  } else if (type_is_arithmetic(dest) && type_is_arithmetic(src)){
-    // TODO: This would make sense, but have to have small things work
-    // automatically somehow, e.g.
-    //   u64 u = 123
-    // wouldn't compile because 123 is i32 without an explicit suffix, which is
-    // annoying -- should be able to have the RHS know what it's expecting to be
-    // and return the right type if it fits?
-    //&& type_rank(dest) >= type_rank(src) && type_signs_match(dest, src)) {
-    return true;
-  }
-  // TODO: various pointer, null, etc.
-  else {
-    return false;
-  }
-}
-
-static bool is_castable(Operand* operand, Type dest) {
-  Type src = operand->type;
-  if (is_convertible(operand, dest)) {
-    return true;
-  } else if (type_kind(dest) == TYPE_BOOL) {
-    return type_is_ptr_like(src) || type_is_integer(src);
-  } else if (type_is_integer(dest)) {
-    return type_is_ptr_like(src);
-  } else if (type_is_integer(src)) {
-    return type_is_ptr_like(dest);
-  } else if (type_is_ptr_like(dest) && type_is_ptr_like(src)) {
-    return true;
-  } else {
-    return false;
-  }
-}
-
-static bool cast_operand(Operand* operand, Type type) {
-  if (type_kind(operand->type) != type_kind(type)) {
-    if (!is_castable(operand, type)) {
-      return false;
-    }
-
-    if (operand->is_const) {
-      // TODO: save val into op and convert here
-    }
-
-    ir_ref ref_to_adjust;
-    if (operand->ref_is_addr) {
-      ref_to_adjust = load_operand_if_necessary(operand);
-      operand->is_lvalue = false;
-      operand->ref_is_addr = false;
-    } else {
-      ref_to_adjust = operand->ref;
-    }
-
-    if (type_size(operand->type) > type_size(type)) {
-      operand->ref = ir_TRUNC(type_to_ir_type(type), ref_to_adjust);
-    } else if (type_size(operand->type) < type_size(type)) {
-      if (type_is_signed(type)) {
-        operand->ref = ir_SEXT(type_to_ir_type(type), ref_to_adjust);
-      } else {
-        operand->ref = ir_ZEXT(type_to_ir_type(type), ref_to_adjust);
-      }
-    } else {
-      // This is int-to-int, probably not necessary? Not sure.
-      operand->ref = ir_BITCAST(type_to_ir_type(type), ref_to_adjust);
-    }
-#if 0
-    // Not sure about this, need to handle i16 being stored and then cast to
-    // i32, so there's a full proper i32 to load.
-    if (operand->opkind == OpKindLocal) {
-      LqRef copy = alloc_for_type(type);
-      store_for_type(copy, type, value_of(operand));
-      operand->lqref = copy;
-    }
-#endif
-  }
-
-  operand->type = type;
-  return true;
-}
-
-static bool convert_operand(Operand* operand, Type type) {
-  if (is_convertible(operand, type)) {
-    cast_operand(operand, type);
-    return true;
-  }
-  return false;
-}
 
 // ~strtoull with slight differences:
 // - handles 0b and 0o but 0 prefix doesn't mean octal
@@ -1157,7 +1279,7 @@ static Operand parse_and(Operand left, bool can_assign, Type* expected) {
   if (!type_is_condition(left.type)) {
     errorf("Left-hand side of or cannot be type %s.", type_as_str(left.type));
   }
-  ir_ref lcond = ir_IF(load_operand_if_necessary(&left));
+  ir_ref lcond = ir_IF(operand_to_irref_imm(&left));
   ir_IF_FALSE(lcond);
   ir_ref if_false = ir_END();
   ir_IF_TRUE(lcond);
@@ -1167,7 +1289,7 @@ static Operand parse_and(Operand left, bool can_assign, Type* expected) {
     errorf("Right-hand side of or cannot be type %s.", type_as_str(right.type));
   }
   ir_ref if_true = ir_END();
-  ir_ref rcond = load_operand_if_necessary(&right);
+  ir_ref rcond = operand_to_irref_imm(&right);
   ir_MERGE_2(if_false, if_true);
   ir_ref result = ir_PHI_2(IR_BOOL, ir_CONST_BOOL(false), rcond);
   return operand_rvalue_imm(type_bool, result);
@@ -1204,12 +1326,12 @@ static void unify_arithmetic_operands(Operand* left, Operand* right) {
       } else {
         cast_operand(right, left->type);
       }
-    } else if (type_is_signed(left->type) && left->is_const &&
+    } else if (type_is_signed(left->type) && op_is_const(*left) &&
                type_rank(right->type) >= type_rank(left->type)) {
       // i32 == u64 -- only want do do this when the thing we're casting is
       // const so that overflow can be checked.
       cast_operand(left, right->type);
-    } else if (type_is_signed(right->type) && right->is_const &&
+    } else if (type_is_signed(right->type) && op_is_const(*right) &&
                type_rank(left->type) >= type_rank(right->type)) {
       // u64 == i32 -- only want to do this when the thing we're casting is
       // const so that overflow can be checked.
@@ -1227,33 +1349,162 @@ static void unify_arithmetic_operands(Operand* left, Operand* right) {
   ASSERT(type_eq(left->type, right->type));
 }
 
+static unsigned long long eval_binary_op_ull(ir_op op,
+                                             unsigned long long left,
+                                             unsigned long long right) {
+  error("TODO: ull const eval");
+}
+
+static unsigned long highest_bit_set(long long val) {
+#if _MSC_VER
+  unsigned long index;
+  bool is_nonzero = _BitScanForward64(&index, val);
+  if (is_nonzero) {
+    return index;
+  }
+  return 0;
+#else
+  if (val == 0) {
+    return 0;
+  }
+  return 63 - __builtin_clzll(val);
+#endif
+}
+
+static long long eval_binary_op_ll(ir_op op, long long left, long long right) {
+  switch (op) {
+    case IR_MUL: {
+      long long result;
+      if (
+#if _MSC_VER
+          _mul_overflow_i64(left, right, &result)
+#else
+          __builtin_smulll_overflow(left, right, &result)
+#endif
+      ) {
+        errorf("%llu multiplied by %llu overflows.", left, right);
+      }
+      return result;
+    }
+    case IR_DIV:
+      if (right == 0) {
+        error("Divide by zero.");
+        return 0;
+      }
+      return left / right;
+    case IR_MOD:
+      if (right == 0) {
+        error("Divide by zero.");
+        return 0;
+      }
+      return left % right;
+    case IR_AND:
+      return left & right;
+    case IR_SHL: {
+      long long required_bits = highest_bit_set(left) + right + 1;
+      if (required_bits > 64) {
+        errorf("%llu shifted left by %llu requires %llu bits.", left, right, required_bits);
+      }
+      return left << right;
+    }
+    case IR_SHR:
+      error("internal error: SHR on signed.");
+    case IR_SAR:
+      return left >> right;
+    case IR_ADD: {
+      long long result;
+      if (
+#if _MSC_VER
+          _add_overflow_i64(0, left, right, &result)
+#else
+          __builtin_saddll_overflow(left, right, &result)
+#endif
+      ) {
+        errorf("%llu added to %llu overflows.", right, left);
+      }
+      return result;
+    }
+    case IR_SUB: {
+      long long result;
+      if (
+#if _MSC_VER
+          _sub_overflow_i64(0, left, right, &result)
+#else
+          __builtin_ssubll_overflow(left, right, &result)
+#endif
+      ) {
+        errorf("%llu subtracted from %llu overflows.", right, left);
+      }
+      return result;
+    }
+    case IR_OR:
+      return left | right;
+    case IR_XOR:
+      return left ^ right;
+    case IR_EQ:
+      return left == right;
+    case IR_NE:
+      return left != right;
+    case IR_LT:
+      return left < right;
+    case IR_LE:
+      return left <= right;
+    case IR_GT:
+      return left > right;
+    case IR_GE:
+      return left >= right;
+    default:
+      error("internal error: unexpected const ir_op.");
+  }
+}
+
+static Val eval_binary_op(ir_op op, Type type, Val left, Val right) {
+  if (type_is_integer(type)) {
+    Operand left_operand = operand_const(type, left);
+    Operand right_operand = operand_const(type, right);
+    Operand result_operand;
+    if (type_is_signed(type)) {
+      cast_operand(&left_operand, type_i64);
+      cast_operand(&right_operand, type_i64);
+      result_operand = operand_const(
+          type_i64,
+          (Val){.i64 = eval_binary_op_ll(op, left_operand.val.i64, right_operand.val.i64)});
+    } else {
+      cast_operand(&left_operand, type_u64);
+      cast_operand(&right_operand, type_u64);
+      result_operand = operand_const(
+          type_u64,
+          (Val){.u64 = eval_binary_op_ull(op, left_operand.val.u64, right_operand.val.u64)});
+    }
+    cast_operand(&result_operand, type);
+    return result_operand.val;
+  } else {
+    return (Val){0};
+  }
+}
+
 static Operand resolve_binary_op(ir_op op, Operand left, Operand right, uint32_t loc) {
   ASSERT(type_eq(left.type, right.type));
-  // It doesn't seem worth doing const eval because the jit ops are going to
-  // fold right when they're created anyway. So just don't for now, but might
-  // need to revisit for `const` keyword, and struct initializers.
-  // Hmm, and the size of arrays. Oops.
-  /*if (left.is_const && right.is_const) {
-    ASSERT(false && "todo; const eval");
-    abort();
-    //return operand_const(left.type, eval_binary_op(op, left.type, left.val, right.val, loc));
-  } else*/ {
+  // It didn't really seem worth doing constant eval, but it's needed for array
+  // sizes in particular, so we do some constant propagation through is_const
+  // Operands.
+  if (op_is_const(left) && op_is_const(right)) {
+    return operand_const(left.type, eval_binary_op(op, left.type, left.val, right.val));
+  } else {
     ir_type irt = type_to_ir_type(left.type);
     ir_ref result =
-        ir_BINARY_OP(op, irt, load_operand_if_necessary(&left), load_operand_if_necessary(&right));
+        ir_BINARY_OP(op, irt, operand_to_irref_imm(&left), operand_to_irref_imm(&right));
     return operand_rvalue_imm(left.type, result);
   }
 }
 
 static Operand resolve_cmp_op(ir_op op, Operand left, Operand right, uint32_t loc) {
   ASSERT(type_eq(left.type, right.type));
-  /*if (left.is_const && right.is_const) {
-    ASSERT(false && "todo; const eval");
-    abort();
-    //return operand_const(left.type, eval_binary_op(op, left.type, left.val, right.val, loc));
-  } else */ {
+  if (op_is_const(left) && op_is_const(right)) {
+    return operand_const(left.type, eval_binary_op(op, left.type, left.val, right.val));
+  } else  {
     ir_ref result =
-        ir_CMP_OP(op, load_operand_if_necessary(&left), load_operand_if_necessary(&right));
+        ir_CMP_OP(op, operand_to_irref_imm(&left), operand_to_irref_imm(&right));
     return operand_rvalue_imm(type_bool, result);
   }
 }
@@ -1321,7 +1572,7 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
                     type_as_str(rhs.type));
     }
     ir_op irop = type_is_unsigned(left.type) ? tok_to_cmp_op[op].unsign : tok_to_cmp_op[op].sign;
-    ir_ref cmp = ir_CMP_OP(irop, load_operand_if_necessary(&left), load_operand_if_necessary(&rhs));
+    ir_ref cmp = ir_CMP_OP(irop, operand_to_irref_imm(&left), operand_to_irref_imm(&rhs));
     return operand_rvalue_imm(type_bool, cmp);
   } else if (tok_to_bin_op[op].err_msg /* anything nonzero in slot*/) {
     if (type_is_arithmetic(left.type) && type_is_arithmetic(rhs.type)) {
@@ -1334,8 +1585,8 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
     }
   } else if (op == TOK_RSHIFT) {
     ir_op irop = type_is_unsigned(left.type) ? IR_SHR : IR_SAR;
-    ir_ref result = ir_BINARY_OP(irop, type_to_ir_type(left.type), load_operand_if_necessary(&left),
-                                 load_operand_if_necessary(&rhs));
+    ir_ref result = ir_BINARY_OP(irop, type_to_ir_type(left.type), operand_to_irref_imm(&left),
+                                 operand_to_irref_imm(&rhs));
     return operand_rvalue_imm(left.type, result);
   } else {
     ASSERT(false && "todo");
@@ -1345,8 +1596,7 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
 
 static Operand parse_bool_literal(bool can_assign, Type* expected) {
   ASSERT(parser.prev_kind == TOK_FALSE || parser.prev_kind == TOK_TRUE);
-  uint64_t val = parser.prev_kind == TOK_FALSE ? 0 : 1;
-  return operand_const(type_bool, val, ir_CONST_BOOL(val));
+  return operand_const(type_bool, (Val){.b = parser.prev_kind == TOK_FALSE ? 0 : 1});
 }
 
 static Operand parse_call(Operand left, bool can_assign, Type* expected) {
@@ -1371,7 +1621,7 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
         errorf_offset(arg_offset, "Call argument %d is type %s, but function expects type %s.",
                       num_args + 1, type_as_str(arg.type), type_as_str(param_type));
       }
-      arg_values[num_args] = arg.ref;
+      arg_values[num_args] = operand_to_irref_imm(&arg);
       ++num_args;
       if (!match(TOK_COMMA)) {
         break;
@@ -1404,8 +1654,8 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       Type field_type;
       if (type_struct_find_field_by_name(left.type, name, &field_type, &field_offset)) {
         Operand rhs_value = parse_expression(expected);
-        ir_STORE(ir_ADD_OFFSET(load_operand_if_necessary(&left), field_offset),
-                              load_operand_if_necessary(&rhs_value));
+        ir_STORE(ir_ADD_OFFSET(operand_to_irref_imm(&left), field_offset),
+                              operand_to_irref_imm(&rhs_value));
         return operand_null;
       } else {
         errorf_offset(name_offset, "'%s' is not a field of type %s.",
@@ -1423,7 +1673,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       Type field_type;
       if (type_struct_find_field_by_name(left.type, name, &field_type, &field_offset)) {
         ir_ref ref = ir_LOAD(type_to_ir_type(field_type),
-                             ir_ADD_OFFSET(load_operand_if_necessary(&left), field_offset));
+                             ir_ADD_OFFSET(operand_to_irref_imm(&left), field_offset));
         return operand_rvalue_imm(field_type, ref);
       }
 
@@ -1488,7 +1738,7 @@ static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
     // [1u64, 2, 0xffff_ffff_ffff_ffff] instead.
     Operand first_item = opv_at(&elems, 0);
     ir_ref arr_base = ir_ALLOCA(ir_CONST_U64(type_size(first_item.type) * elems.size));
-    ir_STORE(arr_base, load_operand_if_necessary(&first_item));
+    ir_STORE(arr_base, operand_to_irref_imm(&first_item));
     for (int i = 1; i < elems.size; ++i) {
       Operand next_item = opv_at(&elems, i);
       if (!convert_operand(&next_item, first_item.type)) {
@@ -1496,7 +1746,7 @@ static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
                type_as_str(next_item.type), type_as_str(first_item.type));
       }
       ir_STORE(ir_ADD_OFFSET(arr_base, type_size(first_item.type) * i),
-               load_operand_if_necessary(&next_item));
+               operand_to_irref_imm(&next_item));
     }
     return operand_rvalue_imm(type_array(first_item.type, elems.size), arr_base);
   }
@@ -1515,7 +1765,8 @@ static Operand parse_number(bool can_assign, Type* expected) {
     --view.size;
   }
   uint64_t val = scan_int(view, &suffix);
-  Type type = type_none;
+  Operand operand = operand_const(type_u64, (Val){.u64 = val});
+  Type type = type_u64;
   bool overflow = false;
   switch (type_kind(suffix)) {
     case TYPE_NONE:
@@ -1581,9 +1832,8 @@ static Operand parse_number(bool can_assign, Type* expected) {
     error("Integer literal overflow.");
   }
 
-  ir_val irval;
-  irval.u64 = val;
-  return operand_const(type, val, ir_const(_ir_CTX, irval, type_to_ir_type(type)));
+  cast_operand(&operand, type);
+  return operand;
 }
 
 static Operand parse_offsetof(bool can_assign, Type* expected) {
@@ -1593,7 +1843,7 @@ static Operand parse_offsetof(bool can_assign, Type* expected) {
     errorf("Cannot use offsetof on non-struct type %s.", type_as_str(type));
   }
   consume(TOK_COMMA, "Expect ','.");
-  // An expression here is too generation and a field isn't general enough. It
+  // An expression here is too general and a field isn't general enough. It
   // should really be "stuff that comes after a ." but for now we only support a
   // field name since that's the most common use.
   Str field = parse_name("Expect field name in offsetof.");
@@ -1602,7 +1852,7 @@ static Operand parse_offsetof(bool can_assign, Type* expected) {
   for (uint32_t i = 0; i < type_struct_num_fields(type); ++i) {
     if (str_eq(type_struct_field_name(type, i), field)) {
       uint32_t offset = type_struct_field_offset(type, i);
-      return operand_const(type_i32, offset, ir_CONST_I32(offset));
+      return operand_const(type_i32, (Val){.i32 = offset});
     }
   }
   errorf_offset(name_offset, "'%s' is not a field of type %s.", cstr_copy(parser.arena, field),
@@ -1614,7 +1864,7 @@ static Operand parse_or(Operand left, bool can_assign, Type* expected) {
   if (!type_is_condition(left.type)) {
     errorf("Left-hand side of or cannot be type %s.", type_as_str(left.type));
   }
-  ir_ref lcond = ir_IF(load_operand_if_necessary(&left));
+  ir_ref lcond = ir_IF(operand_to_irref_imm(&left));
   ir_IF_TRUE(lcond);
   ir_ref if_true = ir_END();
   ir_IF_FALSE(lcond);
@@ -1624,7 +1874,7 @@ static Operand parse_or(Operand left, bool can_assign, Type* expected) {
     errorf("Right-hand side of or cannot be type %s.", type_as_str(right.type));
   }
   ir_ref if_false = ir_END();
-  ir_ref rcond = load_operand_if_necessary(&right);
+  ir_ref rcond = operand_to_irref_imm(&right);
   ir_MERGE_2(if_true, if_false);
   ir_ref result = ir_PHI_2(IR_BOOL, ir_CONST_BOOL(true), rcond);
   return operand_rvalue_imm(type_bool, result);
@@ -1660,19 +1910,19 @@ static Operand parse_range(bool can_assign, Type* expected) {
   if (type_is_none(second.type)) {
     // range(0, first, 1)
     ir_STORE(astart, ir_CONST_I64(0));
-    ir_STORE(astop, load_operand_if_necessary(&first));
+    ir_STORE(astop, operand_to_irref_imm(&first));
     ir_STORE(astep, ir_CONST_I64(1));
   } else {
     // range(first, second, third || 1)
-    ir_STORE(astart, load_operand_if_necessary(&first));
-    ir_STORE(astop, load_operand_if_necessary(&second));
+    ir_STORE(astart, operand_to_irref_imm(&first));
+    ir_STORE(astop, operand_to_irref_imm(&second));
     if (type_is_none(third.type)) {
       ir_STORE(astep, ir_CONST_I64(1));
     } else {
-      ir_STORE(astep, load_operand_if_necessary(&third));
+      ir_STORE(astep, operand_to_irref_imm(&third));
     }
   }
-  return operand_rvalue(type_range, range);
+  return operand_rvalue_addr(type_range, range);
 }
 
 static Operand parse_sizeof(bool can_assign, Type* expected) {
@@ -1702,9 +1952,9 @@ static Operand parse_string(bool can_assign, Type* expected) {
       error("Invalid string escape.");
     }
     inside_quotes.size = new_len;
-    return operand_rvalue(type_str, emit_string_obj(inside_quotes));
+    return operand_rvalue_addr(type_str, emit_string_obj(inside_quotes));
   } else {
-    return operand_rvalue(type_str, emit_string_obj(inside_quotes));
+    return operand_rvalue_addr(type_str, emit_string_obj(inside_quotes));
   }
 }
 
@@ -1726,11 +1976,11 @@ static Operand parse_unary(bool can_assign, Type* expected) {
   Operand expr = parse_precedence(PREC_UNARY, expected);
   if (op_kind == TOK_MINUS) {
     return operand_rvalue_imm(expr.type,
-                              ir_NEG(type_to_ir_type(expr.type), load_operand_if_necessary(&expr)));
+                              ir_NEG(type_to_ir_type(expr.type), operand_to_irref_imm(&expr)));
   } else if (op_kind == TOK_NOT) {
     if (type_is_condition(expr.type)) {
       return operand_rvalue_imm(
-          expr.type, ir_NOT(type_to_ir_type(expr.type), load_operand_if_necessary(&expr)));
+          expr.type, ir_NOT(type_to_ir_type(expr.type), operand_to_irref_imm(&expr)));
     } else {
       errorf("Type %s cannot be used in a boolean not.", type_as_str(expr.type));
     }
@@ -1831,7 +2081,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
         errorf("Cannot assign type %s to type %s.", type_as_str(op.type), type_as_str(sym->type));
       }
       if (eq_kind == TOK_EQ) {
-        ir_VSTORE(sym->ref, load_operand_if_necessary(&op));
+        ir_VSTORE(sym->ref, operand_to_irref_imm(&op));
       } else {
         error_offset(eq_offset, "Unhandled assignment type.");
       }
@@ -1854,7 +2104,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
       return operand_rvalue_imm(sym->type, sym->ref);
     } else if (scope_result == SCOPE_RESULT_GLOBAL) {
       if (type_kind(sym->type) == TYPE_FUNC) {
-        return operand_rvalue(sym->type, ir_CONST_ADDR(sym->addr));
+        return operand_rvalue_addr(sym->type, ir_CONST_ADDR(sym->addr));
       } else {
         ASSERT(false && "global var");
         //return operand_lvalue(sym->type, gen_mir_op_reg(sym->ir_reg));
@@ -2052,7 +2302,7 @@ static void if_statement(void) {
   do {
     Operand opcond = if_statement_cond_helper();
     ASSERT(type_kind(opcond.type) == TYPE_BOOL && "todo, other types");
-    ir_ref cond = ir_IF(load_operand_if_necessary(&opcond));
+    ir_ref cond = ir_IF(operand_to_irref_imm(&opcond));
     ir_IF_TRUE(cond);
     LastStatementType lst = parse_block();
     ir_ref iftrue = ir_END();
@@ -2102,7 +2352,7 @@ static void for_statement(void) {
     consume(TOK_IN, "Expect 'in'.");
     Operand expr = parse_expression(NULL);
     if (type_eq(expr.type, type_range)) {
-      ASSERT(expr.ref_is_addr);
+      ASSERT(op_is_addr(expr));
       ir_ref astart = expr.ref;
       ir_ref astop = ir_ADD_A(expr.ref, ir_CONST_ADDR(sizeof(int64_t)));
       ir_ref astep = ir_ADD_A(expr.ref, ir_CONST_ADDR(2 * sizeof(int64_t)));
@@ -2152,6 +2402,8 @@ static void print_statement(void) {
     print_range(&val);
   } else if (convert_operand(&val, type_i32)) {
     print_i32(&val);
+  } else {
+    errorf("TODO: don't know how to print type %s.", type_as_str(val.type));
   }
   expect_end_of_statement("print");
 }
@@ -2288,7 +2540,7 @@ static LastStatementType return_statement(void) {
       errorf("Cannot convert type %s to expected return type %s.", type_as_str(op.type),
              type_as_str(func_ret));
     }
-    ir_VSTORE(parser.cur_func->return_slot->ref, load_operand_if_necessary(&op));
+    ir_VSTORE(parser.cur_func->return_slot->ref, operand_to_irref_imm(&op));
     return LST_RETURN_VALUE;
   } else {
     consume(TOK_NEWLINE, "Expected newline after return in function with no return type.");
