@@ -201,9 +201,7 @@ because we don't have the offsets until after the type is built?)
 ==> need to handle compound literals in the value of struct initializers, but
 is_const only
 
----
-
-maybe can get back to "what's needed to be useful" list again!
+--- todo list
 
 - function hoisting: not most impt, but harder in single pass
 - list compr: also messy-ish because of late binding of it
@@ -220,4 +218,38 @@ maybe can get back to "what's needed to be useful" list again!
 - revisit string interpolation; don't slow down lex/parse if unused
 
 
-# vim: set tw=80:
+--- upval handling
+
+single pass makes function hoisting and upvals a bit harder than ast
+
+the scope_lookup in parse_variable() can know that the value is an upval because
+that's a lexical thing.
+
+need to assume that any nested function definition has some upvals i think
+because we need to define the nested function as taking a hidden upval param
+pointer at enter_function time.
+
+when a variable is determined to be an upval while parsing the body,
+find/allocate space in the current function's flattened capture blob. references
+to upvals are always through $up[N]. allocating space has to point at the local
+so it knows what to capture
+
+it can't know how big the blob is until the end of the function. but to avoid
+needing to have callers inject a hidden argument, could indirect at entry. so!
+on enter_function nested, alloca a pointer that points at the capture blob (in
+the outside function). the first thing a nested function does is load its
+capture pointer to a local ref, and then all capture references are fixed
+offsets from that base.
+
+at the leave_function(), alloca the full size of the capture blob, and copy all
+referenced upvals into the associated slot. stash the value of the alloca into
+the pointer allocated at the beginning enter_function and then the prolog to the
+nested function just loads that.
+
+don't try to solve escape or closure, potentially some sort of arena integration
+some day.
+
+
+
+
+# vim: set tw=80 fo=roqnjt:
