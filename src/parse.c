@@ -1352,7 +1352,7 @@ static void unify_arithmetic_operands(Operand* left, Operand* right) {
 static unsigned long long eval_binary_op_ull(ir_op op,
                                              unsigned long long left,
                                              unsigned long long right) {
-  error("TODO: ull const eval");
+  error("TODO: ull binary const eval");
 }
 
 static unsigned long highest_bit_set(long long val) {
@@ -1433,7 +1433,7 @@ static long long eval_binary_op_ll(ir_op op, long long left, long long right) {
           __builtin_ssubll_overflow(left, right, &result)
 #endif
       ) {
-        errorf("%llu subtracted from %llu overflows.", right, left);
+        errorf("%lld subtracted from %lld overflows.", right, left);
       }
       return result;
     }
@@ -1971,13 +1971,56 @@ static Operand parse_typeid(bool can_assign, Type* expected) {
   return operand_null;
 }
 
+static long long eval_unary_op_ll(TokenKind op, long long val) {
+  switch (op) {
+    case TOK_PLUS:
+      return +val;
+    case TOK_MINUS:
+      return -val;
+#if 0 // TODO
+    case TOK_TILDE:
+      return ~val;
+#endif
+    case TOK_NOT:
+      return !val;
+    default:
+      error("Unexpected unary op.");
+  }
+}
+
+static unsigned long long eval_unary_op_ull(TokenKind op, unsigned long long val) {
+  error("TODO: ull unary const eval");
+}
+
+static Val eval_unary_op(TokenKind op, Type type, Val val) {
+  if (type_is_integer(type)) {
+    Operand operand = operand_const(type, val);
+    if (type_is_signed(type)) {
+      cast_operand(&operand, type_i64);
+      operand.val.i64 = eval_unary_op_ll(op, operand.val.i64);
+    } else {
+      cast_operand(&operand, type_u64);
+      operand.val.u64 = eval_unary_op_ull(op, operand.val.u64);
+    }
+    cast_operand(&operand, type);
+    return operand.val;
+  } else {
+    errorf("Unexpected type %s in eval_unary_op.", type_as_str(type));
+  }
+}
+
 static Operand parse_unary(bool can_assign, Type* expected) {
   TokenKind op_kind = parser.prev_kind;
   Operand expr = parse_precedence(PREC_UNARY, expected);
   if (op_kind == TOK_MINUS) {
-    return operand_rvalue_imm(expr.type,
-                              ir_NEG(type_to_ir_type(expr.type), operand_to_irref_imm(&expr)));
+    if (op_is_const(expr)) {
+      return operand_const(expr.type, eval_unary_op(op_kind, expr.type, expr.val));
+    } else {
+      return operand_rvalue_imm(expr.type,
+                                ir_NEG(type_to_ir_type(expr.type), operand_to_irref_imm(&expr)));
+    }
   } else if (op_kind == TOK_NOT) {
+    // TODO: const eval
     if (type_is_condition(expr.type)) {
       return operand_rvalue_imm(
           expr.type, ir_NOT(type_to_ir_type(expr.type), operand_to_irref_imm(&expr)));

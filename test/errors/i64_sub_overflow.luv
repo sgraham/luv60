@@ -1,0 +1,7 @@
+# RET: 1
+# ERR: {self}:5:35:    x = -9223372036854775807i64 - 2
+# ERR: {ssss}                                        ^ error: 2 subtracted from -9223372036854775807 overflows.
+def int main():
+    x = -9223372036854775807i64 - 2
+    return 0
+
