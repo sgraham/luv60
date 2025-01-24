@@ -1315,7 +1315,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
     }
 
     // TODO: package, union, special memfn on array/slice/dict, general memfn
-    errorf("Cannot get field from type %s.", type_as_str(left.type));
+    errorf("Cannot get field from type.");
   }
 }
 
