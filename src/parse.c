@@ -903,11 +903,11 @@ static bool is_castable(Operand* operand, Type dest) {
   }
 }
 
-#ifndef _MSC_VER
-#pragma GCC diagnostic push
+#if COMPILER_CLANG
+#pragma clang diagnostic push
 // This is a very good warning, but in the n^2 CASE expansion below, there's
 // lots of code that isn't interesting, so disable for this block.
-#pragma GCC diagnostic ignored "-Wtautological-constant-out-of-range-compare"
+#pragma clang diagnostic ignored "-Wtautological-constant-out-of-range-compare"
 #endif
 
 #define CASE(from_type_kind, from_field)                      \
@@ -1023,8 +1023,8 @@ static bool cast_operand(Operand* operand, Type type) {
 
 #undef CASE
 
-#ifndef _MSC_VER
-#pragma GCC diagnostic pop
+#if COMPILER_CLANG
+#pragma clang diagnostic pop
 #endif
 
 static bool convert_operand(Operand* operand, Type type) {
@@ -1356,7 +1356,7 @@ static unsigned long long eval_binary_op_ull(ir_op op,
 }
 
 static unsigned long highest_bit_set(long long val) {
-#if _MSC_VER
+#if COMPILER_MSVC
   unsigned long index;
   bool is_nonzero = _BitScanForward64(&index, val);
   if (is_nonzero) {
@@ -1376,7 +1376,7 @@ static long long eval_binary_op_ll(ir_op op, long long left, long long right) {
     case IR_MUL: {
       long long result;
       if (
-#if _MSC_VER
+#if COMPILER_MSVC
           _mul_overflow_i64(left, right, &result)
 #else
           __builtin_smulll_overflow(left, right, &result)
@@ -1414,7 +1414,7 @@ static long long eval_binary_op_ll(ir_op op, long long left, long long right) {
     case IR_ADD: {
       long long result;
       if (
-#if _MSC_VER
+#if COMPILER_MSVC
           _add_overflow_i64(0, left, right, &result)
 #else
           __builtin_saddll_overflow(left, right, &result)
@@ -1427,7 +1427,7 @@ static long long eval_binary_op_ll(ir_op op, long long left, long long right) {
     case IR_SUB: {
       long long result;
       if (
-#if _MSC_VER
+#if COMPILER_MSVC
           _sub_overflow_i64(0, left, right, &result)
 #else
           __builtin_ssubll_overflow(left, right, &result)
