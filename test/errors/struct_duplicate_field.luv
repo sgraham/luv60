@@ -1,0 +1,6 @@
+# RET: 1
+# ERR: {self}:6:10:    bool a
+# ERR: {ssss}               ^ error: Duplicate struct field name 'a'.
+struct Stuff:
+    int a
+    bool a

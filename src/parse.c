@@ -1962,10 +1962,71 @@ static Operand parse_string_interpolate(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
+
 static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
-  ASSERT(false && "not implemented");
-  return operand_null;
+  ir_ref target_addr;
+  Type subtype;
+
+  if (match(TOK_COLON)) {
+    if (check(TOK_RSQUARE)) {  // [:]
+      // slice(left, NULL, NULL);
+        error("TODO: [:]");
+    } else {  // [:x]
+      // slice(left, NULL, parse_expression())
+        error("TODO: [:x]");
+    }
+  } else {
+    Operand subscript = parse_expression(NULL);
+    if (match(TOK_COLON)) {
+      if (check(TOK_RSQUARE)) {  // [x:]
+        // slice(left, subscript, NULL)
+        error("TODO: [x:]");
+      } else {  // [x:y]
+        // slice(left, subscript, parse_expression());
+        error("TODO: [x:y]");
+      }
+    } else {
+      // Regular subscript.
+      TypeKind left_type_kind = type_kind(left.type);
+      switch (left_type_kind) {
+        case TYPE_ARRAY:
+        case TYPE_SLICE:
+        case TYPE_PTR:
+        case TYPE_STR: {
+          if (!type_is_integer(subscript.type)) {
+            errorf("Cannot subscript using type %s.", type_as_str(subscript.type));
+          }
+          if (left_type_kind == TYPE_ARRAY) {
+            ASSERT(op_is_addr(left));
+            subtype = type_array_subtype(left.type);
+            target_addr = ir_ADD_A(left.ref, ir_MUL_I64(ir_CONST_I64(type_size(subtype)),
+                                                        operand_to_irref_imm(&subscript)));
+          } else {
+            error("TODO: subscript impl");
+          }
+        break;
+        default:
+          errorf("Cannot subscript type %s.", type_as_str(left.type));
+        }
+      }
+    }
+  }
+  consume(TOK_RSQUARE, "Expect ']' to complete subscript.");
+
+  ASSERT(target_addr);
+  ASSERT(!type_is_none(subtype));
+  if (can_assign && match_assignment()) {
+    Operand rhs = parse_expression(NULL); // TODO: do type here
+    if (!convert_operand(&rhs, subtype)) {
+      errorf("Cannot store type %s into %s.", type_as_str(rhs.type), type_as_str(left.type));
+    }
+    ir_STORE(target_addr, operand_to_irref_imm(&rhs));
+    return operand_null;
+  } else {
+    return operand_rvalue_imm(subtype, ir_LOAD(type_to_ir_type(subtype), target_addr));
+  }
 }
+
 static Operand parse_typeid(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;

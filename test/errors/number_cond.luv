@@ -1,0 +1,8 @@
+# RET: 1
+# ERR: {self}:6:8:    if x:
+# ERR: {ssss}            ^ error: Result of condition expression cannot be type i32.
+def int main():
+    int x = 4
+    if x:
+        pass
+    return 0

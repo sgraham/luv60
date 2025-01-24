@@ -1,0 +1,6 @@
+# RET: 1
+# ERR: {self}:6:12:    x[1] = "blah"
+# ERR: {ssss}                 ^ error: Cannot store type str into [3]i32.
+def main():
+    x = [1,2,3]
+    x[1] = "blah"

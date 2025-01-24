@@ -1,0 +1,6 @@
+# RET: 1
+# ERR: {self}:6:13:    print x["stuff"]
+# ERR: {ssss}                  ^ error: Cannot subscript using type str.
+def int main():
+    x = [1,2,3]
+    print x["stuff"]
