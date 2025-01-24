@@ -140,6 +140,68 @@ typedef struct Operand {
   bool is_const;
 } Operand;
 
+typedef struct OpVec {
+  union {
+    Operand* data;
+    Operand short_data[16];
+  };
+  Arena* arena;
+  int64_t size;
+  int64_t capacity;
+} OpVec;
+
+static inline FORCE_INLINE void opv_init(OpVec* vec, Arena* arena) {
+  vec->size = 0;
+  vec->capacity = COUNTOFI(vec->short_data);
+  vec->arena = arena;
+}
+
+static inline FORCE_INLINE void opv_free(OpVec* vec) {
+  vec->size = 0;
+}
+
+static inline FORCE_INLINE int64_t opv_size(OpVec* vec) {
+  return vec->size;
+}
+
+static void opv_ensure_capacity(OpVec* vec, int64_t size) {
+  if (size <= vec->capacity) {
+    return;
+  }
+
+  // capacity starts at short_data len, so always moving to allocated if
+  // growing.
+  Operand* new = arena_push(vec->arena, sizeof(Operand) * size, _Alignof(Operand));
+  Operand* old = vec->capacity <= COUNTOFI(vec->short_data) ? vec->short_data : vec->data;
+  memcpy(new, old, sizeof(Operand) * vec->size);
+  vec->capacity = size;
+}
+
+#if 0
+static Operand opv_at(OpVec* vec, int64_t i) {
+  ASSERT(i < vec->size);
+  if (vec->capacity < COUNTOFI(vec->short_data)) {
+    return vec->short_data[i];
+  }
+  return vec->data[i];
+}
+#endif
+
+static void opv_set(OpVec* vec, int64_t i, Operand op) {
+  ASSERT(i < vec->size);
+  if (vec->capacity < COUNTOFI(vec->short_data)) {
+    vec->short_data[i] = op;
+  }
+  vec->data[i] = op;
+}
+
+static void opv_append(OpVec* vec, Operand op) {
+  opv_ensure_capacity(vec, vec->size + 1);
+  ++vec->size;
+  opv_set(vec, vec->size - 1, op);
+}
+
+
 static Operand operand_null;
 
 static ir_type type_to_ir_type(Type type) {
@@ -1124,6 +1186,7 @@ static Operand resolve_binary_op(ir_op op, Operand left, Operand right, uint32_t
   // It doesn't seem worth doing const eval because the jit ops are going to
   // fold right when they're created anyway. So just don't for now, but might
   // need to revisit for `const` keyword, and struct initializers.
+  // Hmm, and the size of arrays. Oops.
   /*if (left.is_const && right.is_const) {
     ASSERT(false && "todo; const eval");
     abort();
@@ -1337,10 +1400,46 @@ static Operand parse_len(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
+
 static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
-  ASSERT(false && "not implemented");
+  OpVec elems;
+  opv_init(&elems, parser.arena);
+
+  if (!match(TOK_RSQUARE)) {
+    for (;;) {
+      if (elems.size > 0 && check(TOK_RSQUARE)) {
+        // Allow trailing comma.
+        break;
+      }
+
+      Operand elem = parse_expression(NULL);
+      opv_append(&elems, elem);
+
+      if (match(TOK_FOR)) {
+        ASSERT(false && "todo; list compr");
+        abort();
+      } else if (!match(TOK_COMMA)) {
+        break;
+      }
+    }
+    consume(TOK_RSQUARE, "Expect ']' to terminate list.");
+  }
+
+  if (elems.size == 0) {
+    if (!expected) {
+      error("Cannot deduce type of empty list with no explicit type on left-hand size.");
+    }
+    if (type_kind(*expected) == TYPE_SLICE || type_kind(*expected) == TYPE_ARRAY) {
+      ASSERT(false && "todo");
+    } else {
+      errorf("Cannot convert empty list literal to expected type %s.", type_as_str(*expected));
+    }
+  } else {
+  }
+
   return operand_null;
 }
+
 static Operand parse_null_literal(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
