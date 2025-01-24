@@ -1,0 +1,18 @@
+# DISABLED
+# OUT: 123
+# OUT: 456
+# OUT: 789
+struct Stuff:
+    int x
+    int y
+    int z
+
+def int main():
+    Stuff stuff
+    stuff.x = 123
+    stuff.y = 456
+    stuff.z = 789
+    print stuff.x
+    print stuff.y
+    print stuff.z
+    return 0

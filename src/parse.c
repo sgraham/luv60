@@ -1282,10 +1282,42 @@ static Operand parse_dict_literal(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
 }
+
 static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
-  ASSERT(false && "not implemented");
-  return operand_null;
+  // TODO: package, and maybe const or types after . ?
+  Str name = parse_name("Expect property name after '.'.");
+
+  if (can_assign && match_assignment()) {
+    ASSERT(false && "todo; field assign");
+    // Get left.field, assign rhs = parse_expression()
+#if 0
+    if (!left.is_lvalue) {
+      error("Cannot assign to non-lvalue.");
+    }
+#endif
+  } else {
+    // TODO: ptr following down left
+
+    if (type_kind(left.type) == TYPE_STRUCT) {
+      uint32_t num_fields = type_struct_num_fields(left.type);
+      for (uint32_t i = 0; i < num_fields; ++i) {
+        if (str_eq(type_struct_field_name(left.type, i), name)) {
+          Type field_type = type_struct_field_type(left.type, i);
+          uint32_t field_offset = type_struct_field_offset(left.type, i);
+          ir_ref ref = ir_LOAD(type_to_ir_type(field_type),
+                               ir_ADD_OFFSET(load_operand_if_necessary(&left), field_offset));
+          return operand_rvalue_imm(field_type, ref);
+        }
+      }
+
+      // Not an error yet; could be a memfn below.
+    }
+
+    // TODO: package, union, special memfn on array/slice/dict, general memfn
+    errorf("Cannot get field from type %s.", type_as_str(left.type));
+  }
 }
+
 static Operand parse_grouping(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
