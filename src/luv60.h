@@ -219,7 +219,7 @@ Str type_struct_decl_name(Type type);
 Str type_struct_field_name(Type type, uint32_t i);
 Type type_struct_field_type(Type type, uint32_t i);
 uint32_t type_struct_field_offset(Type type, uint32_t i);
-
+bool type_struct_find_field_by_name(Type type, Str name, Type* out_type, uint32_t* out_offset);
 
 // parse.c
 

@@ -489,6 +489,21 @@ uint32_t type_struct_field_offset(Type type, uint32_t i) {
   return tde[i].STRUCT_EXTRA.field_offset;
 }
 
+bool type_struct_find_field_by_name(Type type, Str name, Type* out_type, uint32_t* out_offset) {
+  ASSERT(type_kind(type) == TYPE_STRUCT);
+  TypeData* td = type_td(type);
+  TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
+  uint32_t num_fields = type_struct_num_fields(type);
+  for (uint32_t i = 0; i < num_fields; ++i) {
+    if (str_eq(tde[i].STRUCT_EXTRA.field_name, name)) {
+      *out_type = tde[i].STRUCT_EXTRA.field_type;
+      *out_offset = tde[i].STRUCT_EXTRA.field_offset;
+      return true;
+    }
+  }
+  return false;
+}
+
 void type_destroy_for_tests(void) {
   dict_destroy(&cached_func_types);
   memset(typedata, 0, sizeof(typedata));

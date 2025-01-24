@@ -1,6 +1,6 @@
 # RET: 1
 # ERR: {self}:9:27:    print offsetof(Stuff, q)
-# ERR: {ssss}                                ^ error: 'q' is not a member of type Stuff.
+# ERR: {ssss}                                ^ error: 'q' is not a field of type Stuff.
 struct Stuff:
     int x
     int y

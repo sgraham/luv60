@@ -1,0 +1,9 @@
+# OUT: 123
+struct Stuff:
+    int x
+
+def int main():
+    Stuff s
+    s.x = 123
+    print s.x
+    return 0

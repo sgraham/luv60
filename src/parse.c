@@ -1286,29 +1286,35 @@ static Operand parse_dict_literal(bool can_assign, Type* expected) {
 static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
   // TODO: package, and maybe const or types after . ?
   Str name = parse_name("Expect property name after '.'.");
+  uint32_t name_offset = prev_offset();
 
   if (can_assign && match_assignment()) {
-    ASSERT(false && "todo; field assign");
-    abort();
-    // Get left.field, assign rhs = parse_expression()
-#if 0
-    if (!left.is_lvalue) {
-      error("Cannot assign to non-lvalue.");
+    if (type_kind(left.type) == TYPE_STRUCT) {
+      uint32_t field_offset;
+      Type field_type;
+      if (type_struct_find_field_by_name(left.type, name, &field_type, &field_offset)) {
+        Operand rhs_value = parse_expression(expected);
+        ir_STORE(ir_ADD_OFFSET(load_operand_if_necessary(&left), field_offset),
+                              load_operand_if_necessary(&rhs_value));
+        return operand_null;
+      } else {
+        errorf_offset(name_offset, "'%s' is not a field of type %s.",
+                      cstr_copy(parser.arena, name),
+                      cstr_copy(parser.arena, type_struct_decl_name(left.type)));
+      }
+    } else {
+      error("todo; assigning to unexpected thing");
     }
-#endif
   } else {
     // TODO: ptr following down left
 
     if (type_kind(left.type) == TYPE_STRUCT) {
-      uint32_t num_fields = type_struct_num_fields(left.type);
-      for (uint32_t i = 0; i < num_fields; ++i) {
-        if (str_eq(type_struct_field_name(left.type, i), name)) {
-          Type field_type = type_struct_field_type(left.type, i);
-          uint32_t field_offset = type_struct_field_offset(left.type, i);
-          ir_ref ref = ir_LOAD(type_to_ir_type(field_type),
-                               ir_ADD_OFFSET(load_operand_if_necessary(&left), field_offset));
-          return operand_rvalue_imm(field_type, ref);
-        }
+      uint32_t field_offset;
+      Type field_type;
+      if (type_struct_find_field_by_name(left.type, name, &field_type, &field_offset)) {
+        ir_ref ref = ir_LOAD(type_to_ir_type(field_type),
+                             ir_ADD_OFFSET(load_operand_if_necessary(&left), field_offset));
+        return operand_rvalue_imm(field_type, ref);
       }
 
       // Not an error yet; could be a memfn below.
@@ -1437,7 +1443,7 @@ static Operand parse_offsetof(bool can_assign, Type* expected) {
       return operand_const(type_i32, ir_CONST_I32(type_struct_field_offset(type, i)));
     }
   }
-  errorf_offset(name_offset, "'%s' is not a member of type %s.", cstr_copy(parser.arena, field),
+  errorf_offset(name_offset, "'%s' is not a field of type %s.", cstr_copy(parser.arena, field),
                 cstr_copy(parser.arena, type_struct_decl_name(type)));
 }
 
