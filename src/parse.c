@@ -1289,6 +1289,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
 
   if (can_assign && match_assignment()) {
     ASSERT(false && "todo; field assign");
+    abort();
     // Get left.field, assign rhs = parse_expression()
 #if 0
     if (!left.is_lvalue) {
