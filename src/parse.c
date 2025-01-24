@@ -692,7 +692,7 @@ static void leave_function(void) {
     void* entry = ir_jit_compile(_ir_CTX, /*opt=*/parser.opt_level, &size);
     if (entry) {
       if (parser.verbose) {
-        fprintf(stderr, "=> codegen to %zu bytes for '%s'\n", size,
+        fprintf(stderr, "=> codegen to %zu bytes at %p for '%s'\n", size, entry,
                 cstr_copy(parser.arena, parser.cur_func->sym->name));
 #  if !OS_WINDOWS  // TODO: don't have capstone or ir_disasm on win32 right now
         ir_disasm_init();
@@ -2303,7 +2303,11 @@ static Operand parse_variable(bool can_assign, Type* expected) {
     }
   } else {
     if (scope_result == SCOPE_RESULT_LOCAL) {
-      return operand_lvalue(sym->type, sym->ref);
+      if (type_kind(sym->type) == TYPE_FUNC) {
+        return operand_rvalue_addr(sym->type, ir_CONST_ADDR(sym->addr));
+      } else {
+        return operand_lvalue(sym->type, sym->ref);
+      }
     } else if (scope_result == SCOPE_RESULT_PARAMETER) {
       return operand_rvalue_imm(sym->type, sym->ref);
     } else if (scope_result == SCOPE_RESULT_GLOBAL) {

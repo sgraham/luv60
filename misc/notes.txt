@@ -201,5 +201,23 @@ because we don't have the offsets until after the type is built?)
 ==> need to handle compound literals in the value of struct initializers, but
 is_const only
 
+---
+
+maybe can get back to "what's needed to be useful" list again!
+
+- function hoisting: not most impt, but harder in single pass
+- list compr: also messy-ish because of late binding of it
+- more intricate scope resolution (esp for nested)
+- slices
+- dict
+- pointers
+- to_str, and auto for print
+- arena helpers
+- break/continue
+- loop over other things
+- in/not in
+- const
+- revisit string interpolation; don't slow down lex/parse if unused
+
 
 # vim: set tw=80:
