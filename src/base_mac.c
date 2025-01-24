@@ -5,6 +5,7 @@
 #endif
 
 #include <sys/mman.h>
+#include <time.h>
 #include <unistd.h>
 
 int base_writef_stderr(const char* fmt, ...) {
@@ -17,6 +18,13 @@ int base_writef_stderr(const char* fmt, ...) {
 
 uint64_t base_page_size(void) {
   return sysconf(_SC_PAGE_SIZE);
+}
+
+void base_timer_init(void) {
+}
+
+uint64_t base_timer_now(void) {
+  return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000;
 }
 
 void* base_mem_reserve(uint64_t size) {
