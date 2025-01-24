@@ -70,6 +70,7 @@ static int num_typedata;
 
 static DictImpl cached_func_types;
 static DictImpl cached_ptr_types;
+static DictImpl cached_arr_types;
 static Arena* arena_;
 
 const char* natural_builtin_type_names[NUM_TYPE_KINDS] = {
@@ -107,7 +108,7 @@ size_t type_size(Type type) {
     case TYPE_PTR:
       return 8;
     case TYPE_ARRAY:
-      ASSERT(false && "todo");
+      return type_td(type)->ARRAY.size;
       abort();
     case TYPE_DICT:
       ASSERT(false && "todo");
@@ -115,8 +116,7 @@ size_t type_size(Type type) {
     case TYPE_STRUCT:
       return type_td(type)->STRUCT.size;
     case TYPE_FUNC:
-      ASSERT(false && "todo");
-      abort();
+      return 8;
     default:
       return type_td(type)->BASIC.size;
   }
@@ -289,8 +289,27 @@ Type type_ptr(Type subtype) {
   }
 }
 
-Type type_array(uint64_t count, Type subtype) {
-  return (Type){0};
+Type type_array(Type subtype, size_t size) {
+  ASSERT(size <= 0xffffffff);
+  uint32_t rewind_location;
+  Type arr = type_alloc(TYPE_ARRAY, 0, &rewind_location);
+  TypeData* td = type_td(arr);
+  td->ARRAY.size = size * type_size(subtype);
+  td->ARRAY.align = type_align(subtype);
+  td->ARRAY.subtype = subtype;
+  td->ARRAY.count = size;
+
+  // The dict is only a set of intern'd Type, but we know they're all TYPE_ARRAY.
+  DictInsert res = dict_deferred_insert(&cached_arr_types, &arr, plaintype_hash_func,
+                                        plaintype_eq_func, sizeof(Type), _Alignof(Type));
+  Type* arrtype = ((Type*)dict_rawiter_get(&res.iter));
+  if (res.inserted) {
+    arrtype->u = arr.u;
+    return arr;
+  } else {
+    num_typedata = rewind_location;
+    return *arrtype;
+  }
 }
 
 
@@ -326,6 +345,7 @@ void type_init(Arena* arena) {
   arena_ = arena;
   cached_func_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
   cached_ptr_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
+  cached_arr_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
 
   set_builtin_typedata(TYPE_VOID, 0, 1);
   set_builtin_typedata(TYPE_BOOL, 1, 1);
@@ -451,6 +471,18 @@ Type type_ptr_subtype(Type type) {
   ASSERT(type_kind(type) == TYPE_PTR);
   TypeData* td = type_td(type);
   return td->PTR.subtype;
+}
+
+Type type_array_subtype(Type type) {
+  ASSERT(type_kind(type) == TYPE_ARRAY);
+  TypeData* td = type_td(type);
+  return td->ARRAY.subtype;
+}
+
+uint32_t type_array_count(Type type) {
+  ASSERT(type_kind(type) == TYPE_ARRAY);
+  TypeData* td = type_td(type);
+  return td->ARRAY.count;
 }
 
 uint32_t type_struct_num_fields(Type type) {

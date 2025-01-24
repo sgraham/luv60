@@ -177,22 +177,21 @@ static void opv_ensure_capacity(OpVec* vec, int64_t size) {
   vec->capacity = size;
 }
 
-#if 0
 static Operand opv_at(OpVec* vec, int64_t i) {
   ASSERT(i < vec->size);
-  if (vec->capacity < COUNTOFI(vec->short_data)) {
+  if (vec->capacity <= COUNTOFI(vec->short_data)) {
     return vec->short_data[i];
   }
   return vec->data[i];
 }
-#endif
 
 static void opv_set(OpVec* vec, int64_t i, Operand op) {
   ASSERT(i < vec->size);
-  if (vec->capacity < COUNTOFI(vec->short_data)) {
+  if (vec->capacity <= COUNTOFI(vec->short_data)) {
     vec->short_data[i] = op;
+  } else {
+    vec->data[i] = op;
   }
-  vec->data[i] = op;
 }
 
 static void opv_append(OpVec* vec, Operand op) {
@@ -479,9 +478,18 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
   if (type_is_aggregate(type) && type_kind(type) != TYPE_STR && type_kind(type) != TYPE_RANGE) {
     uint32_t size = type_size(type);
     new->ref = ir_ALLOCA(ir_CONST_U64(size));
-    ASSERT(!initial_value && "todo");
-    ir_ref addr = ir_CONST_ADDR(memset);
-    ir_CALL_3(IR_VOID, addr, new->ref, ir_CONST_U8(0), ir_CONST_U64(size));
+    if (initial_value) {
+      if (!type_eq(initial_value->type, type)) {
+        errorf("Cannot initialize aggregate type %s with type %s.",
+               type_as_str(initial_value->type), type_as_str(type));
+      }
+      ir_ref memcpy_addr = ir_CONST_ADDR(memcpy);
+      ir_CALL_3(IR_VOID, memcpy_addr, new->ref, load_operand_if_necessary(initial_value),
+                ir_CONST_U64(size));
+    } else {
+      ir_ref memset_addr = ir_CONST_ADDR(memset);
+      ir_CALL_3(IR_VOID, memset_addr, new->ref, ir_CONST_U8(0), ir_CONST_U64(size));
+    }
   } else {
     new->ref = ir_VAR(type_to_ir_type(type),
 #if BUILD_DEBUG
@@ -1430,14 +1438,29 @@ static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
       error("Cannot deduce type of empty list with no explicit type on left-hand size.");
     }
     if (type_kind(*expected) == TYPE_SLICE || type_kind(*expected) == TYPE_ARRAY) {
-      ASSERT(false && "todo");
+      error("todo; empty slice/array");
     } else {
       errorf("Cannot convert empty list literal to expected type %s.", type_as_str(*expected));
     }
   } else {
+    // TODO: for ints, it'd be nice to promote all of them to the largest
+    // required if that would make it work, so that:
+    // [1, 2, 0xffff_ffff_ffff_ffff] would pass without doing
+    // [1u64, 2, 0xffff_ffff_ffff_ffff] instead.
+    Operand first_item = opv_at(&elems, 0);
+    ir_ref arr_base = ir_ALLOCA(ir_CONST_U64(type_size(first_item.type) * elems.size));
+    ir_STORE(arr_base, load_operand_if_necessary(&first_item));
+    for (int i = 1; i < elems.size; ++i) {
+      Operand next_item = opv_at(&elems, i);
+      if (!convert_operand(&next_item, first_item.type)) {
+        errorf("List item %d is of type %s which does not match type %s of first element.", i + 1,
+               type_as_str(next_item.type), type_as_str(first_item.type));
+      }
+      ir_STORE(ir_ADD_OFFSET(arr_base, type_size(first_item.type) * i),
+               load_operand_if_necessary(&next_item));
+    }
+    return operand_rvalue_imm(type_array(first_item.type, elems.size), arr_base);
   }
-
-  return operand_null;
 }
 
 static Operand parse_null_literal(bool can_assign, Type* expected) {
