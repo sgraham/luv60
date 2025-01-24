@@ -196,7 +196,11 @@ Type type_array(Type subtype, size_t size);
 // structs are different than e.g. ptrs in that they're never the same as
 // another one, so this is not 'intern'ing, but simply creating the Type value,
 // and every call will result in a different (new) Type being returned.
-Type type_new_struct(Str name, uint32_t num_fields, Str* field_names, Type* field_types);
+Type type_new_struct(Str name,
+                     uint32_t num_fields,
+                     Str* field_names,
+                     Type* field_types,
+                     void* default_blob);
 
 static inline FORCE_INLINE bool type_is_none(Type a) { return a.u == 0; }
 static inline FORCE_INLINE bool type_eq(Type a, Type b) { return a.u == b.u; }
@@ -224,6 +228,7 @@ Str type_struct_decl_name(Type type);
 Str type_struct_field_name(Type type, uint32_t i);
 Type type_struct_field_type(Type type, uint32_t i);
 uint32_t type_struct_field_offset(Type type, uint32_t i);
+uint32_t type_struct_field_index_by_name(Type type, Str name);  // == num_fields if not found
 bool type_struct_find_field_by_name(Type type, Str name, Type* out_type, uint32_t* out_offset);
 
 

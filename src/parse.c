@@ -717,8 +717,6 @@ again:
   parser.prev_kind = parser.cur_kind;
   if (parser.num_buffered_tokens > 0) {
     parser.cur_kind = parser.token_buffer[--parser.num_buffered_tokens];
-    // TODO: will need to revisit if we add peek().
-    ASSERT(parser.cur_kind == TOK_INDENT || parser.cur_kind == TOK_DEDENT);
 #if BUILD_DEBUG
     if (parser.verbose > 1) {
       base_writef_stderr("token %s (buffered)\n", token_enum_name(parser.cur_kind));
@@ -768,8 +766,23 @@ static bool match(TokenKind tok_kind) {
   return true;
 }
 
-static bool check(TokenKind kind) {
-  return parser.cur_kind == kind;
+static bool check(TokenKind tok_kind) {
+  return parser.cur_kind == tok_kind;
+}
+
+static bool peek(TokenKind tok_kind) {
+  TokenKind old_cur = parser.cur_kind;
+  TokenKind old_prev = parser.prev_kind;
+  advance();
+
+  bool result = parser.cur_kind == tok_kind;
+
+  // semi-retreat, but keep categorization by buffering it.
+  parser.token_buffer[parser.num_buffered_tokens++] = parser.cur_kind;
+  parser.cur_kind = old_cur;
+  parser.prev_kind = old_prev;
+
+  return result;
 }
 
 static void consume(TokenKind tok_kind, const char* message) {
@@ -1644,9 +1657,73 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
 }
 
 static Operand parse_compound_literal(bool can_assign, Type* expected) {
-  ASSERT(false && "not implemented");
-  return operand_null;
+  Type lit_type;
+  Str type_name = str_from_previous();
+
+  Sym* sym;
+  SymScopeDecl scope_decl;
+  ScopeResult scope_result = scope_lookup(type_name, &sym, &scope_decl);
+  if (scope_result == SCOPE_RESULT_UNDEFINED) {
+    errorf("Undefined type %s.", cstr_copy(parser.arena, type_name));
+  } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_TYPE) {
+    lit_type = sym->type;
+    if (type_kind(lit_type) != TYPE_STRUCT) {
+      errorf("Cannot construct compound literal of type %s.", type_as_str(lit_type));
+    }
+  } else {
+    error("TODO: unhandled case in compound literal.");
+  }
+
+  consume(TOK_LPAREN, "Expecting '(' to start compound literal.");
+  Str field_names[MAX_STRUCT_FIELDS];
+  Operand field_values[MAX_STRUCT_FIELDS];
+  uint32_t field_offsets[MAX_STRUCT_FIELDS];
+  int num_fields = 0;
+  if (!check(TOK_RPAREN)) {
+    for (;;) {
+      if (check(TOK_IDENT_VAR) && peek(TOK_EQ)) {
+        Str field_name = parse_name("Expected field name.");
+        field_names[num_fields] = field_name;
+        consume(TOK_EQ, "Expecting '=' following initializer name.");
+      } else {
+        field_names[num_fields] = (Str){0};
+      }
+
+      field_offsets[num_fields] = cur_offset();
+      field_values[num_fields] = parse_precedence(PREC_OR, NULL);
+      ++num_fields;
+      if (!match(TOK_COMMA)) {
+        break;
+      }
+    }
+  }
+  consume(TOK_RPAREN, "Expect ')' after compound literal.");
+
+  size_t lit_size = type_size(lit_type);
+  ir_ref base_addr = ir_ALLOCA(ir_CONST_U64(lit_size));
+  ir_ref memset_addr = ir_CONST_ADDR(memset);
+  ir_CALL_3(IR_VOID, memset_addr, base_addr, ir_CONST_U8(0), ir_CONST_U64(lit_size));
+
+  uint32_t index = 0;
+  for (int i = 0; i < num_fields; ++i, ++index) {
+    if (!str_is_none(field_names[i])) {
+      index = type_struct_field_index_by_name(lit_type, field_names[i]);
+    }
+    if (index >= type_struct_num_fields(lit_type)) {
+      error_offset(field_offsets[i], "Initializer does not correspond to field.");
+    }
+    Type field_type = type_struct_field_type(lit_type, index);
+    if (!convert_operand(&field_values[i], field_type)) {
+      errorf("Cannot convert initializer values of type %s to type %s.",
+             type_as_str(field_values[i].type), type_as_str(field_type));
+    }
+    uint32_t field_offset = type_struct_field_offset(lit_type, index);
+    ir_STORE(ir_ADD_OFFSET(base_addr, field_offset), operand_to_irref_imm(&field_values[i]));
+  }
+
+  return operand_rvalue_addr(lit_type, base_addr);
 }
+
 static Operand parse_dict_literal(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
   return operand_null;
@@ -2619,7 +2696,7 @@ static void struct_statement() {
   }
   consume(TOK_DEDENT, "Expecting dedent after struct definition.");
 
-  Type strukt = type_new_struct(name, num_fields, field_names, field_types);
+  Type strukt = type_new_struct(name, num_fields, field_names, field_types, /*default_blob=*/NULL);
   sym_new(SYM_TYPE, name, strukt);
 }
 

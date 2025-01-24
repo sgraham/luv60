@@ -12,6 +12,7 @@ int main(int argc, char** argv) {
   if (argc >= 2 && argv[1][0] == '-' && argv[1][1] == 'v') {
     verbose = true;
   }
+  base_timer_init();
 
   int tests_passed = 0;
   int tests_failed = 0;
@@ -24,7 +25,12 @@ int main(int argc, char** argv) {
         printf("\r[RUN %s]\x1B[K", t->name);
       }
     }
+    uint64_t start_time = base_timer_now();
     t->testp();
+    uint64_t end_time = base_timer_now();
+    if (verbose) {
+      printf("  %.7fs\n", (end_time - start_time) / 1000000.0); \
+    }
     if (cur_test_->failed) {
       ++tests_failed;
     } else {

@@ -94,8 +94,8 @@ TEST(Type, StructBasic) {
   Str names[3] = {str_intern("a"), str_intern("b"), str_intern("c")};
   Type types[3] = {type_i32, type_bool, type_i32};
 
-  Type strukt = type_new_struct(name, 3, names, types);
-  Type strukt2 = type_new_struct(name, 3, names, types);
+  Type strukt = type_new_struct(name, 3, names, types, NULL);
+  Type strukt2 = type_new_struct(name, 3, names, types, NULL);
   EXPECT_TRUE(!type_eq(strukt, strukt2));
 
   EXPECT_EQ(type_struct_num_fields(strukt), 3);

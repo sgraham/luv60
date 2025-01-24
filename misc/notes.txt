@@ -180,4 +180,26 @@ mac:
 
 
 
+
+---
+
+struct default and compound initializers
+
+- when making each struct, either memset 0, or memcpy blob
+
+struct SubThing:
+    int a
+    int b
+
+struct Stuff:
+    SubThing thing = SubThing(1, 2)
+    bool b = false
+
+==> Type needs a pointer to a blob filled out (slightly convoluted to build
+because we don't have the offsets until after the type is built?)
+
+==> need to handle compound literals in the value of struct initializers, but
+is_const only
+
+
 # vim: set tw=80:

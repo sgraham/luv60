@@ -1,0 +1,44 @@
+# OUT: 0
+# OUT: false
+# OUT: 1
+# OUT: false
+# OUT: 2
+# OUT: true
+# OUT: 3
+# OUT: false
+# OUT: 6
+# OUT: true
+# OUT: 0
+# OUT: true
+# OUT: 44
+# OUT: true
+struct Stuff:
+    int a
+    bool b
+
+def int main():
+    s1 = Stuff()
+    s2 = Stuff(1)
+    s3 = Stuff(2, true)
+    s4 = Stuff(a=3)
+    s5 = Stuff(a=6, b=true)
+    s6 = Stuff(b=true)
+    s7 = Stuff(a=44, true)
+
+    print s1.a
+    print s1.b
+    print s2.a
+    print s2.b
+    print s3.a
+    print s3.b
+    print s4.a
+    print s4.b
+    print s5.a
+    print s5.b
+    print s6.a
+    print s6.b
+    print s7.a
+    print s7.b
+
+    return 0
+

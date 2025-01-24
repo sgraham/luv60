@@ -36,6 +36,7 @@ typedef union TypeData {
     Type return_type;
     uint32_t num_params;
     uint32_t flags;  // currently unused
+    uint32_t unused0; // Should make this param0 type
   } FUNC;
 
   // TODO: slice, tuple, enum, union
@@ -46,6 +47,9 @@ typedef union TypeData {
 // useful, and others have a bunch of unused fields. But easier to have
 // TypeDataExtra not be some weird 12 byte allocation of 16-sized chunks for
 // structs.
+//
+// Ah, nuts, now I need a pointer to the initializer blob in structs, so it
+// doesn't fit again. Maybe 12 would have been just as good.
 
 #define WORDS_IN_EXTRA 4
 typedef union TypeDataExtra {
@@ -54,6 +58,9 @@ typedef union TypeDataExtra {
     Type field_type;
     uint32_t field_offset;
   } STRUCT_EXTRA;
+  struct {
+    uintptr_t addr;
+  } STRUCT_INITIALIZER;
   struct {
     Type param[WORDS_IN_EXTRA];
   } FUNC_EXTRA;
@@ -210,7 +217,11 @@ Type type_function(Type* params, size_t num_params, Type return_type) {
   }
 }
 
-Type type_new_struct(Str name, uint32_t num_fields, Str* field_names, Type* field_types) {
+Type type_new_struct(Str name,
+                     uint32_t num_fields,
+                     Str* field_names,
+                     Type* field_types,
+                     void* default_blob) {
   uint32_t unused;
   Type strukt = type_alloc(TYPE_STRUCT, /*extra=*/num_fields, &unused);
 
@@ -338,6 +349,9 @@ const char* type_as_str(Type type) {
     case TYPE_ARRAY: {
       return cstr_copy(arena_, str_internf("[%d]%s", type_array_count(type),
                                            type_as_str(type_array_subtype(type))));
+    }
+    case TYPE_STRUCT: {
+      return "TODO: STRUCT";
     }
     default:
       ASSERT(false && "todo");
@@ -525,6 +539,19 @@ uint32_t type_struct_field_offset(Type type, uint32_t i) {
   return tde[i].STRUCT_EXTRA.field_offset;
 }
 
+uint32_t type_struct_field_index_by_name(Type type, Str name) {
+  ASSERT(type_kind(type) == TYPE_STRUCT);
+  TypeData* td = type_td(type);
+  TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
+  uint32_t num_fields = type_struct_num_fields(type);
+  for (uint32_t i = 0; i < num_fields; ++i) {
+    if (str_eq(tde[i].STRUCT_EXTRA.field_name, name)) {
+      return i;
+    }
+  }
+  return num_fields;
+}
+
 bool type_struct_find_field_by_name(Type type, Str name, Type* out_type, uint32_t* out_offset) {
   ASSERT(type_kind(type) == TYPE_STRUCT);
   TypeData* td = type_td(type);
@@ -542,6 +569,6 @@ bool type_struct_find_field_by_name(Type type, Str name, Type* out_type, uint32_
 
 void type_destroy_for_tests(void) {
   dict_destroy(&cached_func_types);
-  memset(typedata, 0, sizeof(typedata));
+  memset(typedata, 0, sizeof(TypeData) * num_typedata);
   num_typedata = 0;
 }
