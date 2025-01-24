@@ -4,36 +4,41 @@
 
 _Static_assert(NUM_TYPE_KINDS < (1<<8), "Too many TypeKind");
 
-typedef struct TypeData {
-  // TODO: maybe drop kind and padding, make align 6 bits, then array size max 1<<26
-  uint32_t kaps;  // 8 kind 8 align 8 padding 8 size(for basic types)
-  union {
-    struct {
-      Type subtype;
-      uint32_t unused0;
-      uint32_t unused1;
-    } PTR;
-    struct {
-      Type subtype;
-      uint32_t count;
-      uint32_t total_size;
-    } ARRAY;
-    struct {
-      Type key;
-      Type value;
-      uint32_t unused0;
-    } DICT;
-    struct {
-      uint32_t num_fields;
-      uint32_t total_size;
-      uint32_t unused0;
-    } STRUCT;
-    struct {
-      uint32_t num_params;
-      Type return_type;
-      uint32_t unused0;  // TODO: maybe flags for memfn, etc
-    } FUNC;
-  };
+typedef union TypeData {
+  struct {
+    uint32_t size;
+    uint32_t align;
+  } BASIC;
+  struct {
+    uint32_t size;
+    uint32_t align;
+    Type subtype;
+  } PTR;
+  struct {
+    uint32_t size;
+    uint32_t align;
+    Type subtype;
+    uint32_t count;
+  } ARRAY;
+  struct {
+    uint32_t size;
+    uint32_t align;
+    Type key;
+    Type value;
+  } DICT;
+  struct {
+    Str declname;
+    uint32_t size;
+    // 8 align, 24 num_fields (could compress align to 3 bits if necessary?)
+    uint32_t align_and_num_fields;
+  } STRUCT;
+  struct {
+    Type return_type;
+    uint32_t num_params;
+    uint32_t flags;  // currently unused
+  } FUNC;
+
+  // TODO: slice, tuple, enum, union
 } TypeData;
 
 // Structs were going to fit nicely in 12 bytes, but mucked that up with Str
@@ -85,47 +90,56 @@ const char* natural_builtin_type_names[NUM_TYPE_KINDS] = {
     [TYPE_CHAR] = "char",      //
 };
 
-static void set_typedata_raw(uint32_t index, uint32_t data) {
-  ASSERT(typedata[index].kaps == 0);
+static void set_builtin_typedata(uint32_t index, uint32_t size, uint32_t align) {
   ASSERT(index < COUNTOF(typedata));
-  typedata[index].kaps = data;
+  ASSERT(typedata[index].BASIC.size == 0);
+  ASSERT(typedata[index].BASIC.align == 0);
+  typedata[index].BASIC.size = size;
+  typedata[index].BASIC.align = align;
 }
 
 static inline TypeData* type_td(Type t) {
   return &typedata[t.u >> 8];
 }
 
-static uint32_t pack_type(TypeKind kind, uint8_t size, uint8_t align, uint8_t padding) {
-  ASSERT(kind != 0);
-  ASSERT(kind < (1 << 8));
-  ASSERT(align > 0);
-  uint32_t ret = (size << 24) | (padding << 16) | (align << 8) | kind;
-  return ret;
-}
-
 size_t type_size(Type type) {
-  TypeKind kind = type_kind(type);
-  if (kind == TYPE_ARRAY) {
-    ASSERT(false && "todo");
-    abort();
-  } else if (kind == TYPE_STRUCT) {
-    return type_td(type)->STRUCT.total_size;
-  } else {
-    ASSERT((type_td(type)->kaps & 0xff) == kind);
-    return type_td(type)->kaps >> 24;
+  switch (type_kind(type)) {
+    case TYPE_PTR:
+      return 8;
+    case TYPE_ARRAY:
+      ASSERT(false && "todo");
+      abort();
+    case TYPE_DICT:
+      ASSERT(false && "todo");
+      abort();
+    case TYPE_STRUCT:
+      return type_td(type)->STRUCT.size;
+    case TYPE_FUNC:
+      ASSERT(false && "todo");
+      abort();
+    default:
+      return type_td(type)->BASIC.size;
   }
 }
 
 size_t type_align(Type type) {
-  TypeKind kind = type_kind(type);
-  ASSERT((type_td(type)->kaps & 0xff) == kind);
-  return (type_td(type)->kaps >> 8) & 0xff;
-}
-
-size_t type_padding(Type type) {
-  TypeKind kind = type_kind(type);
-  ASSERT((type_td(type)->kaps & 0xff) == kind);
-  return (type_td(type)->kaps >> 16) & 0xff;
+  switch (type_kind(type)) {
+    case TYPE_PTR:
+      return 8;
+    case TYPE_ARRAY:
+      ASSERT(false && "todo");
+      abort();
+    case TYPE_DICT:
+      ASSERT(false && "todo");
+      abort();
+    case TYPE_STRUCT:
+      return (type_td(type)->STRUCT.align_and_num_fields) >> 24;
+    case TYPE_FUNC:
+      ASSERT(false && "todo");
+      abort();
+    default:
+      return type_td(type)->BASIC.align;
+  }
 }
 
 static Type type_alloc(TypeKind kind, int extra, uint32_t* out_rewind_location) {
@@ -170,7 +184,6 @@ Type type_function(Type* params, size_t num_params, Type return_type) {
   // takes a precomputed hash so we could calculate it in place first and then
   // only copy in to typedata if we don't match.
   TypeData* td = type_td(func);
-  td->kaps = pack_type(TYPE_FUNC, 8, 8, 0);
   td->FUNC.num_params = num_params;
   td->FUNC.return_type = return_type;
   /* This would be the typed version, but it's just a memcpy into TypeDataExtra.
@@ -206,7 +219,6 @@ Type type_new_struct(Str name, uint32_t num_fields, Str* field_names, Type* fiel
   uint32_t size = 0;
   uint32_t align = 0;
   uint32_t field_sizes = 0;
-  td->STRUCT.num_fields = num_fields;
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
   for (uint32_t i = 0; i < num_fields; ++i) {
     Type t = field_types[i];
@@ -224,12 +236,16 @@ Type type_new_struct(Str name, uint32_t num_fields, Str* field_names, Type* fiel
   }
 
   size = ALIGN_UP(size, align);
-  uint32_t padding = size - field_sizes;
+  (void)field_sizes;
+  //uint32_t padding = size - field_sizes;
 
   ASSERT(align <= 0xff);
-  ASSERT(padding <= 0xff);
-  td->STRUCT.total_size = size;
-  td->kaps = pack_type(TYPE_STRUCT, 0xff, align, padding);
+  //ASSERT(padding <= 0xff);
+  ASSERT(num_fields <= 0xffffff);
+
+  td->STRUCT.declname = name;
+  td->STRUCT.size = size;
+  td->STRUCT.align_and_num_fields = (align & 0xff) << 24 | (num_fields & 0xffffff);
 
   return strukt;
 }
@@ -256,7 +272,8 @@ Type type_ptr(Type subtype) {
   uint32_t rewind_location;
   Type ptr = type_alloc(TYPE_PTR, 0, &rewind_location);
   TypeData* td = type_td(ptr);
-  td->kaps = pack_type(TYPE_PTR, 8, 8, 0);
+  td->PTR.size = 8;
+  td->PTR.align = 8;
   td->PTR.subtype = subtype;
 
   // The dict is only a set of intern'd Type, but we know they're all TYPE_PTR.
@@ -310,20 +327,20 @@ void type_init(Arena* arena) {
   cached_func_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
   cached_ptr_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
 
-  set_typedata_raw(TYPE_VOID, pack_type(TYPE_VOID, 0, 1, 0));
-  set_typedata_raw(TYPE_BOOL, pack_type(TYPE_BOOL, 1, 1, 0));
-  set_typedata_raw(TYPE_U8, pack_type(TYPE_U8, 1, 1, 0));
-  set_typedata_raw(TYPE_I8, pack_type(TYPE_I8, 1, 1, 0));
-  set_typedata_raw(TYPE_U16, pack_type(TYPE_U16, 2, 2, 0));
-  set_typedata_raw(TYPE_I16, pack_type(TYPE_I16, 2, 2, 0));
-  set_typedata_raw(TYPE_U32, pack_type(TYPE_U32, 4, 4, 0));
-  set_typedata_raw(TYPE_I32, pack_type(TYPE_I32, 4, 4, 0));
-  set_typedata_raw(TYPE_U64, pack_type(TYPE_U64, 8, 8, 0));
-  set_typedata_raw(TYPE_I64, pack_type(TYPE_I64, 8, 8, 0));
-  set_typedata_raw(TYPE_FLOAT, pack_type(TYPE_FLOAT, 4, 4, 0));
-  set_typedata_raw(TYPE_DOUBLE, pack_type(TYPE_DOUBLE, 8, 8, 0));
-  set_typedata_raw(TYPE_STR, pack_type(TYPE_STR, 16, 8, 0));
-  set_typedata_raw(TYPE_RANGE, pack_type(TYPE_RANGE, 24, 8, 0));
+  set_builtin_typedata(TYPE_VOID, 0, 1);
+  set_builtin_typedata(TYPE_BOOL, 1, 1);
+  set_builtin_typedata(TYPE_U8, 1, 1);
+  set_builtin_typedata(TYPE_I8, 1, 1);
+  set_builtin_typedata(TYPE_U16, 2, 2);
+  set_builtin_typedata(TYPE_I16, 2, 2);
+  set_builtin_typedata(TYPE_U32, 4, 4);
+  set_builtin_typedata(TYPE_I32, 4, 4);
+  set_builtin_typedata(TYPE_U64, 8, 8);
+  set_builtin_typedata(TYPE_I64, 8, 8);
+  set_builtin_typedata(TYPE_FLOAT, 4, 4);
+  set_builtin_typedata(TYPE_DOUBLE, 8, 8);
+  set_builtin_typedata(TYPE_STR, 16, 8);
+  set_builtin_typedata(TYPE_RANGE, 24, 8);
   num_typedata = NUM_TYPE_KINDS;
 }
 
@@ -439,7 +456,13 @@ Type type_ptr_subtype(Type type) {
 uint32_t type_struct_num_fields(Type type) {
   ASSERT(type_kind(type) == TYPE_STRUCT);
   TypeData* td = type_td(type);
-  return td->STRUCT.num_fields;
+  return td->STRUCT.align_and_num_fields & 0xffffff;
+}
+
+Str type_struct_decl_name(Type type) {
+  ASSERT(type_kind(type) == TYPE_STRUCT);
+  TypeData* td = type_td(type);
+  return td->STRUCT.declname;
 }
 
 Str type_struct_field_name(Type type, uint32_t i) {

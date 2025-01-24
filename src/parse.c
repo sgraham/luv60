@@ -1387,8 +1387,25 @@ static Operand parse_number(bool can_assign, Type* expected) {
 }
 
 static Operand parse_offsetof(bool can_assign, Type* expected) {
-  ASSERT(false && "not implemented");
-  return operand_null;
+  consume(TOK_LPAREN, "Expect '(' after offsetof.");
+  Type type = parse_type();
+  if (type_kind(type) != TYPE_STRUCT) {
+    errorf("Cannot use offsetof on non-struct type %s.", type_as_str(type));
+  }
+  consume(TOK_COMMA, "Expect ','.");
+  // An expression here is too generation and a field isn't general enough. It
+  // should really be "stuff that comes after a ." but for now we only support a
+  // field name since that's the most common use.
+  Str field = parse_name("Expect field name in offsetof.");
+  uint32_t name_offset = prev_offset();
+  consume(TOK_RPAREN, "Expect ')' after offsetof.");
+  for (uint32_t i = 0; i < type_struct_num_fields(type); ++i) {
+    if (str_eq(type_struct_field_name(type, i), field)) {
+      return operand_const(type_i32, ir_CONST_I32(type_struct_field_offset(type, i)));
+    }
+  }
+  errorf_offset(name_offset, "'%s' is not a member of type %s.", cstr_copy(parser.arena, field),
+                cstr_copy(parser.arena, type_struct_decl_name(type)));
 }
 
 static Operand parse_or(Operand left, bool can_assign, Type* expected) {

@@ -114,7 +114,6 @@ TEST(Type, StructBasic) {
 
   EXPECT_EQ(type_size(strukt), 12);
   EXPECT_EQ(type_align(strukt), 4);
-  EXPECT_EQ(type_padding(strukt), 3);
 
   type_destroy_for_tests();
   arena_destroy(arena);

@@ -1,0 +1,22 @@
+# OUT: 0
+# OUT: 8
+# OUT: 12
+# OUT: 16
+# OUT: 17
+# OUT: 20
+struct StructA:
+    i64 a
+    i32 b
+    i32 c
+    bool d
+    bool e
+    i32 f
+
+def int main():
+    print offsetof(StructA, a)
+    print offsetof(StructA, b)
+    print offsetof(StructA, c)
+    print offsetof(StructA, d)
+    print offsetof(StructA, e)
+    print offsetof(StructA, f)
+    return 0

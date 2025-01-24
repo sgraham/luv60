@@ -215,6 +215,7 @@ Type type_func_param(Type type, uint32_t i);
 Type type_ptr_subtype(Type type);
 
 uint32_t type_struct_num_fields(Type type);
+Str type_struct_decl_name(Type type);
 Str type_struct_field_name(Type type, uint32_t i);
 Type type_struct_field_type(Type type, uint32_t i);
 uint32_t type_struct_field_offset(Type type, uint32_t i);
