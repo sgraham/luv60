@@ -335,6 +335,10 @@ const char* type_as_str(Type type) {
       Str ptr = str_internf("*%s", type_as_str(type_ptr_subtype(type)));
       return cstr_copy(arena_, ptr);
     }
+    case TYPE_ARRAY: {
+      return cstr_copy(arena_, str_internf("[%d]%s", type_array_count(type),
+                                           type_as_str(type_array_subtype(type))));
+    }
     default:
       ASSERT(false && "todo");
       return "TODO";

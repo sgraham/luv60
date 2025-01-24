@@ -133,6 +133,7 @@ typedef struct Parser {
 static Parser parser;
 
 typedef struct Operand {
+  uint64_t val;
   Type type;
   ir_ref ref;
   bool ref_is_addr;
@@ -203,6 +204,16 @@ static void opv_append(OpVec* vec, Operand op) {
 
 static Operand operand_null;
 
+typedef enum LastStatementType {
+  LST_NON_RETURN,
+  LST_RETURN_VOID,
+  LST_RETURN_VALUE,
+} LastStatementType;
+
+static LastStatementType parse_statement(bool toplevel);
+static Operand parse_expression(Type* expected);
+static LastStatementType parse_block(void);
+
 static ir_type type_to_ir_type(Type type) {
   if (type_is_aggregate(type)) {
     return IR_U64;
@@ -271,8 +282,8 @@ static Operand operand_rvalue_imm(Type type, ir_ref ref) {
       .type = type, .ref = ref, .ref_is_addr = false, .is_lvalue = false, .is_const = false};
 }
 
-static Operand operand_const(Type type, ir_ref ref) {
-  return (Operand){.type = type, .ref = ref, .ref_is_addr = false, .is_const = true};
+static Operand operand_const(Type type, uint64_t val, ir_ref ref) {
+  return (Operand){.val = val, .type = type, .ref = ref, .ref_is_addr = false, .is_const = true};
 }
 
 #if 0
@@ -719,8 +730,39 @@ static void consume(TokenKind tok_kind, const char* message) {
   error_offset(cur_offset(), message);
 }
 
-static uint64_t const_expression(void) {
-  return 0;
+// We need some constant propagation. Needed for fixed array sizes, making
+// `const` actually consts, possibly for nicer overflow checking, and something
+// is needed for struct initializers. For struct inits, I was planning on just
+// jitting a thunk that fills out a MyStruct_defaults, then zero-init for those
+// types turns into memcpy that, rather than memset 0. Fixed-size arrays really
+// do need to know the size now though because it goes into the type system, and
+// allocas, etc. So, we could:
+// 1. Just do some constant propagation similar to what IR will do as we fold by
+//    stashing a u64 into Operand, and propagating is_const.
+// 2. Or, JIT a little function here (which could actually be calling anything
+//    that's already compiled (!)) and return the result, sort of blurring the
+//    line between compile and runtime.
+//
+// #2 seems cool, but kind of heavy for simple things. e.g.
+//
+//     [5]int x = [1,2,3,4,5]
+//
+// having to jit and call a function that returns 5 seems a bit heavy. It's
+// probably reasoanble for more complex expressions though because then it's
+// sort of just the difference between running a tree-interpret on the is_const
+// Operands vs. JITing that evaluation.
+//
+// It also moves sort of closer to Python since then anything that's already
+// been defined at this point could be in scope for evaluation, which makes
+// semantics a bit fuzzy on the edges. Since #1 is pretty clear and a strict
+// subset of #2's ability, we'll do that for now, and expand flexibility later
+// if necessary.
+static Operand const_expression(void) {
+  Operand expr = parse_expression(&type_u64);
+  if (!expr.is_const) {
+    error("Expected constant expression.");
+  }
+  return expr;
 }
 
 static Type basic_tok_to_type[NUM_TOKEN_KINDS] = {
@@ -786,9 +828,11 @@ static Type parse_type(void) {
     return type_ptr(parse_type());
   }
   if (match(TOK_LSQUARE)) {
-    int count = 0;
+    size_t count = 0;
     if (!check(TOK_RSQUARE)) {
-      count = const_expression();
+      Operand count_expr = const_expression();
+      ASSERT(count_expr.is_const);
+      count = count_expr.val;
     }
     consume(TOK_RSQUARE, "Expect ']' to close array type.");
     Type elem = parse_type();
@@ -964,16 +1008,6 @@ static bool convert_operand(Operand* operand, Type type) {
   return false;
 }
 
-typedef enum LastStatementType {
-  LST_NON_RETURN,
-  LST_RETURN_VOID,
-  LST_RETURN_VALUE,
-} LastStatementType;
-
-static LastStatementType parse_statement(bool toplevel);
-static Operand parse_expression(Type* expected);
-static LastStatementType parse_block(void);
-
 // ~strtoull with slight differences:
 // - handles 0b and 0o but 0 prefix doesn't mean octal
 // - allows arbitrary _ as separators
@@ -1119,6 +1153,7 @@ static Operand parse_alignof(bool can_assign, Type* expected) {
 }
 
 static Operand parse_and(Operand left, bool can_assign, Type* expected) {
+  // TODO: could have const eval here
   if (!type_is_condition(left.type)) {
     errorf("Left-hand side of or cannot be type %s.", type_as_str(left.type));
   }
@@ -1135,7 +1170,7 @@ static Operand parse_and(Operand left, bool can_assign, Type* expected) {
   ir_ref rcond = load_operand_if_necessary(&right);
   ir_MERGE_2(if_false, if_true);
   ir_ref result = ir_PHI_2(IR_BOOL, ir_CONST_BOOL(false), rcond);
-  return operand_const(type_bool, result);
+  return operand_rvalue_imm(type_bool, result);
 }
 
 static void promote_small_integers(Operand* operand) {
@@ -1310,7 +1345,8 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
 
 static Operand parse_bool_literal(bool can_assign, Type* expected) {
   ASSERT(parser.prev_kind == TOK_FALSE || parser.prev_kind == TOK_TRUE);
-  return operand_const(type_bool, ir_CONST_BOOL(parser.prev_kind == TOK_FALSE ? 0 : 1));
+  uint64_t val = parser.prev_kind == TOK_FALSE ? 0 : 1;
+  return operand_const(type_bool, val, ir_CONST_BOOL(val));
 }
 
 static Operand parse_call(Operand left, bool can_assign, Type* expected) {
@@ -1547,7 +1583,7 @@ static Operand parse_number(bool can_assign, Type* expected) {
 
   ir_val irval;
   irval.u64 = val;
-  return operand_const(type, ir_const(_ir_CTX, irval, type_to_ir_type(type)));
+  return operand_const(type, val, ir_const(_ir_CTX, irval, type_to_ir_type(type)));
 }
 
 static Operand parse_offsetof(bool can_assign, Type* expected) {
@@ -1565,7 +1601,8 @@ static Operand parse_offsetof(bool can_assign, Type* expected) {
   consume(TOK_RPAREN, "Expect ')' after offsetof.");
   for (uint32_t i = 0; i < type_struct_num_fields(type); ++i) {
     if (str_eq(type_struct_field_name(type, i), field)) {
-      return operand_const(type_i32, ir_CONST_I32(type_struct_field_offset(type, i)));
+      uint32_t offset = type_struct_field_offset(type, i);
+      return operand_const(type_i32, offset, ir_CONST_I32(offset));
     }
   }
   errorf_offset(name_offset, "'%s' is not a field of type %s.", cstr_copy(parser.arena, field),
@@ -1573,6 +1610,7 @@ static Operand parse_offsetof(bool can_assign, Type* expected) {
 }
 
 static Operand parse_or(Operand left, bool can_assign, Type* expected) {
+  // TODO: could have const eval here
   if (!type_is_condition(left.type)) {
     errorf("Left-hand side of or cannot be type %s.", type_as_str(left.type));
   }
@@ -1589,7 +1627,7 @@ static Operand parse_or(Operand left, bool can_assign, Type* expected) {
   ir_ref rcond = load_operand_if_necessary(&right);
   ir_MERGE_2(if_true, if_false);
   ir_ref result = ir_PHI_2(IR_BOOL, ir_CONST_BOOL(true), rcond);
-  return operand_const(type_bool, result);
+  return operand_rvalue_imm(type_bool, result);
 }
 
 static Operand parse_range(bool can_assign, Type* expected) {
@@ -2225,11 +2263,12 @@ static void parse_variable_statement(Type type) {
   bool have_init;
   ASSERT(!type_is_none(type));
   have_init = match(TOK_EQ);
+  uint32_t eq_offset = prev_offset();
   if (have_init) {
     Operand op = parse_expression(&type);
     if (!convert_operand(&op, type)) {
-      errorf("Initializer cannot be converted from type %s to declared type %s.",
-             type_as_str(op.type), type_as_str(type));
+      errorf_offset(eq_offset, "Initializer cannot be converted from type %s to declared type %s.",
+                    type_as_str(op.type), type_as_str(type));
     }
     make_local_and_alloc(SYM_VAR, name, op.type, &op);
   } else {

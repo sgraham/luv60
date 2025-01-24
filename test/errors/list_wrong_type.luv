@@ -1,0 +1,6 @@
+# RET: 1
+# ERR: {self}:5:15:    [3]bool x = [1, 2, 3]
+# ERR: {ssss}                    ^ error: Initializer cannot be converted from type [3]i32 to declared type [3]bool.
+def int main():
+    [3]bool x = [1, 2, 3]
+    return 0

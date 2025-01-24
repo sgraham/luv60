@@ -1,0 +1,4 @@
+# RET: 0
+def int main():
+    [3]int x = [1, 2, 3]
+    return 0
