@@ -1,0 +1,6 @@
+# RET: 1
+# ERR: {self}:5:33:    x = 0x7fff_ffff_ffff_ffff + 1
+# ERR: {ssss}                                      ^ error: 1 added to 9223372036854775807 overflows.
+def int main():
+    x = 0x7fff_ffff_ffff_ffff + 1
+    return 0
