@@ -1,0 +1,17 @@
+# OUT: 0
+# OUT: false
+# OUT: 33
+# OUT: true
+struct Stuff:
+    int x
+    bool b
+
+def int main():
+    Stuff stuff
+    print stuff.x
+    print stuff.b
+    stuff.x = 33
+    stuff.b = true
+    print stuff.x
+    print stuff.b
+    return 0

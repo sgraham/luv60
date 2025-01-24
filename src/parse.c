@@ -493,6 +493,15 @@ static void print_i32(Operand* op) {
   ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
 }
 
+static void print_bool_impl(uint8_t val) {
+  printf("%s\n", val ? "true" : "false");
+}
+
+static void print_bool(Operand* op) {
+  ir_ref addr = ir_CONST_ADDR(print_bool_impl);
+  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
+}
+
 static void print_str_impl(RuntimeStr str) {
   printf("%.*s\n", (int)str.length, str.data);
 }
@@ -2504,6 +2513,8 @@ static void print_statement(void) {
     print_str(&val);
   } else if (type_eq(val.type, type_range)) {
     print_range(&val);
+  } else if (type_eq(val.type, type_bool)) {
+    print_bool(&val);
   } else if (convert_operand(&val, type_i32)) {
     print_i32(&val);
   } else {
