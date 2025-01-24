@@ -161,6 +161,10 @@ static inline FORCE_INLINE bool op_is_addr(Operand op) {
   return op.kind & OPK_BIT_ADDR;
 }
 
+static inline FORCE_INLINE bool op_is_null(Operand op) {
+  return op.kind == 0;
+}
+
 typedef struct OpVec {
   union {
     Operand* data;
@@ -533,6 +537,18 @@ static void print_range(Operand* op) {
   ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
 }
 
+static void initialize_aggregate(ir_ref base_addr, Type type) {
+  size_t size = type_size(type);
+  if (type_struct_has_initializer(type)) {
+    ir_ref memcpy_addr = ir_CONST_ADDR(memcpy);
+    ir_ref default_blob = ir_CONST_ADDR(type_struct_initializer_blob(type));
+    ir_CALL_3(IR_VOID, memcpy_addr, base_addr, default_blob, ir_CONST_U64(size));
+  } else {
+    ir_ref memset_addr = ir_CONST_ADDR(memset);
+    ir_CALL_3(IR_VOID, memset_addr, base_addr, ir_CONST_U8(0), ir_CONST_U64(size));
+  }
+}
+
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* initial_value) {
   Sym* new = sym_new(kind, name, type);
   // TODO: figure out str/range
@@ -550,8 +566,7 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
     } else {
       uint32_t size = type_size(type);
       new->ref = ir_ALLOCA(ir_CONST_U64(size));
-      ir_ref memset_addr = ir_CONST_ADDR(memset);
-      ir_CALL_3(IR_VOID, memset_addr, new->ref, ir_CONST_U8(0), ir_CONST_U64(size));
+      initialize_aggregate(new->ref, type);
     }
   } else {
     new->ref = ir_VAR(type_to_ir_type(type),
@@ -1701,8 +1716,7 @@ static Operand parse_compound_literal(bool can_assign, Type* expected) {
 
   size_t lit_size = type_size(lit_type);
   ir_ref base_addr = ir_ALLOCA(ir_CONST_U64(lit_size));
-  ir_ref memset_addr = ir_CONST_ADDR(memset);
-  ir_CALL_3(IR_VOID, memset_addr, base_addr, ir_CONST_U8(0), ir_CONST_U64(lit_size));
+  initialize_aggregate(base_addr, lit_type);
 
   uint32_t index = 0;
   for (int i = 0; i < num_fields; ++i, ++index) {
@@ -2660,6 +2674,8 @@ static void struct_statement() {
 
   Str field_names[MAX_STRUCT_FIELDS];
   Type field_types[MAX_STRUCT_FIELDS];
+  Operand field_initializers[MAX_STRUCT_FIELDS];
+  bool have_initializers = false;
   uint32_t num_fields = 0;
   for (;;) {
     if (check(TOK_DEDENT)) {
@@ -2681,11 +2697,11 @@ static void struct_statement() {
     field_names[num_fields] = field_name;
 
     if (match(TOK_EQ)) {
-      ASSERT(false && "todo");
-      // TODO: either have to do const eval, or defer into a thunk. we kind of
-      // want the value right here to build into the Type though, and shouldn't
-      // call the thunk before every ctor
-      //field_initializer = parse_expression();
+      // TODO: need to support compound_literal is_const evaluation here
+      field_initializers[num_fields] = const_expression();
+      have_initializers = true;
+    } else {
+      field_initializers[num_fields] = operand_null;
     }
 
     ++num_fields;
@@ -2696,7 +2712,28 @@ static void struct_statement() {
   }
   consume(TOK_DEDENT, "Expecting dedent after struct definition.");
 
-  Type strukt = type_new_struct(name, num_fields, field_names, field_types, /*default_blob=*/NULL);
+  Type strukt = type_new_struct(name, num_fields, field_names, field_types, have_initializers);
+  if (have_initializers) {
+    uint8_t* blob = arena_push(parser.arena, type_size(strukt), type_align(strukt));
+    memset(blob, 0, type_size(strukt));
+    for (uint32_t i = 0; i < num_fields; ++i) {
+      if (!op_is_null(field_initializers[i])) {
+        if (!op_is_const(field_initializers[i])) {
+          errorf("Expecting constant initializer for field %s.",
+                 cstr_copy(parser.arena, field_names[i]));
+        }
+        Type field_type = type_struct_field_type(strukt, i);
+        if (!convert_operand(&field_initializers[i], field_type)) {
+          errorf("Cannot convert initializer to type %s.", type_as_str(field_type));
+        }
+        // TODO: not 100% certain this is not copying garbage from the val field
+        // out of the range of the size of type if it gets convert_operand'd.
+        memcpy(blob + type_struct_field_offset(strukt, i), &field_initializers[i].val,
+               type_size(field_type));
+      }
+    }
+    type_struct_set_initializer_blob(strukt, blob);
+  }
   sym_new(SYM_TYPE, name, strukt);
 }
 

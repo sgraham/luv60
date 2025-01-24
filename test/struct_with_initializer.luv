@@ -1,0 +1,30 @@
+# OUT: 123
+# OUT: true
+# OUT: 444
+# OUT: 99
+# OUT: true
+# OUT: 444
+# OUT: 99
+# OUT: false
+# OUT: 444
+struct Stuff:
+    int x = 123
+    bool b = true
+    int y = 444
+
+def int main():
+    Stuff stuff
+    print stuff.x
+    print stuff.b
+    print stuff.y
+
+    stuff2 = Stuff(x=99)
+    print stuff2.x
+    print stuff2.b
+    print stuff2.y
+
+    stuff3 = Stuff(x=99, false)
+    print stuff3.x
+    print stuff3.b
+    print stuff3.y
+    return 0

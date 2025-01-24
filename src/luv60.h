@@ -200,7 +200,8 @@ Type type_new_struct(Str name,
                      uint32_t num_fields,
                      Str* field_names,
                      Type* field_types,
-                     void* default_blob);
+                     bool has_initializer);
+void type_struct_set_initializer_blob(Type type, void* blob);
 
 static inline FORCE_INLINE bool type_is_none(Type a) { return a.u == 0; }
 static inline FORCE_INLINE bool type_eq(Type a, Type b) { return a.u == b.u; }
@@ -225,6 +226,8 @@ uint32_t type_array_count(Type type);
 
 uint32_t type_struct_num_fields(Type type);
 Str type_struct_decl_name(Type type);
+bool type_struct_has_initializer(Type type);
+void* type_struct_initializer_blob(Type type);
 Str type_struct_field_name(Type type, uint32_t i);
 Type type_struct_field_type(Type type, uint32_t i);
 uint32_t type_struct_field_offset(Type type, uint32_t i);

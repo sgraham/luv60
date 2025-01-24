@@ -29,8 +29,8 @@ typedef union TypeData {
   struct {
     Str declname;
     uint32_t size;
-    // 8 align, 24 num_fields (could compress align to 3 bits if necessary?)
-    uint32_t align_and_num_fields;
+    // 1 has_initializer, 7 align, 24 num_fields (could compress align to 3 bits)
+    uint32_t has_init_align_and_num_fields;
   } STRUCT;
   struct {
     Type return_type;
@@ -59,7 +59,7 @@ typedef union TypeDataExtra {
     uint32_t field_offset;
   } STRUCT_EXTRA;
   struct {
-    uintptr_t addr;
+    void* addr;
   } STRUCT_INITIALIZER;
   struct {
     Type param[WORDS_IN_EXTRA];
@@ -140,7 +140,7 @@ size_t type_align(Type type) {
       ASSERT(false && "todo");
       abort();
     case TYPE_STRUCT:
-      return (type_td(type)->STRUCT.align_and_num_fields) >> 24;
+      return ((type_td(type)->STRUCT.has_init_align_and_num_fields) >> 24) & 0x7f;
     case TYPE_FUNC:
       ASSERT(false && "todo");
       abort();
@@ -221,9 +221,9 @@ Type type_new_struct(Str name,
                      uint32_t num_fields,
                      Str* field_names,
                      Type* field_types,
-                     void* default_blob) {
+                     bool has_initializer) {
   uint32_t unused;
-  Type strukt = type_alloc(TYPE_STRUCT, /*extra=*/num_fields, &unused);
+  Type strukt = type_alloc(TYPE_STRUCT, /*extra=*/num_fields + (has_initializer ? 1 : 0), &unused);
 
   TypeData* td = type_td(strukt);
 
@@ -256,9 +256,19 @@ Type type_new_struct(Str name,
 
   td->STRUCT.declname = name;
   td->STRUCT.size = size;
-  td->STRUCT.align_and_num_fields = (align & 0xff) << 24 | (num_fields & 0xffffff);
+  td->STRUCT.has_init_align_and_num_fields =
+      ((has_initializer ? 1 : 0) << 31) | (align & 0x7f) << 24 | (num_fields & 0xffffff);
 
   return strukt;
+}
+
+void type_struct_set_initializer_blob(Type type, void* blob) {
+  ASSERT(type_kind(type) == TYPE_STRUCT);
+  ASSERT(type_struct_has_initializer(type));
+  TypeData* td = type_td(type);
+  TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
+  TypeDataExtra* init_extra = &tde[type_struct_num_fields(type)];
+  init_extra->STRUCT_INITIALIZER.addr = blob;
 }
 
 // For TypeDatas that don't have extra entries.
@@ -506,13 +516,28 @@ uint32_t type_array_count(Type type) {
 uint32_t type_struct_num_fields(Type type) {
   ASSERT(type_kind(type) == TYPE_STRUCT);
   TypeData* td = type_td(type);
-  return td->STRUCT.align_and_num_fields & 0xffffff;
+  return td->STRUCT.has_init_align_and_num_fields & 0xffffff;
 }
 
 Str type_struct_decl_name(Type type) {
   ASSERT(type_kind(type) == TYPE_STRUCT);
   TypeData* td = type_td(type);
   return td->STRUCT.declname;
+}
+
+bool type_struct_has_initializer(Type type) {
+  ASSERT(type_kind(type) == TYPE_STRUCT);
+  TypeData* td = type_td(type);
+  return (td->STRUCT.has_init_align_and_num_fields & 0x80000000) != 0;
+}
+
+void* type_struct_initializer_blob(Type type) {
+  ASSERT(type_kind(type) == TYPE_STRUCT);
+  ASSERT(type_struct_has_initializer(type));
+  TypeData* td = type_td(type);
+  TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
+  TypeDataExtra* init_extra = &tde[type_struct_num_fields(type)];
+  return init_extra->STRUCT_INITIALIZER.addr;
 }
 
 Str type_struct_field_name(Type type, uint32_t i) {
