@@ -476,17 +476,19 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
   Sym* new = sym_new(kind, name, type);
   // TODO: figure out str/range
   if (type_is_aggregate(type) && type_kind(type) != TYPE_STR && type_kind(type) != TYPE_RANGE) {
-    uint32_t size = type_size(type);
-    new->ref = ir_ALLOCA(ir_CONST_U64(size));
     if (initial_value) {
       if (!type_eq(initial_value->type, type)) {
         errorf("Cannot initialize aggregate type %s with type %s.",
                type_as_str(initial_value->type), type_as_str(type));
       }
-      ir_ref memcpy_addr = ir_CONST_ADDR(memcpy);
-      ir_CALL_3(IR_VOID, memcpy_addr, new->ref, load_operand_if_necessary(initial_value),
-                ir_CONST_U64(size));
+      // We're stealing this value, I think it's OK though for aggregates, and
+      // they have to have been just created (?). Alternatively, memcpy to a new
+      // alloca, but I think that probably won't be optimized away.
+      new->ref = initial_value->ref;
+      initial_value->ref = 0;
     } else {
+      uint32_t size = type_size(type);
+      new->ref = ir_ALLOCA(ir_CONST_U64(size));
       ir_ref memset_addr = ir_CONST_ADDR(memset);
       ir_CALL_3(IR_VOID, memset_addr, new->ref, ir_CONST_U8(0), ir_CONST_U64(size));
     }
