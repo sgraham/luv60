@@ -1,4 +1,7 @@
 #!/bin/sh
+
+set -e
+
 if [ $# -eq 0 ]
 then
     echo "usage: m d|r|p|a [target]"
