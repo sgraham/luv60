@@ -662,7 +662,9 @@ static void enter_function(Sym* sym,
 
   enter_scope(/*is_module=*/false, /*is_function=*/true, sym);
 
+#if BUILD_DEBUG
   ir_consistency_check();
+#endif
 
   uint32_t opts = parser.opt_level ? IR_OPT_FOLDING : 0;
   if (parser.opt_level == 2) {
@@ -805,6 +807,19 @@ static void leave_function(void) {
         // It seems like the lookup time is where we should figure out the
         // correct method of actually loading the value at capture time too,
         // otherwise we're re-deriving it here awkwardly.
+
+        // XXX TODO sym->ref here is wrong in middle because the Sym is the one
+        // that was found by scope_lookup(). If it had to go two+ levels up to
+        // find it, then we haven't popped out to that ir_CTX yet here. Need to
+        // call load_value() or some derivative of it so that in the middle
+        // function, we do find_or_create_upval.
+        //
+        // Maybe the propagate_upval (and load_value) should be stashing
+        // something else in upval_map to deal.
+        //
+        // TRY: drop sym from uvm, add size, align, ScopeResult, and then do
+        // load_value_but_never_create_upval() here.
+        //error("XXX here");
         if (sym->scope_decl == SSD_DECLARED_PARAMETER) {
           ir_STORE(ir_ADD_OFFSET(upval_data, uvm->offsets[i]), sym->ref);
         } else if (sym->scope_decl == SSD_DECLARED_LOCAL) {
@@ -2365,10 +2380,10 @@ static ScopeResult scope_lookup(Str name, Sym** sym) {
   return SCOPE_RESULT_UNDEFINED;
 }
 
-static Operand find_or_create_upval(Str name, Sym* sym, bool* created_in_this_scope) {
+static Operand find_or_create_upval(Scope* scope, Str name, Sym* sym, bool* created_in_this_scope) {
   ASSERT(!str_is_none(name));
   ASSERT(sym);
-  UpvalMap* uvm = &parser.cur_scope->upval_map;
+  UpvalMap* uvm = &scope->upval_map;
   int upval_index;
   for (upval_index = uvm->num_upvals - 1; upval_index >= 0; --upval_index) {
     if (str_eq(name, uvm->names[upval_index])) {
@@ -2397,13 +2412,25 @@ static Operand find_or_create_upval(Str name, Sym* sym, bool* created_in_this_sc
 
   Type type = uvm->sources[upval_index]->type;
   return operand_rvalue_imm(
-      type, ir_LOAD(type_to_ir_type(type),
-                    ir_ADD_OFFSET(parser.cur_scope->upval_base, uvm->offsets[upval_index])));
+      type,
+      ir_LOAD(type_to_ir_type(type), ir_ADD_OFFSET(scope->upval_base, uvm->offsets[upval_index])));
 }
 
-static void propagate_upval(Scope* scope, Str var_name, Sym* sym) {
+// Return is whether to continue. If it didn't exist
+static bool propagate_upval(Scope* scope, Str var_name, Sym* sym) {
   // This should only be called on nested functions, which should have an $up.
   ASSERT(scope->upval_base);
+  Sym* lookup = find_in_scope(scope, var_name);
+  if (!lookup) {
+    // If it wasn't found in this middle scope, then we must need to get it from
+    // a parent.
+    bool created = false;
+    find_or_create_upval(scope, var_name, sym, &created);
+    return created;
+  } else {
+    ASSERT(lookup == sym);
+    return false;
+  }
 }
 
 static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
@@ -2433,13 +2460,13 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
       bool created_in_this_scope = false;
       // We already did a scope_lookup() so we know the in the current function,
       // we need to reference this value through $up.
-      Operand value = find_or_create_upval(var_name, sym, &created_in_this_scope);
+      Operand value = find_or_create_upval(parser.cur_scope, var_name, sym, &created_in_this_scope);
       if (created_in_this_scope) {
         // Additionally, if it's the first time it was referenced in this
         // function, and there's at least *2* parent functions i.e. we're in:
-        // inner() and want |x|, we need to also go up to middle's upval map and
-        // add it there so that the invocation of middle will be provided with a
-        // copy of x so that inner can in turn capture it.
+        // inner() and want |x| from main(), we need to also go up to middle()'s
+        // upval map and add it there, so that the invocation of middle() will be
+        // provided with a copy of |x|, so that inner() can in turn capture it.
         //
         //   def main():
         //       x = 4
@@ -2452,7 +2479,12 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
         // upval_map.
         for (int i = parser.num_scopes - 2; i >= 2; --i) {
           Scope* scope = &parser.scopes[i];
-          propagate_upval(scope, var_name, sym);
+          if (!propagate_upval(scope, var_name, sym)) {
+            // If it didn't need to be created in this scope, then either it had
+            // already been, so it's forwarded enough for our inner-more scope,
+            // or we found the actual definition, so no need to go further.
+            break;
+          }
         }
       }
       return value;
