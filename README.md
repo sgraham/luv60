@@ -10,7 +10,7 @@ motivation for this project which was ["why isn't compiling
 Build and test
 --------------
 
-On Windows x64 to build and run tests (requires `python` in PATH):
+On Windows x64 (requires `python` in PATH):
 ```
 > m r test
 ```

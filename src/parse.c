@@ -301,13 +301,14 @@ static ir_type type_to_ir_type(Type type) {
 typedef enum ScopeResult {
   SCOPE_RESULT_GLOBAL,
   SCOPE_RESULT_UNDEFINED,
+  SCOPE_RESULT_UNDEFINED_ASSUMED_GLOBAL,
   SCOPE_RESULT_LOCAL,
   SCOPE_RESULT_PARAMETER,
   SCOPE_RESULT_UPVALUE,
   NUM_SCOPE_RESULTS,
 } ScopeResult;
 
-static ScopeResult scope_lookup(Str name, Sym** sym, SymScopeDecl* scope_decl);
+static ScopeResult scope_lookup(Str name, Sym** sym);
 
 #if 0
 static Operand operand_sym(Type type, LqSymbol lqsym) {
@@ -1216,9 +1217,8 @@ static Type parse_type(void) {
 
   if (match(TOK_IDENT_TYPE)) {
     Sym* sym;
-    SymScopeDecl scope_decl;
     Str type_name = str_from_previous();
-    ScopeResult scope_result = scope_lookup(type_name, &sym, &scope_decl);
+    ScopeResult scope_result = scope_lookup(type_name, &sym);
     if (scope_result == SCOPE_RESULT_UNDEFINED) {
       errorf("Undefined type %s.", cstr_copy(parser.arena, type_name));
     } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_TYPE) {
@@ -1792,8 +1792,7 @@ static Operand parse_compound_literal(bool can_assign, Type* expected) {
   Str type_name = str_from_previous();
 
   Sym* sym;
-  SymScopeDecl scope_decl;
-  ScopeResult scope_result = scope_lookup(type_name, &sym, &scope_decl);
+  ScopeResult scope_result = scope_lookup(type_name, &sym);
   if (scope_result == SCOPE_RESULT_UNDEFINED) {
     errorf("Undefined type %s.", cstr_copy(parser.arena, type_name));
   } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_TYPE) {
@@ -2330,35 +2329,28 @@ static Sym* find_in_scope(VarScope* scope, Str name) {
 
 // Returns pointer into sym_dict/flat_map (where Sym is stored by value),
 // probably a bad idea.
-static ScopeResult scope_lookup(Str name, Sym** sym, SymScopeDecl* scope_decl) {
-  *scope_decl = SSD_NONE;
+static ScopeResult scope_lookup(Str name, Sym** sym) {
   *sym = NULL;
   bool crossed_function = false;
   VarScope* cur_scope = parser.cur_var_scope;
   for (;;) {
     Sym* found_sym = find_in_scope(cur_scope, name);
     if (found_sym) {
+      *sym = found_sym;
       SymScopeDecl sd = found_sym->scope_decl;
       if (sd == SSD_ASSUMED_GLOBAL) {
-        *scope_decl = SSD_ASSUMED_GLOBAL;
-        return SCOPE_RESULT_UNDEFINED;
+        return SCOPE_RESULT_UNDEFINED_ASSUMED_GLOBAL;
       } else if (sd == SSD_DECLARED_NONLOCAL) {
-        *scope_decl = sd;
         ASSERT(false); abort();
         return SCOPE_RESULT_UPVALUE;
       } else if (sd == SSD_DECLARED_GLOBAL) {
-        *scope_decl = sd;
-        *sym = found_sym;
         return SCOPE_RESULT_GLOBAL;
       } else if (sd == SSD_DECLARED_PARAMETER) {
-        *scope_decl = sd;
-        *sym = found_sym;
         if (crossed_function) {
           return SCOPE_RESULT_UPVALUE;
         }
         return SCOPE_RESULT_PARAMETER;
       } else {
-        *sym = found_sym;
         if (cur_scope->is_module) {
           return SCOPE_RESULT_GLOBAL;
         } else if (crossed_function) {
@@ -2395,8 +2387,10 @@ static Operand load_upval(Str name, Sym* sym) {
       break;
     }
   }
+
   if (upval_index < 0) {
     // Didn't find it in the existing map, add a reference and then return it.
+
     if (uvm->num_upvals >= COUNTOFI(uvm->names)) {
       error("Too many upvals.");
     }
@@ -2420,13 +2414,12 @@ static Operand load_upval(Str name, Sym* sym) {
 
 static Operand parse_variable(bool can_assign, Type* expected) {
   Str target = str_from_previous();
-  SymScopeDecl scope_decl = SSD_NONE;
   Sym* sym = NULL;
-  ScopeResult scope_result = scope_lookup(target, &sym, &scope_decl);
+  ScopeResult scope_result = scope_lookup(target, &sym);
   if (can_assign && match_assignment()) {
     TokenKind eq_kind = parser.prev_kind;
     TokenKind eq_offset = prev_offset();
-    if (scope_result == SCOPE_RESULT_UNDEFINED && scope_decl == SSD_ASSUMED_GLOBAL) {
+    if (scope_result == SCOPE_RESULT_UNDEFINED_ASSUMED_GLOBAL) {
       errorf("Local variable '%s' referenced before assignment.", cstr_copy(parser.arena, target));
     } else if (scope_result == SCOPE_RESULT_LOCAL) {
       ASSERT(sym);
@@ -2441,7 +2434,8 @@ static Operand parse_variable(bool can_assign, Type* expected) {
         error_offset(eq_offset, "Unhandled assignment type.");
       }
       return operand_null;
-    } else if (scope_result != SCOPE_RESULT_LOCAL && scope_decl == SSD_NONE) {
+    } else if (scope_result == SCOPE_RESULT_UNDEFINED) {
+      ASSERT(!sym);
       if (eq_kind == TOK_EQ) {
         // Variable declaration without a type.
         Operand op = parse_expression(NULL);
