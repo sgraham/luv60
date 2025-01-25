@@ -68,10 +68,23 @@ typedef struct PendingCond {
   ir_ref iftrue;
 } PendingCond;
 
+typedef enum ScopeResult {
+  SCOPE_RESULT_GLOBAL,
+  SCOPE_RESULT_UNDEFINED,
+  SCOPE_RESULT_LOCAL,
+  SCOPE_RESULT_PARAMETER,
+  SCOPE_RESULT_UPVALUE,
+} ScopeResult;
+
+typedef struct Upval {
+  Str name;
+  Type type;
+  uint32_t offset;
+  ScopeResult scope_result;
+} Upval;
+
 typedef struct UpvalMap {
-  Str names[MAX_UPVALS];
-  Sym* sources[MAX_UPVALS];
-  uint32_t offsets[MAX_UPVALS];
+  Upval upvals[MAX_UPVALS];
   int num_upvals;
   uint32_t alloc_size;
 } UpvalMap;
@@ -291,15 +304,8 @@ static ir_type type_to_ir_type(Type type) {
   }
 }
 
-typedef enum ScopeResult {
-  SCOPE_RESULT_GLOBAL,
-  SCOPE_RESULT_UNDEFINED,
-  SCOPE_RESULT_LOCAL,
-  SCOPE_RESULT_PARAMETER,
-  SCOPE_RESULT_UPVALUE,
-} ScopeResult;
-
-static ScopeResult scope_lookup(Str name, Sym** sym);
+static ScopeResult scope_lookup_single(Scope* scope, Str name, bool crossed_function, Sym** sym);
+static ScopeResult scope_lookup_recursive(Str name, Sym** sym);
 
 #if 0
 static Operand operand_sym(Type type, LqSymbol lqsym) {
@@ -771,64 +777,17 @@ static void leave_function(void) {
     ir_ref upval_data = ir_ALLOCA(ir_CONST_U64(uvm->alloc_size));
     child_func->ref2 = upval_data;
     for (int i = 0; i < uvm->num_upvals; ++i) {
-      // TODO: aggregates, etc.
-      Sym* sym = uvm->sources[i];
-      if (type_kind(sym->type) == TYPE_FUNC) {
-        ir_STORE(ir_ADD_OFFSET(upval_data, uvm->offsets[i]), ir_CONST_ADDR(sym->addr));
+#if 0
+      Upval* uv = &uvm->upvals[i];
+      if (sym->scope_decl == SSD_DECLARED_PARAMETER) {
+        ir_STORE(ir_ADD_OFFSET(upval_data, uvm->offsets[i]), sym->ref);
+      } else if (sym->scope_decl == SSD_DECLARED_LOCAL) {
+        ir_STORE(ir_ADD_OFFSET(upval_data, uvm->offsets[i]),
+                 ir_VLOAD(type_to_ir_type(sym->type), sym->ref));
       } else {
-        // This isn't an Operand because they were only evaluated in the context
-        // of the nested function, not the parent function, so we need to do
-        // another reference in this context. Doing another repeated
-        // scope_lookup() on the name wouldn't be correct because the inner
-        // function could do a `global`.
-        // TODO: VLOAD isn't correct for aggregates
-        // ... Hmm, it's a bit more complicated than that for higher levels of
-        // nesting. In nested_two_levels.luv, when we pop out of inner, the sym
-        // we've tried to store in UpvalMap has ir_refs that are valid in the
-        // outer-most function (main), but not in middle() where we need to do
-        // the capture to inner()s upval block.
-        //
-        // So, even though middle() doesn't directly reference |x|, it needs to
-        // capture |x| in its upvals so that the capture at the defintion point
-        // of inner() can capture both |x| (now a copy of a copy) and |y|, the
-        // local definition in middle().
-        //
-        // Additionally, the lookup style won't be the same, the capture of |x| at
-        // middle()s capture point will be a VLOAD, but the capture of |x| at inner()s
-        // capture point will need to do what load_upval() does to load it from
-        // middle()s upval block.
-        //
-        // When we load_upval() of |x| in inner() we need to also walk up the
-        // function stack and load_upval() in each of the parent frames until we
-        // reach the function where the thing being looked up was defined so
-        // that it's propagated inwards. (actually, the function before the one
-        // where it was defined, obviously it's already defined there.)
-        //
-        // It seems like the lookup time is where we should figure out the
-        // correct method of actually loading the value at capture time too,
-        // otherwise we're re-deriving it here awkwardly.
-
-        // XXX TODO sym->ref here is wrong in middle because the Sym is the one
-        // that was found by scope_lookup(). If it had to go two+ levels up to
-        // find it, then we haven't popped out to that ir_CTX yet here. Need to
-        // call load_value() or some derivative of it so that in the middle
-        // function, we do find_or_create_upval.
-        //
-        // Maybe the propagate_upval (and load_value) should be stashing
-        // something else in upval_map to deal.
-        //
-        // TRY: drop sym from uvm, add size, align, ScopeResult, and then do
-        // load_value_but_never_create_upval() here.
-        //error("XXX here");
-        if (sym->scope_decl == SSD_DECLARED_PARAMETER) {
-          ir_STORE(ir_ADD_OFFSET(upval_data, uvm->offsets[i]), sym->ref);
-        } else if (sym->scope_decl == SSD_DECLARED_LOCAL) {
-          ir_STORE(ir_ADD_OFFSET(upval_data, uvm->offsets[i]),
-                   ir_VLOAD(type_to_ir_type(sym->type), sym->ref));
-        } else {
-          error("Unhandled scope type in upval capture.");
-        }
+        error("Unhandled scope type in upval capture.");
       }
+#endif
     }
   }
 
@@ -1224,7 +1183,7 @@ static Type parse_type(void) {
   if (match(TOK_IDENT_TYPE)) {
     Sym* sym;
     Str type_name = str_from_previous();
-    ScopeResult scope_result = scope_lookup(type_name, &sym);
+    ScopeResult scope_result = scope_lookup_recursive(type_name, &sym);
     if (scope_result == SCOPE_RESULT_UNDEFINED) {
       errorf("Undefined type %s.", cstr_copy(parser.arena, type_name));
     } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_TYPE) {
@@ -1798,7 +1757,7 @@ static Operand parse_compound_literal(bool can_assign, Type* expected) {
   Str type_name = str_from_previous();
 
   Sym* sym;
-  ScopeResult scope_result = scope_lookup(type_name, &sym);
+  ScopeResult scope_result = scope_lookup_recursive(type_name, &sym);
   if (scope_result == SCOPE_RESULT_UNDEFINED) {
     errorf("Undefined type %s.", cstr_copy(parser.arena, type_name));
   } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_TYPE) {
@@ -2335,35 +2294,51 @@ static Sym* find_in_scope(Scope* scope, Str name) {
 
 // Returns pointer into sym_dict/flat_map (where Sym is stored by value),
 // probably a bad idea.
-static ScopeResult scope_lookup(Str name, Sym** sym) {
-  *sym = NULL;
-  bool crossed_function = false;
-  Scope* cur_scope = parser.cur_scope;
-  for (;;) {
-    Sym* found_sym = find_in_scope(cur_scope, name);
-    if (found_sym) {
-      *sym = found_sym;
-      SymScopeDecl sd = found_sym->scope_decl;
-      if (sd == SSD_DECLARED_NONLOCAL) {
-        ASSERT(false); abort();
-        return SCOPE_RESULT_UPVALUE;
-      } else if (sd == SSD_DECLARED_GLOBAL) {
+// if crossed_function, map parameters and locals to upvalue
+static ScopeResult scope_lookup_single(Scope* scope, Str name, bool crossed_function, Sym** sym) {
+  Sym* found_sym = find_in_scope(scope, name);
+  if (found_sym) {
+    *sym = found_sym;
+    SymScopeDecl sd = found_sym->scope_decl;
+    switch (sd) {
+      case SSD_DECLARED_GLOBAL:
         return SCOPE_RESULT_GLOBAL;
-      } else if (sd == SSD_DECLARED_PARAMETER) {
-        if (crossed_function) {
-          return SCOPE_RESULT_UPVALUE;
-        }
-        return SCOPE_RESULT_PARAMETER;
-      } else {
-        if (cur_scope->is_module) {
+      case SSD_DECLARED_LOCAL:
+        if (scope->is_module) {
           return SCOPE_RESULT_GLOBAL;
         } else if (crossed_function) {
           return SCOPE_RESULT_UPVALUE;
         } else {
           return SCOPE_RESULT_LOCAL;
         }
-      }
+        break;
+      case SSD_DECLARED_PARAMETER:
+        if (crossed_function) {
+          return SCOPE_RESULT_UPVALUE;
+        } else {
+          return SCOPE_RESULT_PARAMETER;
+        }
+      case SSD_DECLARED_NONLOCAL:
+        return SCOPE_RESULT_UPVALUE;
+      default:
+        errorf("internal error, SymScopeDecl: %d", sd);
     }
+  }
+  return SCOPE_RESULT_UNDEFINED;
+}
+
+// Returns pointer into sym_dict/flat_map (where Sym is stored by value),
+// probably a bad idea.
+static ScopeResult scope_lookup_recursive(Str name, Sym** sym) {
+  *sym = NULL;
+  bool crossed_function = false;
+  Scope* cur_scope = parser.cur_scope;
+  for (;;) {
+    ScopeResult res = scope_lookup_single(cur_scope, name, crossed_function, sym);
+    if (res != SCOPE_RESULT_UNDEFINED) {
+      return res;
+    }
+    // otherwise keep going upwards
 
     if (cur_scope->is_function) {
       crossed_function = true;
@@ -2380,57 +2355,74 @@ static ScopeResult scope_lookup(Str name, Sym** sym) {
   return SCOPE_RESULT_UNDEFINED;
 }
 
-static Operand find_or_create_upval(Scope* scope, Str name, Sym* sym, bool* created_in_this_scope) {
+static Operand find_or_create_upval(Scope* scope, Str name, Sym* sym) {
   ASSERT(!str_is_none(name));
-  ASSERT(sym);
   UpvalMap* uvm = &scope->upval_map;
   int upval_index;
   for (upval_index = uvm->num_upvals - 1; upval_index >= 0; --upval_index) {
-    if (str_eq(name, uvm->names[upval_index])) {
-      ASSERT(sym == uvm->sources[upval_index]);  // i think?
+    if (str_eq(name, uvm->upvals[upval_index].name)) {
       break;
     }
   }
 
+  Type type = sym->type;
+
   if (upval_index < 0) {
     // Didn't find it in the existing map, add a reference and then return it.
 
-    if (uvm->num_upvals >= COUNTOFI(uvm->names)) {
+    if (uvm->num_upvals >= COUNTOFI(uvm->upvals)) {
       error("Too many upvals.");
     }
     upval_index = uvm->num_upvals++;
 
-    uvm->alloc_size = ALIGN_UP(uvm->alloc_size, type_align(sym->type));
+    uvm->alloc_size = ALIGN_UP(uvm->alloc_size, type_align(type));
 
-    uvm->names[upval_index] = name;
-    uvm->sources[upval_index] = sym;
-    uvm->offsets[upval_index] = uvm->alloc_size;
-    *created_in_this_scope = true;
+    Upval* uv = &uvm->upvals[upval_index];
+    *uv = (Upval){.name = name, .type = type, .offset = uvm->alloc_size};
+    uvm->alloc_size += type_size(type);
 
-    uvm->alloc_size = type_size(sym->type);
+    // If we created a reference in the current scope, we need to walk up parent
+    // scopes creating upvals there to make sure that middle scopes that didn't
+    // otherwise use the value themselves will have it forwarded to them, so
+    // that it can be captured by the inner-most.
+
+    ASSERT(scope >= &parser.scopes[1] && scope <= &parser.scopes[parser.num_scopes - 1]);
+    Scope* parent_scope = scope - 1;
+    if (parent_scope->upval_base) {
+      Sym* parent_sym;
+      ScopeResult parent_scope_result = scope_lookup_single(parent_scope, name, false, &parent_sym);
+      switch (parent_scope_result) {
+        case SCOPE_RESULT_GLOBAL:
+          error("internal error, shouldn't be upval'ing global");
+          break;
+        case SCOPE_RESULT_UPVALUE:
+          error("internal error, not sure what to do with this yet, nonlocal in middle?");
+          break;
+        case SCOPE_RESULT_LOCAL:
+        case SCOPE_RESULT_PARAMETER:
+          // If it's known in the parent, then save this lookup type, and we're done.
+          ASSERT(parent_sym == sym);
+          uv->scope_result = SCOPE_RESULT_LOCAL;
+          break;
+        case SCOPE_RESULT_UNDEFINED: {
+          // If it's undefined in the parent scope, we need to add an upval to it,
+          // so recurse.
+          find_or_create_upval(parent_scope, name, sym);
+          break;
+        }
+      }
+    } else {
+      // If the parent isn't a nested function, then it must be toplevel so
+      // there's nothing to capture-forward to it, and the method of looking
+      // it up must be just a local.
+      // TODO: assert something about sym here.
+      uv->scope_result = SCOPE_RESULT_LOCAL;
+    }
   }
 
-  Type type = uvm->sources[upval_index]->type;
   return operand_rvalue_imm(
-      type,
-      ir_LOAD(type_to_ir_type(type), ir_ADD_OFFSET(scope->upval_base, uvm->offsets[upval_index])));
-}
-
-// Return is whether to continue. If it didn't exist
-static bool propagate_upval(Scope* scope, Str var_name, Sym* sym) {
-  // This should only be called on nested functions, which should have an $up.
-  ASSERT(scope->upval_base);
-  Sym* lookup = find_in_scope(scope, var_name);
-  if (!lookup) {
-    // If it wasn't found in this middle scope, then we must need to get it from
-    // a parent.
-    bool created = false;
-    find_or_create_upval(scope, var_name, sym, &created);
-    return created;
-  } else {
-    ASSERT(lookup == sym);
-    return false;
-  }
+      type, ir_LOAD(type_to_ir_type(type),
+                    ir_ADD_OFFSET(scope->upval_base, uvm->upvals[upval_index].offset)));
 }
 
 static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
@@ -2457,10 +2449,11 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
       }
     }
     case SCOPE_RESULT_UPVALUE: {
-      bool created_in_this_scope = false;
       // We already did a scope_lookup() so we know the in the current function,
       // we need to reference this value through $up.
-      Operand value = find_or_create_upval(parser.cur_scope, var_name, sym, &created_in_this_scope);
+      Operand value = find_or_create_upval(parser.cur_scope, var_name, sym);
+#if 0
+      bool created_in_this_scope = false;
       if (created_in_this_scope) {
         // Additionally, if it's the first time it was referenced in this
         // function, and there's at least *2* parent functions i.e. we're in:
@@ -2479,7 +2472,7 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
         // upval_map.
         for (int i = parser.num_scopes - 2; i >= 2; --i) {
           Scope* scope = &parser.scopes[i];
-          if (!propagate_upval(scope, var_name, sym)) {
+          if (!propagate_upval(scope, var_name, elem_type)) {
             // If it didn't need to be created in this scope, then either it had
             // already been, so it's forwarded enough for our inner-more scope,
             // or we found the actual definition, so no need to go further.
@@ -2487,6 +2480,7 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
           }
         }
       }
+#endif
       return value;
     }
     case SCOPE_RESULT_UNDEFINED: {
@@ -2498,7 +2492,7 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
 static Operand parse_variable(bool can_assign, Type* expected) {
   Str target = str_from_previous();
   Sym* sym = NULL;
-  ScopeResult scope_result = scope_lookup(target, &sym);
+  ScopeResult scope_result = scope_lookup_recursive(target, &sym);
   if (can_assign && match_assignment()) {
     TokenKind eq_kind = parser.prev_kind;
     TokenKind eq_offset = prev_offset();
@@ -2875,6 +2869,7 @@ static void def_statement(void) {
   Type functype = type_function(param_types, num_params, return_type, is_nested);
 
   Sym* funcsym = sym_new(SYM_FUNC, name, functype);
+  funcsym->scope_decl = is_nested ? SSD_DECLARED_LOCAL : SSD_DECLARED_GLOBAL;  // ?
   enter_function(funcsym, param_names, param_types);
   LastStatementType lst = parse_block();
   if (lst == LST_NON_RETURN) {
