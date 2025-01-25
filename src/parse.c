@@ -51,7 +51,10 @@ typedef struct Sym {
   Type type;
   union {
     ir_ref ref;
-    void* addr;  // kind == SYM_FUNC
+    struct { // kind == SYM_FUNC
+      void* addr;
+      ir_ref ref2;  // upvals
+    };
   };
   SymScopeDecl scope_decl;
 } Sym;
@@ -82,9 +85,8 @@ typedef struct FuncData {
   int num_pending_conds;
   ir_ctx ctx;
   uint64_t arena_saved_pos;
-  void* upval_pointer;
-  ir_ref upval_base;
   UpvalMap upval_map;
+  ir_ref upval_base;
 } FuncData;
 
 typedef struct SmallFlatNameSymMap {
@@ -148,11 +150,13 @@ static Parser parser;
 #define OPK_BIT_RVAL_REF 0x2
 #define OPK_BIT_LVAL_REF 0x4
 #define OPK_BIT_ADDR 0x8
+#define OPK_BIT_SECOND_REF 0x10
 
 typedef enum OpKind {
   OPK_CONST = OPK_BIT_CONST,
   OPK_REF_RVAL = OPK_BIT_RVAL_REF,
   OPK_REF_RVAL_ADDR = OPK_BIT_RVAL_REF | OPK_BIT_ADDR,
+  OPK_REF_RVAL_ADDR_BOUND_FUNC = OPK_BIT_SECOND_REF | OPK_BIT_RVAL_REF | OPK_BIT_ADDR,
   OPK_REF_LVAL_ADDR = OPK_BIT_LVAL_REF | OPK_BIT_ADDR,
 } OpKind;
 
@@ -163,6 +167,7 @@ typedef struct Operand {
     Val val;
     ir_ref ref;
   };
+  ir_ref ref2; // Extra ref, used for fat function pointers (addr & $up)
 } Operand;
 
 static inline FORCE_INLINE bool op_is_const(Operand op) {
@@ -175,6 +180,10 @@ static inline FORCE_INLINE bool op_is_addr(Operand op) {
 
 static inline FORCE_INLINE bool op_is_null(Operand op) {
   return op.kind == 0;
+}
+
+static inline FORCE_INLINE bool op_has_ref2(Operand op) {
+  return op.kind & OPK_BIT_SECOND_REF;
 }
 
 typedef struct OpVec {
@@ -278,6 +287,10 @@ static ir_type type_to_ir_type(Type type) {
       return IR_DOUBLE;
     case TYPE_FLOAT:
       return IR_FLOAT;
+    case TYPE_PTR:
+      if (type_kind(type_ptr_subtype(type)) == TYPE_VOID) {
+        return IR_U64;
+      }
     default:
       base_writef_stderr("type_to_ir_type: %s\n", type_as_str(type));
       ASSERT(false && "todo");
@@ -308,6 +321,10 @@ static Operand operand_lvalue(Type type, ir_ref ref) {
 
 static Operand operand_rvalue_addr(Type type, ir_ref ref) {
   return (Operand){.kind = OPK_REF_RVAL_ADDR, .type = type, .ref = ref};
+}
+
+static Operand operand_rvalue_addr_bound_function(Type type, ir_ref ref, ir_ref ref2) {
+  return (Operand){.kind = OPK_REF_RVAL_ADDR_BOUND_FUNC, .type = type, .ref = ref, .ref2 = ref2};
 }
 
 static Operand operand_rvalue_imm(Type type, ir_ref ref) {
@@ -426,6 +443,7 @@ static ir_ref operand_to_irref_imm(Operand* op) {
     case OPK_REF_RVAL:
       return op->ref;
     case OPK_REF_RVAL_ADDR:
+    case OPK_REF_RVAL_ADDR_BOUND_FUNC:  // assume something else will load ref2
     case OPK_REF_LVAL_ADDR:
       if (type_is_aggregate(op->type)) {
         // TODO: This seems questionable.
@@ -646,8 +664,6 @@ static void enter_function(Sym* sym,
   parser.cur_func = &parser.funcdatas[parser.num_funcdatas++];
   parser.cur_func->sym = sym;
   parser.cur_func->arena_saved_pos = arena_pos(arena_ir);
-  parser.cur_func->upval_pointer = is_nested ? arena_push(parser.arena, sizeof(void*), 8) : NULL;
-  parser.cur_func->upval_base = 0;
   parser.cur_func->upval_map.num_upvals = 0;
   enter_scope(/*is_module=*/false, /*is_function=*/true);
 
@@ -662,8 +678,9 @@ static void enter_function(Sym* sym,
   ir_START();
 
   uint32_t num_params = type_func_num_params(sym->type);
+  Sym* param_syms[MAX_FUNC_PARAMS];
   for (uint32_t i = 0; i < num_params; ++i) {
-    make_param(param_names[i], type_func_param(sym->type, i), i);
+    param_syms[i] = make_param(param_names[i], type_func_param(sym->type, i), i);
   }
 
   // Allocation of the VAR for return_slot must be after all PARAMs.
@@ -674,11 +691,14 @@ static void enter_function(Sym* sym,
     parser.cur_func->return_slot = NULL;
   } else {
     parser.cur_func->return_slot =
-        make_local_and_alloc(SYM_VAR, str_intern("$ret"), ret_type, NULL);
+        make_local_and_alloc(SYM_VAR, str_intern_len("$ret", 4), ret_type, NULL);
   }
 
   if (is_nested) {
-    parser.cur_func->upval_base = ir_LOAD_A(ir_CONST_ADDR(parser.cur_func->upval_pointer));
+    ASSERT(str_eq(param_syms[0]->name, str_intern_len("$up", 3)));
+    ASSERT(type_kind(param_syms[0]->type) == TYPE_PTR);
+    ASSERT(type_eq(type_ptr_subtype(param_syms[0]->type), type_void));
+    parser.cur_func->upval_base = param_syms[0]->ref;
   }
 }
 
@@ -737,12 +757,13 @@ static void leave_function(void) {
 
   arena_pop_to(arena_ir, parser.cur_func->arena_saved_pos);
 
-  void* upval_pointer = parser.cur_func->upval_pointer;  // doubles as is_nested
   // This is pointing the nested one, but we have to "pop" it to make the
   // capture code be generated in the parent, so we're pointing at a the
   // "deallocated" UpvalMap (not really, just num_funcdatas decremented) from
   // here until the end of this function.
   UpvalMap* uvm = &parser.cur_func->upval_map;
+  Sym* child_func = parser.cur_func->sym;
+  bool is_nested = parser.num_funcdatas > 1;
 
   --parser.num_funcdatas;
   ASSERT(parser.num_funcdatas >= 0);
@@ -752,9 +773,9 @@ static void leave_function(void) {
     parser.cur_func = &parser.funcdatas[parser.num_funcdatas - 1];
   }
 
-  if (upval_pointer) {
+  if (is_nested) {
     ir_ref upval_data = ir_ALLOCA(ir_CONST_U64(uvm->alloc_size));
-    ir_STORE(ir_CONST_ADDR(upval_pointer), upval_data);
+    child_func->ref2 = upval_data;
     for (int i = 0; i < uvm->num_upvals; ++i) {
       // TODO: aggregates, etc.
       Sym* sym = uvm->sources[i];
@@ -767,6 +788,31 @@ static void leave_function(void) {
         // scope_lookup() on the name wouldn't be correct because the inner
         // function could do a `global`.
         // TODO: VLOAD isn't correct for aggregates
+        // ... Hmm, it's a bit more complicated than that for higher levels of
+        // nesting. In nested_two_levels.luv, when we pop out of inner, the sym
+        // we've tried to store in UpvalMap has ir_refs that are valid in the
+        // outer-most function (main), but not in middle() where we need to do
+        // the capture to inner()s upval block.
+        //
+        // So, even though middle() doesn't directly reference |x|, it needs to
+        // capture |x| in its upvals so that the capture at the defintion point
+        // of inner() can capture both |x| (now a copy of a copy) and |y|, the
+        // local definition in middle().
+        //
+        // Additionally, the lookup style won't be the same, the capture of |x| at
+        // middle()s capture point will be a VLOAD, but the capture of |x| at inner()s
+        // capture point will need to do what load_upval() does to load it from
+        // middle()s upval block.
+        //
+        // When we load_upval() of |x| in inner() we need to also walk up the
+        // function stack and load_upval() in each of the parent frames until we
+        // reach the function where the thing being looked up was defined so
+        // that it's propagated inwards. (actually, the function before the one
+        // where it was defined, obviously it's already defined there.)
+        //
+        // It seems like the lookup time is where we should figure out the
+        // correct method of actually loading the value at capture time too,
+        // otherwise we're re-deriving it here awkwardly.
         if (sym->scope_decl == SSD_DECLARED_PARAMETER) {
           ir_STORE(ir_ADD_OFFSET(upval_data, uvm->offsets[i]), sym->ref);
         } else if (sym->scope_decl == SSD_DECLARED_LOCAL) {
@@ -1185,9 +1231,16 @@ static Type parse_type(void) {
   return type_none;
 }
 
-static uint32_t parse_func_params(Type out_types[MAX_FUNC_PARAMS], Str out_names[MAX_FUNC_PARAMS]) {
+static uint32_t parse_func_params(bool is_nested,
+                                  Type out_types[MAX_FUNC_PARAMS],
+                                  Str out_names[MAX_FUNC_PARAMS]) {
   uint32_t num_params = 0;
   bool require_more = false;
+  if (is_nested) {
+    out_types[num_params] = type_ptr(type_void);
+    out_names[num_params] = str_intern_len("$up", 3);
+    ++num_params;
+  }
   while (require_more || !check(TOK_RPAREN)) {
     require_more = false;
     Type param_type = parse_type();
@@ -1698,8 +1751,16 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
   if (type_kind(left.type) != TYPE_FUNC) {
     errorf("Expected function type, but type is %s.", type_as_str(left.type));
   }
+  bool is_nested = type_func_is_nested(left.type);
   ir_ref arg_values[MAX_FUNC_PARAMS];
   uint32_t num_args = 0;
+
+  if (is_nested) {
+    ASSERT(op_has_ref2(left));
+    arg_values[0] = left.ref2;
+    ++num_args;
+  }
+
   if (!check(TOK_RPAREN)) {
     for (;;) {
       if (num_args >= type_func_num_params(left.type)) {
@@ -2396,7 +2457,11 @@ static Operand parse_variable(bool can_assign, Type* expected) {
   } else {
     if (scope_result == SCOPE_RESULT_LOCAL) {
       if (type_kind(sym->type) == TYPE_FUNC) {
-        return operand_rvalue_addr(sym->type, ir_CONST_ADDR(sym->addr));
+        if (type_func_is_nested(sym->type)) {
+          return operand_rvalue_addr_bound_function(sym->type, ir_CONST_ADDR(sym->addr), sym->ref2);
+        } else {
+          return operand_rvalue_addr(sym->type, ir_CONST_ADDR(sym->addr));
+        }
       } else {
         return operand_lvalue(sym->type, sym->ref);
       }
@@ -2404,6 +2469,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
       return operand_rvalue_imm(sym->type, sym->ref);
     } else if (scope_result == SCOPE_RESULT_GLOBAL) {
       if (type_kind(sym->type) == TYPE_FUNC) {
+        // Doesn't make sense in our use for GLOBAL to be bound I don't think.
         return operand_rvalue_addr(sym->type, ir_CONST_ADDR(sym->addr));
       } else {
         ASSERT(false && "global var");
@@ -2735,14 +2801,15 @@ static void def_statement(void) {
 
   Type param_types[MAX_FUNC_PARAMS];
   Str param_names[MAX_FUNC_PARAMS];
-  uint32_t num_params = parse_func_params(param_types, param_names);
+  bool is_nested = parser.num_funcdatas > 0;
+  uint32_t num_params = parse_func_params(is_nested, param_types, param_names);
 
   consume(TOK_COLON, "Expect ':' before function body.");
   consume(TOK_NEWLINE, "Expect newline before function body. (TODO: single line)");
   skip_newlines();
   consume(TOK_INDENT, "Expect indent before function body. (TODO: single line)");
 
-  Type functype = type_function(param_types, num_params, return_type);
+  Type functype = type_function(param_types, num_params, return_type, is_nested);
 
   Sym* funcsym = sym_new(SYM_FUNC, name, functype);
   enter_function(funcsym, param_names, param_types);

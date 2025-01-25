@@ -246,6 +246,21 @@ referenced upvals into the associated slot. stash the value of the alloca into
 the pointer allocated at the beginning enter_function and then the prolog to the
 nested function just loads that.
 
+... that makes no sense of course, having a fixed pointer allocated per function
+is dumb because the function can't recurse, amongst other problems.
+
+so:
+- any nested function needs to have a hidden void* argument because we can't
+tell at enter_function() time if it's going to need upvals. (i think the caller
+can just pass null if it turns out there are zero upvals, so not a huge cost)
+- upval refs are always compiled as up[N] in the body
+- need a NESTED flag in the function type to know that it needs an upval pointer
+  at call time
+- in leave_function(), alloca the block, copy all referenced upvals into it
+- calls to NESTED need to put the alloca pointer as the first op in
+parse_call().
+- not sure about function pointers yet
+
 don't try to solve escape or closure, potentially some sort of arena integration
 some day.
 

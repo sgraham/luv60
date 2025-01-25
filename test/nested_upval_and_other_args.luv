@@ -1,0 +1,10 @@
+# OUT: 118
+def int main():
+    z = 8
+
+    def int inner(int a, int b):
+        return a + b + z
+
+    print inner(10, 100)
+    return 0
+

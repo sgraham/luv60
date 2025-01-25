@@ -1,0 +1,14 @@
+# DISABLED
+# OUT: 12
+def int main():
+    x = 3
+
+    def int middle():
+        y = 4
+
+        def int inner():
+            return x + y + 5
+
+        return inner()
+
+    print middle()

@@ -190,7 +190,7 @@ size_t type_size(Type type);
 size_t type_align(Type type);
 size_t type_padding(Type type);
 
-Type type_function(Type* params, size_t num_params, Type return_type);
+Type type_function(Type* params, size_t num_params, Type return_type, bool is_nested);
 Type type_ptr(Type subtype);
 Type type_array(Type subtype, size_t size);
 // structs are different than e.g. ptrs in that they're never the same as
@@ -218,6 +218,7 @@ bool type_signs_match(Type a, Type b);
 uint32_t type_func_num_params(Type type);
 Type type_func_return_type(Type type);
 Type type_func_param(Type type, uint32_t i);
+bool type_func_is_nested(Type type);
 
 Type type_ptr_subtype(Type type);
 

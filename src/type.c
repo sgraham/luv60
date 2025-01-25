@@ -4,6 +4,10 @@
 
 _Static_assert(NUM_TYPE_KINDS < (1<<8), "Too many TypeKind");
 
+typedef enum TypeDataFuncFlags {
+  TDFF_NESTED = 1,
+} TypeDataFuncFlags;
+
 typedef union TypeData {
   struct {
     uint32_t size;
@@ -35,7 +39,7 @@ typedef union TypeData {
   struct {
     Type return_type;
     uint32_t num_params;
-    uint32_t flags;  // currently unused
+    uint32_t flags;  // TypeDataFuncFlags
     uint32_t unused0; // Should make this param0 type
   } FUNC;
 
@@ -173,6 +177,9 @@ static bool functype_eq_func(void* keyvoid, void* slotvoid) {
   if (ktd->FUNC.num_params != std->FUNC.num_params) {
     return false;
   }
+  if (ktd->FUNC.flags != std->FUNC.flags) {
+    return false;
+  }
   if (!type_eq(ktd->FUNC.return_type, std->FUNC.return_type)) {
     return false;
   }
@@ -180,7 +187,7 @@ static bool functype_eq_func(void* keyvoid, void* slotvoid) {
   return memcmp(ktd + 1, std + 1, extra_typedata_blocks * sizeof(TypeDataExtra)) == 0;
 }
 
-Type type_function(Type* params, size_t num_params, Type return_type) {
+Type type_function(Type* params, size_t num_params, Type return_type, bool is_nested) {
   uint32_t rewind_location;
   Type func =
       type_alloc(TYPE_FUNC, /*extra=*/ROUND_UP(num_params, WORDS_IN_EXTRA), &rewind_location);
@@ -193,6 +200,7 @@ Type type_function(Type* params, size_t num_params, Type return_type) {
   TypeData* td = type_td(func);
   td->FUNC.num_params = num_params;
   td->FUNC.return_type = return_type;
+  td->FUNC.flags = is_nested ? TDFF_NESTED : 0;
   /* This would be the typed version, but it's just a memcpy into TypeDataExtra.
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
   for (size_t i = 0; i < num_params; ++i) {
@@ -493,6 +501,12 @@ Type type_func_param(Type type, uint32_t i){
   TypeData* td = type_td(type);
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1 + (i / WORDS_IN_EXTRA));
   return tde->FUNC_EXTRA.param[i % WORDS_IN_EXTRA];
+}
+
+bool type_func_is_nested(Type type) {
+  ASSERT(type_kind(type) == TYPE_FUNC);
+  TypeData* td = type_td(type);
+  return td->FUNC.flags & TDFF_NESTED;
 }
 
 Type type_ptr_subtype(Type type) {

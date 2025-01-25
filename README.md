@@ -7,15 +7,18 @@ Experimental language and compiler.
 motivation for this project which was ["why isn't compiling
 60fps"](https://mstdn.social/@sgraham/113676168780709161).
 
-Build with `m r`.
+Build and test
+--------------
 
-Currently only Windows x64 or Mac aarch64, build scripts require python in PATH.
-
-Add:
-```vimrc
-set runtimepath^=.../luv60/misc/vim
+On Windows x64 to build and run tests (requires `python` in PATH):
 ```
-to your .vimrc to get indenting and syntax highlighting.
+> m r test
+```
+
+On macOS aarch64 (requires `python3` in PATH):
+```
+$ ./m r test
+```
 
 Ordered goals
 -------------
@@ -32,10 +35,19 @@ Ordered goals
 4. Feels like Python, ergonomics-wise. Built-in list, dict, str, with arena
    allocation built-ins.
 
+Editor support
+--------------
+
+Add:
+```vimrc
+set runtimepath^=.../luv60/misc/vim
+```
+to your `.vimrc` to get indenting and syntax highlighting.
+
 What will it look like
 ----------------------
 
-***Note: copied from old compiler implementation, not much of this is
+***Note: copied from old compiler prototype implementation, not much of this is
 implemented in this version yet!***
 
 (syntax highlighting is tagged as "python" on GitHub, so not 100% accurate):
@@ -68,8 +80,8 @@ key: zip -> value: zap
 
 - Some `auto`-like type deduction
 - Terse list comprehensions
-- Nested functions with access to parent variables (no memory allocations
-  though, you can't return `helper`)
+- Nested functions with access to parent variables (no heap allocations though,
+  you can't return `helper`)
 
 ```python
 def int main():
