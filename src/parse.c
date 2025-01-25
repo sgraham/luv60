@@ -81,6 +81,10 @@ typedef struct Upval {
   Type type;
   uint32_t offset;
   ScopeResult scope_result;
+  // Only valid when SCOPE_RESULT_LOCAL or _PARAMETER, and only in the specific
+  // scope it's meant for. GLOBAL/UNDEFINED are not valid, and UPVALUE means it
+  // needs to be acquired through the functions $up, not this ref.
+  ir_ref ref;
 } Upval;
 
 typedef struct UpvalMap {
@@ -777,17 +781,21 @@ static void leave_function(void) {
     ir_ref upval_data = ir_ALLOCA(ir_CONST_U64(uvm->alloc_size));
     child_func->ref2 = upval_data;
     for (int i = 0; i < uvm->num_upvals; ++i) {
-#if 0
       Upval* uv = &uvm->upvals[i];
-      if (sym->scope_decl == SSD_DECLARED_PARAMETER) {
-        ir_STORE(ir_ADD_OFFSET(upval_data, uvm->offsets[i]), sym->ref);
-      } else if (sym->scope_decl == SSD_DECLARED_LOCAL) {
-        ir_STORE(ir_ADD_OFFSET(upval_data, uvm->offsets[i]),
-                 ir_VLOAD(type_to_ir_type(sym->type), sym->ref));
-      } else {
-        error("Unhandled scope type in upval capture.");
+      switch (uv->scope_result) {
+        case SCOPE_RESULT_GLOBAL:
+        case SCOPE_RESULT_UNDEFINED:
+          error("internal error, unexpected scope_result in upval capture");
+        case SCOPE_RESULT_LOCAL:
+          ir_STORE(ir_ADD_OFFSET(upval_data, uv->offset),
+                   ir_VLOAD(type_to_ir_type(uv->type), uv->ref));
+          break;
+        case SCOPE_RESULT_PARAMETER:
+          ir_STORE(ir_ADD_OFFSET(upval_data, uv->offset), uv->ref);
+          break;
+        case SCOPE_RESULT_UPVALUE:
+          error("need to stash something when propagated for this case");
       }
-#endif
     }
   }
 
