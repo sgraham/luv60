@@ -761,9 +761,20 @@ static void leave_function(void) {
       if (type_kind(sym->type) == TYPE_FUNC) {
         ir_STORE(ir_ADD_OFFSET(upval_data, uvm->offsets[i]), ir_CONST_ADDR(sym->addr));
       } else {
-        // TODO: maybe make sources Operand?
-        ir_STORE(ir_ADD_OFFSET(upval_data, uvm->offsets[i]),
-                 ir_VLOAD(type_to_ir_type(sym->type), sym->ref));
+        // This isn't an Operand because they were only evaluated in the context
+        // of the nested function, not the parent function, so we need to do
+        // another reference in this context. Doing another repeated
+        // scope_lookup() on the name wouldn't be correct because the inner
+        // function could do a `global`.
+        // TODO: VLOAD isn't correct for aggregates
+        if (sym->scope_decl == SSD_DECLARED_PARAMETER) {
+          ir_STORE(ir_ADD_OFFSET(upval_data, uvm->offsets[i]), sym->ref);
+        } else if (sym->scope_decl == SSD_DECLARED_LOCAL) {
+          ir_STORE(ir_ADD_OFFSET(upval_data, uvm->offsets[i]),
+                   ir_VLOAD(type_to_ir_type(sym->type), sym->ref));
+        } else {
+          error("Unhandled scope type in upval capture.");
+        }
       }
     }
   }
@@ -2364,6 +2375,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
       }
       if (eq_kind == TOK_EQ) {
         ir_VSTORE(sym->ref, operand_to_irref_imm(&op));
+        return operand_null;
       } else {
         error_offset(eq_offset, "Unhandled assignment type.");
       }
@@ -2378,6 +2390,8 @@ static Operand parse_variable(bool can_assign, Type* expected) {
         error_offset(eq_offset,
                      "Cannot use an augmented assignment when implicitly declaring a local.");
       }
+    } else if (scope_result == SCOPE_RESULT_PARAMETER) {
+      error_offset(eq_offset, "Function parameters are immutable.");
     }
   } else {
     if (scope_result == SCOPE_RESULT_LOCAL) {

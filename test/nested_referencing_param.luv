@@ -1,0 +1,9 @@
+# OUT: 59
+def int something(int z):
+    def int inner():
+        return z + 4
+    return inner()
+
+def int main():
+    print something(55)
+    return 0

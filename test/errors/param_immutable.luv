@@ -1,0 +1,10 @@
+# RET: 1
+# ERR: {self}:5:7:    x = 123
+# ERR: {ssss}           ^ error: Function parameters are immutable.
+def int something(int x):
+    x = 123
+    return x
+
+def int main():
+    print something(45)
+    return 0
