@@ -58,8 +58,7 @@ typedef struct Sym {
   SymScopeDecl scope_decl;
 } Sym;
 
-#define MAX_FUNC_NESTING 16
-#define MAX_VARIABLE_SCOPES 32
+#define MAX_SCOPES 32
 #define MAX_FUNC_PARAMS 32
 #define MAX_STRUCT_FIELDS 64
 #define MAX_PENDING_CONDS 32
@@ -77,17 +76,6 @@ typedef struct UpvalMap {
   uint32_t alloc_size;
 } UpvalMap;
 
-typedef struct FuncData {
-  Sym* sym;
-  Sym* return_slot;
-  PendingCond pending_conds[MAX_PENDING_CONDS];
-  int num_pending_conds;
-  ir_ctx ctx;
-  uint64_t arena_saved_pos;
-  UpvalMap upval_map;
-  ir_ref upval_base;
-} FuncData;
-
 typedef struct SmallFlatNameSymMap {
   Str names[16];
   Sym syms[16];
@@ -98,8 +86,18 @@ static void flat_name_map_init(SmallFlatNameSymMap* nm) {
   nm->num_entries = 0;
 }
 
-typedef struct VarScope VarScope;
-struct VarScope {
+typedef struct Scope {
+  // FuncData
+  Sym* func_sym;
+  Sym* return_slot;
+  PendingCond pending_conds[MAX_PENDING_CONDS];
+  int num_pending_conds;
+  ir_ctx ctx;
+  uint64_t arena_saved_pos;
+  UpvalMap upval_map;
+  ir_ref upval_base;
+
+  // VarScope
   union {
     DictImpl sym_dict;  // when is_full_dict
     SmallFlatNameSymMap flat_map;
@@ -108,7 +106,7 @@ struct VarScope {
   bool is_function;
   bool is_module;
   bool is_full_dict;
-};
+} Scope;
 
 typedef struct Parser {
   Arena* arena;
@@ -128,13 +126,9 @@ typedef struct Parser {
   int indent_levels[12];  // This is the maximum possible in lexer.
   int num_indents;
 
-  FuncData funcdatas[MAX_FUNC_NESTING];
-  int num_funcdatas;
-  VarScope varscopes[MAX_VARIABLE_SCOPES];
-  int num_varscopes;
-
-  FuncData* cur_func;
-  VarScope* cur_var_scope;
+  Scope scopes[MAX_SCOPES];
+  int num_scopes;
+  Scope* cur_scope;
 
   void* main_func_entry;
   int verbose;
@@ -472,25 +466,25 @@ static bool namesym_eq_func(void* void_nsp_a, void* void_nsp_b) {
 
 // Returns pointer into dict where Sym is stored by value, probably bad idea.
 static Sym* sym_new(SymKind kind, Str name, Type type) {
-  ASSERT(parser.cur_var_scope);
-  if (parser.cur_var_scope->is_full_dict) {
+  ASSERT(parser.cur_scope);
+  if (parser.cur_scope->is_full_dict) {
     NameSymPair nsp = {.name = name,
                       .sym = {
                           .kind = kind,
                           .name = name,
                           .type = type,
                       }};
-    DictInsert res = dict_insert(&parser.cur_var_scope->sym_dict, &nsp, namesym_hash_func,
+    DictInsert res = dict_insert(&parser.cur_scope->sym_dict, &nsp, namesym_hash_func,
                                 namesym_eq_func, sizeof(NameSymPair), _Alignof(NameSymPair));
     return &((NameSymPair*)dict_rawiter_get(&res.iter))->sym;
   } else {
-    SmallFlatNameSymMap* nm = &parser.cur_var_scope->flat_map;
+    SmallFlatNameSymMap* nm = &parser.cur_scope->flat_map;
     int count = nm->num_entries;
 
     if (count == COUNTOFI(nm->names)) {
       // flat_map is full, 'rehash' into full dict
 
-      // Can't immediately put into cur_var_scope because the flat_map and
+      // Can't immediately put into cur_scope because the flat_map and
       // dict_sym are a union.
       DictImpl new_dict = dict_new(parser.var_scope_arena, COUNTOFI(nm->names) * 4,
                                    sizeof(NameSymPair), _Alignof(NameSymPair));
@@ -502,8 +496,8 @@ static Sym* sym_new(SymKind kind, Str name, Type type) {
 
       // Now flat_map is dead, overrwrite with the dict and update the bool to
       // indicate we have a full dict.
-      parser.cur_var_scope->is_full_dict = true;
-      parser.cur_var_scope->sym_dict = new_dict;
+      parser.cur_scope->is_full_dict = true;
+      parser.cur_scope->sym_dict = new_dict;
 
       // Call the other branch to actually insert the new sym.
       return sym_new(kind, name, type);
@@ -629,41 +623,44 @@ static Sym* make_param(Str name, Type type, int index) {
   return new;
 }
 
-static void enter_scope(bool is_module, bool is_function) {
-  parser.cur_var_scope = &parser.varscopes[parser.num_varscopes++];
-  parser.cur_var_scope->arena_pos = arena_pos(parser.var_scope_arena);
-  parser.cur_var_scope->is_function = is_function;
-  parser.cur_var_scope->is_module = is_module;
-  parser.cur_var_scope->is_full_dict = !is_function;
-  if (parser.cur_var_scope->is_full_dict) {
-    parser.cur_var_scope->sym_dict =
+static void enter_scope(bool is_module, bool is_function, Sym* funcsym) {
+  parser.cur_scope = &parser.scopes[parser.num_scopes++];
+  parser.cur_scope->func_sym = funcsym;
+  parser.cur_scope->arena_saved_pos = arena_pos(arena_ir);
+  parser.cur_scope->upval_map.num_upvals = 0;
+  parser.cur_scope->arena_pos = arena_pos(parser.var_scope_arena);
+  parser.cur_scope->is_function = is_function;
+  parser.cur_scope->is_module = is_module;
+  parser.cur_scope->is_full_dict = !is_function;
+  if (parser.cur_scope->is_full_dict) {
+    parser.cur_scope->sym_dict =
         dict_new(parser.var_scope_arena, 1 << 20, sizeof(NameSymPair), _Alignof(NameSymPair));
   } else {
-    flat_name_map_init(&parser.cur_var_scope->flat_map);
+    flat_name_map_init(&parser.cur_scope->flat_map);
   }
 }
 
 static void leave_scope(void) {
-  arena_pop_to(parser.var_scope_arena, parser.cur_var_scope->arena_pos);
-  --parser.num_varscopes;
-  ASSERT(parser.num_varscopes >= 0);
-  if (parser.num_varscopes == 0) {
-    parser.cur_var_scope = NULL;
+  arena_pop_to(parser.var_scope_arena, parser.cur_scope->arena_pos);
+  --parser.num_scopes;
+  ASSERT(parser.num_scopes >= 0);
+  if (parser.num_scopes == 0) {
+    parser.cur_scope = NULL;
   } else {
-    parser.cur_var_scope = &parser.varscopes[parser.num_varscopes - 1];
+    parser.cur_scope = &parser.scopes[parser.num_scopes - 1];
   }
 }
 
 static void enter_function(Sym* sym,
                            Str param_names[MAX_FUNC_PARAMS],
                            Type param_types[MAX_FUNC_PARAMS]) {
-  bool is_nested = parser.num_funcdatas > 0;
+  bool is_nested = parser.num_scopes > 1;  // Module, parent.
+  if (is_nested) {
+    ASSERT(parser.scopes[parser.num_scopes - 1].is_function);
+    ASSERT(parser.scopes[0].is_module);
+  }
 
-  parser.cur_func = &parser.funcdatas[parser.num_funcdatas++];
-  parser.cur_func->sym = sym;
-  parser.cur_func->arena_saved_pos = arena_pos(arena_ir);
-  parser.cur_func->upval_map.num_upvals = 0;
-  enter_scope(/*is_module=*/false, /*is_function=*/true);
+  enter_scope(/*is_module=*/false, /*is_function=*/true, sym);
 
   ir_consistency_check();
 
@@ -672,7 +669,7 @@ static void enter_function(Sym* sym,
     opts |= IR_OPT_MEM2SSA;
   }
   ir_init(_ir_CTX, IR_FUNCTION | opts, 4096, 4096);
-  parser.cur_func->ctx.code_buffer = &parser.code_buffer;
+  parser.cur_scope->ctx.code_buffer = &parser.code_buffer;
   ir_START();
 
   uint32_t num_params = type_func_num_params(sym->type);
@@ -684,11 +681,11 @@ static void enter_function(Sym* sym,
   // Allocation of the VAR for return_slot must be after all PARAMs.
   // https://github.com/dstogov/ir/issues/103.
   Type ret_type = type_func_return_type(sym->type);
-  parser.cur_func->ctx.ret_type = type_to_ir_type(ret_type);
+  parser.cur_scope->ctx.ret_type = type_to_ir_type(ret_type);
   if (type_eq(ret_type, type_void)) {
-    parser.cur_func->return_slot = NULL;
+    parser.cur_scope->return_slot = NULL;
   } else {
-    parser.cur_func->return_slot =
+    parser.cur_scope->return_slot =
         make_local_and_alloc(SYM_VAR, str_intern_len("$ret", 4), ret_type, NULL);
   }
 
@@ -696,23 +693,23 @@ static void enter_function(Sym* sym,
     ASSERT(str_eq(param_syms[0]->name, str_intern_len("$up", 3)));
     ASSERT(type_kind(param_syms[0]->type) == TYPE_PTR);
     ASSERT(type_eq(type_ptr_subtype(param_syms[0]->type), type_void));
-    parser.cur_func->upval_base = param_syms[0]->ref;
+    parser.cur_scope->upval_base = param_syms[0]->ref;
   }
 }
 
 static void leave_function(void) {
-  Type ret_type = type_func_return_type(parser.cur_func->sym->type);
+  Type ret_type = type_func_return_type(parser.cur_scope->func_sym->type);
   if (type_eq(ret_type, type_void)) {
     ir_RETURN(IR_UNUSED);
   } else {
-    ir_RETURN(ir_VLOAD(type_to_ir_type(ret_type), parser.cur_func->return_slot->ref));
+    ir_RETURN(ir_VLOAD(type_to_ir_type(ret_type), parser.cur_scope->return_slot->ref));
   }
 
   if (parser.verbose) {
     ir_save(_ir_CTX, -1, stderr);
 #if BUILD_DEBUG
     FILE* f = fopen("tmp.dot", "wb");
-    ir_dump_dot(_ir_CTX, cstr_copy(parser.arena, parser.cur_func->sym->name), f);
+    ir_dump_dot(_ir_CTX, cstr_copy(parser.arena, parser.cur_scope->func_sym->name), f);
     base_writef_stderr("Wrote tmp.dot\n");
     fclose(f);
 #endif
@@ -732,46 +729,43 @@ static void leave_function(void) {
     if (entry) {
       if (parser.verbose) {
         fprintf(stderr, "=> codegen to %zu bytes at %p for '%s'\n", size, entry,
-                cstr_copy(parser.arena, parser.cur_func->sym->name));
+                cstr_copy(parser.arena, parser.cur_scope->func_sym->name));
 #  if !OS_WINDOWS  // TODO: don't have capstone or ir_disasm on win32 right now
         ir_disasm_init();
-        ir_disasm(cstr_copy(parser.arena, parser.cur_func->sym->name), entry, size, false, _ir_CTX,
+        ir_disasm(cstr_copy(parser.arena, parser.cur_scope->func_sym->name), entry, size, false, _ir_CTX,
                   stderr);
         ir_disasm_free();
 #  endif
       }
-      if (str_eq(parser.cur_func->sym->name, str_intern("main"))) {
+      if (str_eq(parser.cur_scope->func_sym->name, str_intern("main"))) {
         parser.main_func_entry = entry;
       }
     } else {
       base_writef_stderr("compilation failed '%s'\n",
-                         cstr_copy(parser.arena, parser.cur_func->sym->name));
+                         cstr_copy(parser.arena, parser.cur_scope->func_sym->name));
     }
-    parser.cur_func->sym->addr = entry;
+    parser.cur_scope->func_sym->addr = entry;
   }
 #endif
 
   ir_free(_ir_CTX);
 
-  arena_pop_to(arena_ir, parser.cur_func->arena_saved_pos);
+  arena_pop_to(arena_ir, parser.cur_scope->arena_saved_pos);
 
-  // This is pointing the nested one, but we have to "pop" it to make the
-  // capture code be generated in the parent, so we're pointing at a the
-  // "deallocated" UpvalMap (not really, just num_funcdatas decremented) from
-  // here until the end of this function.
-  UpvalMap* uvm = &parser.cur_func->upval_map;
-  Sym* child_func = parser.cur_func->sym;
-  bool is_nested = parser.num_funcdatas > 1;
-
-  --parser.num_funcdatas;
-  ASSERT(parser.num_funcdatas >= 0);
-  if (parser.num_funcdatas == 0) {
-    parser.cur_func = NULL;
-  } else {
-    parser.cur_func = &parser.funcdatas[parser.num_funcdatas - 1];
+  bool is_nested = parser.num_scopes > 2;  // Module, parent function, current function.
+  if (is_nested) {
+    ASSERT(parser.scopes[parser.num_scopes - 1].is_function);
+    ASSERT(parser.scopes[parser.num_scopes - 2].is_function);
+    ASSERT(parser.scopes[0].is_module);
   }
 
   if (is_nested) {
+    // This is pointing to the nested one, but we have to set cur_scope to the
+    // parent one, so that codegen goes to it (via _ir_CTX).
+    UpvalMap* uvm = &parser.cur_scope->upval_map;
+    Sym* child_func = parser.cur_scope->func_sym;
+    parser.cur_scope = &parser.scopes[parser.num_scopes - 2];
+
     ir_ref upval_data = ir_ALLOCA(ir_CONST_U64(uvm->alloc_size));
     child_func->ref2 = upval_data;
     for (int i = 0; i < uvm->num_upvals; ++i) {
@@ -2305,7 +2299,7 @@ static Operand parse_unary(bool can_assign, Type* expected) {
   }
 }
 
-static Sym* find_in_scope(VarScope* scope, Str name) {
+static Sym* find_in_scope(Scope* scope, Str name) {
   if (BRANCH_UNLIKELY(scope->is_full_dict)) {
     DictRawIter iter =
         dict_find(&scope->sym_dict, &name, namesym_hash_func, namesym_eq_func, sizeof(NameSymPair));
@@ -2329,7 +2323,7 @@ static Sym* find_in_scope(VarScope* scope, Str name) {
 static ScopeResult scope_lookup(Str name, Sym** sym) {
   *sym = NULL;
   bool crossed_function = false;
-  VarScope* cur_scope = parser.cur_var_scope;
+  Scope* cur_scope = parser.cur_scope;
   for (;;) {
     Sym* found_sym = find_in_scope(cur_scope, name);
     if (found_sym) {
@@ -2360,21 +2354,21 @@ static ScopeResult scope_lookup(Str name, Sym** sym) {
       crossed_function = true;
     }
 
-    if (cur_scope == &parser.varscopes[0]) {
+    if (cur_scope == &parser.scopes[0]) {
       break;
     }
-    ASSERT(cur_scope >= &parser.varscopes[0] &&
-           cur_scope <= &parser.varscopes[parser.num_varscopes - 1]);
+    ASSERT(cur_scope >= &parser.scopes[0] &&
+           cur_scope <= &parser.scopes[parser.num_scopes - 1]);
     cur_scope--;  // parent
   }
 
   return SCOPE_RESULT_UNDEFINED;
 }
 
-static Operand load_upval(Str name, Sym* sym) {
+static Operand find_or_create_upval(Str name, Sym* sym, bool* created_in_this_scope) {
   ASSERT(!str_is_none(name));
   ASSERT(sym);
-  UpvalMap* uvm = &parser.cur_func->upval_map;
+  UpvalMap* uvm = &parser.cur_scope->upval_map;
   int upval_index;
   for (upval_index = uvm->num_upvals - 1; upval_index >= 0; --upval_index) {
     if (str_eq(name, uvm->names[upval_index])) {
@@ -2396,6 +2390,7 @@ static Operand load_upval(Str name, Sym* sym) {
     uvm->names[upval_index] = name;
     uvm->sources[upval_index] = sym;
     uvm->offsets[upval_index] = uvm->alloc_size;
+    *created_in_this_scope = true;
 
     uvm->alloc_size = type_size(sym->type);
   }
@@ -2403,7 +2398,12 @@ static Operand load_upval(Str name, Sym* sym) {
   Type type = uvm->sources[upval_index]->type;
   return operand_rvalue_imm(
       type, ir_LOAD(type_to_ir_type(type),
-                    ir_ADD_OFFSET(parser.cur_func->upval_base, uvm->offsets[upval_index])));
+                    ir_ADD_OFFSET(parser.cur_scope->upval_base, uvm->offsets[upval_index])));
+}
+
+static void propagate_upval(Scope* scope, Str var_name, Sym* sym) {
+  // This should only be called on nested functions, which should have an $up.
+  ASSERT(scope->upval_base);
 }
 
 static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
@@ -2430,7 +2430,32 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
       }
     }
     case SCOPE_RESULT_UPVALUE: {
-      return load_upval(var_name, sym);
+      bool created_in_this_scope = false;
+      // We already did a scope_lookup() so we know the in the current function,
+      // we need to reference this value through $up.
+      Operand value = find_or_create_upval(var_name, sym, &created_in_this_scope);
+      if (created_in_this_scope) {
+        // Additionally, if it's the first time it was referenced in this
+        // function, and there's at least *2* parent functions i.e. we're in:
+        // inner() and want |x|, we need to also go up to middle's upval map and
+        // add it there so that the invocation of middle will be provided with a
+        // copy of x so that inner can in turn capture it.
+        //
+        //   def main():
+        //       x = 4
+        //       def int middle():
+        //           def int inner():
+        //               return x
+        //
+        // We don't need to walk as far as 0,1 in the stack, because the top two
+        // are the module and the top-most function, which doesn't have an
+        // upval_map.
+        for (int i = parser.num_scopes - 2; i >= 2; --i) {
+          Scope* scope = &parser.scopes[i];
+          propagate_upval(scope, var_name, sym);
+        }
+      }
+      return value;
     }
     case SCOPE_RESULT_UNDEFINED: {
       errorf("Undefined reference to '%s'.", cstr_copy(parser.arena, var_name));
@@ -2674,8 +2699,9 @@ static void if_statement(void) {
       // Push that we're in the FALSE block, with END of iftrue
       // When we get to the end of the outer block, END this false
       // and the MERGE iftrue, iffalse
-      ASSERT(parser.cur_func->num_pending_conds < COUNTOFI(parser.cur_func->pending_conds));
-      parser.cur_func->pending_conds[parser.cur_func->num_pending_conds++] = (PendingCond){iftrue};
+      ASSERT(parser.cur_scope->num_pending_conds < COUNTOFI(parser.cur_scope->pending_conds));
+      parser.cur_scope->pending_conds[parser.cur_scope->num_pending_conds++] =
+          (PendingCond){iftrue};
     } else {
       bool no_more = false;
       ir_IF_FALSE(cond);
@@ -2780,8 +2806,8 @@ static LastStatementType parse_block(void) {
     skip_newlines();
   }
 
-  if (parser.cur_func->num_pending_conds) {
-    PendingCond cond = parser.cur_func->pending_conds[--parser.cur_func->num_pending_conds];
+  if (parser.cur_scope->num_pending_conds) {
+    PendingCond cond = parser.cur_scope->pending_conds[--parser.cur_scope->num_pending_conds];
     ir_ref other = ir_END();
     ir_MERGE_2(cond.iftrue, other);
   }
@@ -2802,7 +2828,11 @@ static void def_statement(void) {
 
   Type param_types[MAX_FUNC_PARAMS];
   Str param_names[MAX_FUNC_PARAMS];
-  bool is_nested = parser.num_funcdatas > 0;
+  bool is_nested = parser.num_scopes > 1;
+  if (is_nested) {
+    ASSERT(parser.scopes[parser.num_scopes - 1].is_function);
+    ASSERT(parser.scopes[0].is_module);
+  }
   uint32_t num_params = parse_func_params(is_nested, param_types, param_names);
 
   consume(TOK_COLON, "Expect ':' before function body.");
@@ -2920,7 +2950,7 @@ static void parse_variable_statement(Type type) {
 }
 
 static LastStatementType return_statement(void) {
-  Type func_ret = type_func_return_type(parser.cur_func->sym->type);
+  Type func_ret = type_func_return_type(parser.cur_scope->func_sym->type);
   ASSERT(!type_is_none(func_ret));
   Operand op = operand_null;
   if (!type_eq(func_ret, type_void)) {
@@ -2929,7 +2959,7 @@ static LastStatementType return_statement(void) {
       errorf("Cannot convert type %s to expected return type %s.", type_as_str(op.type),
              type_as_str(func_ret));
     }
-    ir_VSTORE(parser.cur_func->return_slot->ref, operand_to_irref_imm(&op));
+    ir_VSTORE(parser.cur_scope->return_slot->ref, operand_to_irref_imm(&op));
     return LST_RETURN_VALUE;
   } else {
     consume(TOK_NEWLINE, "Expected newline after return in function with no return type.");
@@ -3010,10 +3040,8 @@ static void* parse_impl(Arena* main_arena,
   parser.file_contents = (const char*)file.buffer;
   parser.cur_filename = filename;
   parser.cur_token_index = 0;
-  parser.num_funcdatas = 0;
-  parser.num_varscopes = 0;
-  parser.cur_func = NULL;
-  parser.cur_var_scope = NULL;
+  parser.num_scopes = 0;
+  parser.cur_scope = NULL;
   parser.cur_token_index = -1;
   parser.indent_levels[0] = 0;
   parser.num_indents = 1;
@@ -3032,7 +3060,7 @@ static void* parse_impl(Arena* main_arena,
   parser.code_buffer.pos = parser.code_buffer.start;
 #endif
 
-  enter_scope(/*is_module=*/true, /*is_function=*/false);
+  enter_scope(/*is_module=*/true, /*is_function=*/false, NULL);
 
   parser.num_tokens = lex_indexer(file.buffer, file.allocated_size, parser.token_offsets);
   token_init(file.buffer);
@@ -3044,6 +3072,8 @@ static void* parse_impl(Arena* main_arena,
   while (parser.cur_kind != TOK_EOF) {
     parse_statement(/*toplevel=*/true);
   }
+
+  leave_scope();
 
 #if ENABLE_CODE_GEN
   ir_mem_protect(parser.code_buffer.start, code_buffer_size);

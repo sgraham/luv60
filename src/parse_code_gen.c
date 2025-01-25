@@ -4,7 +4,7 @@
 #include "../third_party/ir/ir_builder.h"
 
 #undef _ir_CTX
-#define _ir_CTX (&parser.cur_func->ctx)
+#define _ir_CTX (&parser.cur_scope->ctx)
 
 #include "parse.c"
 
