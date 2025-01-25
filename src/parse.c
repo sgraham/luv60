@@ -299,7 +299,7 @@ static ir_type type_to_ir_type(Type type) {
       return IR_FLOAT;
     case TYPE_PTR:
       if (type_kind(type_ptr_subtype(type)) == TYPE_VOID) {
-        return IR_U64;
+        return IR_ADDR;
       }
     default:
       base_writef_stderr("type_to_ir_type: %s\n", type_as_str(type));
@@ -2406,11 +2406,17 @@ static Operand find_or_create_upval(Scope* scope, Str name, Sym* sym) {
         case SCOPE_RESULT_UPVALUE:
           error("internal error, not sure what to do with this yet, nonlocal in middle?");
           break;
-        case SCOPE_RESULT_LOCAL:
         case SCOPE_RESULT_PARAMETER:
           // If it's known in the parent, then save this lookup type, and we're done.
           ASSERT(parent_sym == sym);
+          uv->scope_result = SCOPE_RESULT_PARAMETER;
+          uv->ref = sym->ref;
+          break;
+        case SCOPE_RESULT_LOCAL:
+          // If it's known in the parent, then save this lookup type, and we're done.
+          ASSERT(parent_sym == sym);
           uv->scope_result = SCOPE_RESULT_LOCAL;
+          uv->ref = sym->ref;
           break;
         case SCOPE_RESULT_UNDEFINED: {
           // If it's undefined in the parent scope, we need to add an upval to it,
@@ -2422,9 +2428,11 @@ static Operand find_or_create_upval(Scope* scope, Str name, Sym* sym) {
     } else {
       // If the parent isn't a nested function, then it must be toplevel so
       // there's nothing to capture-forward to it, and the method of looking
-      // it up must be just a local.
+      // it up must be just a local or a param.
       // TODO: assert something about sym here.
-      uv->scope_result = SCOPE_RESULT_LOCAL;
+      uv->scope_result =
+          sym->scope_decl == SSD_DECLARED_LOCAL ? SCOPE_RESULT_LOCAL : SCOPE_RESULT_PARAMETER;
+      uv->ref = sym->ref;
     }
   }
 
@@ -2959,7 +2967,8 @@ static void struct_statement() {
     }
     type_struct_set_initializer_blob(strukt, blob);
   }
-  sym_new(SYM_TYPE, name, strukt);
+  Sym* new = sym_new(SYM_TYPE, name, strukt);
+  new->scope_decl = SSD_DECLARED_GLOBAL;
 }
 
 static void parse_variable_statement(Type type) {
@@ -3014,6 +3023,7 @@ static LastStatementType parse_statement(bool toplevel) {
       break;
     case TOK_STRUCT:
       advance();
+      if (!toplevel) error("struct statement only allowed at top level currently.");
       struct_statement();
       break;
     case TOK_IF:

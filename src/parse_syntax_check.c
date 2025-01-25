@@ -23,6 +23,7 @@ typedef struct _ir_val {
   uint64_t u64;
 } ir_val;
 
+#define IR_ADDR 0
 #define IR_BOOL 0
 #define IR_DOUBLE 0
 #define IR_FLOAT 0
