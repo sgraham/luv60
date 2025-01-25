@@ -1,0 +1,12 @@
+# OUT: 14
+def int main():
+    z = 4
+
+    def int inner():
+        return z + 10
+
+    # ensure captured at function defintion
+    z = 123
+
+    print inner()
+    return 0

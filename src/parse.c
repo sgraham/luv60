@@ -61,10 +61,19 @@ typedef struct Sym {
 #define MAX_FUNC_PARAMS 32
 #define MAX_STRUCT_FIELDS 64
 #define MAX_PENDING_CONDS 32
+#define MAX_UPVALS 32
 
 typedef struct PendingCond {
   ir_ref iftrue;
 } PendingCond;
+
+typedef struct UpvalMap {
+  Str names[MAX_UPVALS];
+  Sym* sources[MAX_UPVALS];
+  uint32_t offsets[MAX_UPVALS];
+  int num_upvals;
+  uint32_t alloc_size;
+} UpvalMap;
 
 typedef struct FuncData {
   Sym* sym;
@@ -73,6 +82,9 @@ typedef struct FuncData {
   int num_pending_conds;
   ir_ctx ctx;
   uint64_t arena_saved_pos;
+  void* upval_pointer;
+  ir_ref upval_base;
+  UpvalMap upval_map;
 } FuncData;
 
 typedef struct SmallFlatNameSymMap {
@@ -629,9 +641,14 @@ static void leave_scope(void) {
 static void enter_function(Sym* sym,
                            Str param_names[MAX_FUNC_PARAMS],
                            Type param_types[MAX_FUNC_PARAMS]) {
+  bool is_nested = parser.num_funcdatas > 0;
+
   parser.cur_func = &parser.funcdatas[parser.num_funcdatas++];
   parser.cur_func->sym = sym;
   parser.cur_func->arena_saved_pos = arena_pos(arena_ir);
+  parser.cur_func->upval_pointer = is_nested ? arena_push(parser.arena, sizeof(void*), 8) : NULL;
+  parser.cur_func->upval_base = 0;
+  parser.cur_func->upval_map.num_upvals = 0;
   enter_scope(/*is_module=*/false, /*is_function=*/true);
 
   ir_consistency_check();
@@ -658,6 +675,10 @@ static void enter_function(Sym* sym,
   } else {
     parser.cur_func->return_slot =
         make_local_and_alloc(SYM_VAR, str_intern("$ret"), ret_type, NULL);
+  }
+
+  if (is_nested) {
+    parser.cur_func->upval_base = ir_LOAD_A(ir_CONST_ADDR(parser.cur_func->upval_pointer));
   }
 }
 
@@ -716,12 +737,35 @@ static void leave_function(void) {
 
   arena_pop_to(arena_ir, parser.cur_func->arena_saved_pos);
 
+  void* upval_pointer = parser.cur_func->upval_pointer;  // doubles as is_nested
+  // This is pointing the nested one, but we have to "pop" it to make the
+  // capture code be generated in the parent, so we're pointing at a the
+  // "deallocated" UpvalMap (not really, just num_funcdatas decremented) from
+  // here until the end of this function.
+  UpvalMap* uvm = &parser.cur_func->upval_map;
+
   --parser.num_funcdatas;
   ASSERT(parser.num_funcdatas >= 0);
   if (parser.num_funcdatas == 0) {
     parser.cur_func = NULL;
   } else {
     parser.cur_func = &parser.funcdatas[parser.num_funcdatas - 1];
+  }
+
+  if (upval_pointer) {
+    ir_ref upval_data = ir_ALLOCA(ir_CONST_U64(uvm->alloc_size));
+    ir_STORE(ir_CONST_ADDR(upval_pointer), upval_data);
+    for (int i = 0; i < uvm->num_upvals; ++i) {
+      // TODO: aggregates, etc.
+      Sym* sym = uvm->sources[i];
+      if (type_kind(sym->type) == TYPE_FUNC) {
+        ir_STORE(ir_ADD_OFFSET(upval_data, uvm->offsets[i]), ir_CONST_ADDR(sym->addr));
+      } else {
+        // TODO: maybe make sources Operand?
+        ir_STORE(ir_ADD_OFFSET(upval_data, uvm->offsets[i]),
+                 ir_VLOAD(type_to_ir_type(sym->type), sym->ref));
+      }
+    }
   }
 
   leave_scope();
@@ -2268,6 +2312,40 @@ static ScopeResult scope_lookup(Str name, Sym** sym, SymScopeDecl* scope_decl) {
   return SCOPE_RESULT_UNDEFINED;
 }
 
+static Operand load_upval(Str name, Sym* sym) {
+  ASSERT(!str_is_none(name));
+  ASSERT(sym);
+  UpvalMap* uvm = &parser.cur_func->upval_map;
+  int upval_index;
+  for (upval_index = uvm->num_upvals - 1; upval_index >= 0; --upval_index) {
+    if (str_eq(name, uvm->names[upval_index])) {
+      ASSERT(sym == uvm->sources[upval_index]);  // i think?
+      break;
+    }
+  }
+  if (upval_index < 0) {
+    // Didn't find it in the existing map, add a reference and then return it.
+    if (uvm->num_upvals >= COUNTOFI(uvm->names)) {
+      error("Too many upvals.");
+    }
+    upval_index = uvm->num_upvals++;
+
+    uvm->alloc_size = ALIGN_UP(uvm->alloc_size, type_align(sym->type));
+
+    uvm->names[upval_index] = name;
+    uvm->sources[upval_index] = sym;
+    uvm->offsets[upval_index] = uvm->alloc_size;
+
+    uvm->alloc_size = type_size(sym->type);
+  }
+
+  Type type = uvm->sources[upval_index]->type;
+  return operand_rvalue_imm(
+      type, ir_LOAD(type_to_ir_type(type),
+                    ir_ADD_OFFSET(parser.cur_func->upval_base, uvm->offsets[upval_index])));
+}
+
+
 static Operand parse_variable(bool can_assign, Type* expected) {
   Str target = str_from_previous();
   SymScopeDecl scope_decl = SSD_NONE;
@@ -2318,11 +2396,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
         //return operand_lvalue(sym->type, gen_mir_op_reg(sym->ir_reg));
       }
     } else if (scope_result == SCOPE_RESULT_UPVALUE) {
-      // identify upvals
-      // figure out how many up into parents
-      // determine all neccessary values referenced in child
-      // - need to parse body to get those hmm
-      error("todo, upval");
+      return load_upval(target, sym);
     } else {
       errorf("Undefined reference to '%s'.", cstr_copy(parser.arena, target));
     }
