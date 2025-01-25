@@ -38,7 +38,6 @@ typedef union Val {
 
 typedef enum SymScopeDecl {
   SSD_NONE,
-  SSD_ASSUMED_GLOBAL,
   SSD_DECLARED_GLOBAL,
   SSD_DECLARED_LOCAL,
   SSD_DECLARED_PARAMETER,
@@ -301,11 +300,9 @@ static ir_type type_to_ir_type(Type type) {
 typedef enum ScopeResult {
   SCOPE_RESULT_GLOBAL,
   SCOPE_RESULT_UNDEFINED,
-  SCOPE_RESULT_UNDEFINED_ASSUMED_GLOBAL,
   SCOPE_RESULT_LOCAL,
   SCOPE_RESULT_PARAMETER,
   SCOPE_RESULT_UPVALUE,
-  NUM_SCOPE_RESULTS,
 } ScopeResult;
 
 static ScopeResult scope_lookup(Str name, Sym** sym);
@@ -2338,9 +2335,7 @@ static ScopeResult scope_lookup(Str name, Sym** sym) {
     if (found_sym) {
       *sym = found_sym;
       SymScopeDecl sd = found_sym->scope_decl;
-      if (sd == SSD_ASSUMED_GLOBAL) {
-        return SCOPE_RESULT_UNDEFINED_ASSUMED_GLOBAL;
-      } else if (sd == SSD_DECLARED_NONLOCAL) {
+      if (sd == SSD_DECLARED_NONLOCAL) {
         ASSERT(false); abort();
         return SCOPE_RESULT_UPVALUE;
       } else if (sd == SSD_DECLARED_GLOBAL) {
@@ -2411,45 +2406,9 @@ static Operand load_upval(Str name, Sym* sym) {
                     ir_ADD_OFFSET(parser.cur_func->upval_base, uvm->offsets[upval_index])));
 }
 
-
-static Operand parse_variable(bool can_assign, Type* expected) {
-  Str target = str_from_previous();
-  Sym* sym = NULL;
-  ScopeResult scope_result = scope_lookup(target, &sym);
-  if (can_assign && match_assignment()) {
-    TokenKind eq_kind = parser.prev_kind;
-    TokenKind eq_offset = prev_offset();
-    if (scope_result == SCOPE_RESULT_UNDEFINED_ASSUMED_GLOBAL) {
-      errorf("Local variable '%s' referenced before assignment.", cstr_copy(parser.arena, target));
-    } else if (scope_result == SCOPE_RESULT_LOCAL) {
-      ASSERT(sym);
-      Operand op = parse_expression(NULL);
-      if (!convert_operand(&op, sym->type)) {
-        errorf("Cannot assign type %s to type %s.", type_as_str(op.type), type_as_str(sym->type));
-      }
-      if (eq_kind == TOK_EQ) {
-        ir_VSTORE(sym->ref, operand_to_irref_imm(&op));
-        return operand_null;
-      } else {
-        error_offset(eq_offset, "Unhandled assignment type.");
-      }
-      return operand_null;
-    } else if (scope_result == SCOPE_RESULT_UNDEFINED) {
-      ASSERT(!sym);
-      if (eq_kind == TOK_EQ) {
-        // Variable declaration without a type.
-        Operand op = parse_expression(NULL);
-        make_local_and_alloc(SYM_VAR, target, op.type, &op);
-        return operand_null;
-      } else {
-        error_offset(eq_offset,
-                     "Cannot use an augmented assignment when implicitly declaring a local.");
-      }
-    } else if (scope_result == SCOPE_RESULT_PARAMETER) {
-      error_offset(eq_offset, "Function parameters are immutable.");
-    }
-  } else {
-    if (scope_result == SCOPE_RESULT_LOCAL) {
+static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
+  switch (scope_result) {
+    case SCOPE_RESULT_LOCAL:
       if (type_kind(sym->type) == TYPE_FUNC) {
         if (type_func_is_nested(sym->type)) {
           return operand_rvalue_addr_bound_function(sym->type, ir_CONST_ADDR(sym->addr), sym->ref2);
@@ -2459,25 +2418,73 @@ static Operand parse_variable(bool can_assign, Type* expected) {
       } else {
         return operand_lvalue(sym->type, sym->ref);
       }
-    } else if (scope_result == SCOPE_RESULT_PARAMETER) {
+    case SCOPE_RESULT_PARAMETER: {
       return operand_rvalue_imm(sym->type, sym->ref);
-    } else if (scope_result == SCOPE_RESULT_GLOBAL) {
+    }
+    case SCOPE_RESULT_GLOBAL: {
       if (type_kind(sym->type) == TYPE_FUNC) {
         // Doesn't make sense in our use for GLOBAL to be bound I don't think.
         return operand_rvalue_addr(sym->type, ir_CONST_ADDR(sym->addr));
       } else {
-        ASSERT(false && "global var");
-        //return operand_lvalue(sym->type, gen_mir_op_reg(sym->ir_reg));
+        error("TODO: haven't handled reading globals yet.");
       }
-    } else if (scope_result == SCOPE_RESULT_UPVALUE) {
-      return load_upval(target, sym);
-    } else {
-      errorf("Undefined reference to '%s'.", cstr_copy(parser.arena, target));
+    }
+    case SCOPE_RESULT_UPVALUE: {
+      return load_upval(var_name, sym);
+    }
+    case SCOPE_RESULT_UNDEFINED: {
+      errorf("Undefined reference to '%s'.", cstr_copy(parser.arena, var_name));
     }
   }
+}
 
-  errorf("internal error in '%s'", __FUNCTION__);
-  return operand_null;
+static Operand parse_variable(bool can_assign, Type* expected) {
+  Str target = str_from_previous();
+  Sym* sym = NULL;
+  ScopeResult scope_result = scope_lookup(target, &sym);
+  if (can_assign && match_assignment()) {
+    TokenKind eq_kind = parser.prev_kind;
+    TokenKind eq_offset = prev_offset();
+    switch (scope_result) {
+      case SCOPE_RESULT_LOCAL: {
+        // If we found an existing local, we're just assigning to it here.
+        ASSERT(sym);
+        Operand op = parse_expression(NULL);
+        if (!convert_operand(&op, sym->type)) {
+          errorf("Cannot assign type %s to type %s.", type_as_str(op.type), type_as_str(sym->type));
+        }
+        if (eq_kind == TOK_EQ) {
+          ir_VSTORE(sym->ref, operand_to_irref_imm(&op));
+          return operand_null;
+        } else {
+          error_offset(eq_offset, "Unhandled assignment type.");
+        }
+      }
+      case SCOPE_RESULT_UNDEFINED: {
+        // If a local wasn't found, then implicitly create and initialize it.
+        ASSERT(!sym);
+        if (eq_kind == TOK_EQ) {
+          // Variable declaration without a type.
+          Operand op = parse_expression(NULL);
+          make_local_and_alloc(SYM_VAR, target, op.type, &op);
+          return operand_null;
+        } else {
+          error_offset(eq_offset,
+                       "Cannot use an augmented assignment when implicitly declaring a local.");
+        }
+      }
+
+      case SCOPE_RESULT_PARAMETER: {
+        error_offset(eq_offset, "Function parameters are immutable.");
+      }
+
+      case SCOPE_RESULT_UPVALUE:
+      case SCOPE_RESULT_GLOBAL:
+        error("TODO: unhandled case in variable assignment.");
+    }
+  } else {
+    return load_value(scope_result, sym, target);
+  }
 }
 
 // Has to match the order in tokens.inc.
