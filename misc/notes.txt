@@ -203,19 +203,22 @@ is_const only
 
 --- todo list
 
-- function hoisting: not most impt, but harder in single pass
-- list compr: also messy-ish because of late binding of it
-- more intricate scope resolution (esp for nested)
-- slices
-- dict
-- pointers
-- to_str, and auto for print
-- arena helpers
-- break/continue
-- loop over other things
-- in/not in
-- const
-- revisit string interpolation; don't slow down lex/parse if unused
+- [x] function hoisting: not most impt, but harder in single pass
+- [ ] list compr: also messy-ish because of late binding of it
+- [ ] more intricate scope resolution (esp for nested)
+- [ ] slices
+- [ ] dict
+- [ ] somewhere in here, need to do struct passing in IR
+- [ ] pointers
+- [ ] const
+- [ ] memfns
+- [ ] to_str, and auto for print
+- [ ] arena helpers
+- [ ] break/continue
+- [ ] loop over other things
+- [ ] in/not in
+- [ ] revisit string interpolation; don't slow down lex/parse if unused
+- [ ] aggregate upvals
 
 
 --- upval handling

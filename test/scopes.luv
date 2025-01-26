@@ -1,0 +1,25 @@
+# DISABLED
+# OUT: 2
+# OUT: 2
+# OUT: 1
+# OUT: 2
+something = 1
+
+def int main():
+    something = 2
+
+    def func_a():
+        print something
+
+    def func_b():
+        nonlocal something
+        print something
+
+    def func_c():
+        global something
+        print something
+
+    func_a()
+    func_b()
+    func_c()
+    print something
