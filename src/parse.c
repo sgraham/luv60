@@ -774,14 +774,17 @@ static void leave_function(void) {
   if (is_nested) {
     // This is pointing to the nested one, but we have to set cur_scope to the
     // parent one, so that codegen goes to it (via _ir_CTX).
-    UpvalMap* uvm = &parser.cur_scope->upval_map;
+    UpvalMap* inner_uvm = &parser.cur_scope->upval_map;
     Sym* child_func = parser.cur_scope->func_sym;
     parser.cur_scope = &parser.scopes[parser.num_scopes - 2];
+    UpvalMap* parent_uvm = &parser.cur_scope->upval_map;
+    (void)parent_uvm;
 
-    ir_ref upval_data = ir_ALLOCA(ir_CONST_U64(uvm->alloc_size));
+    ir_ref upval_data = ir_ALLOCA(ir_CONST_U64(inner_uvm->alloc_size));
     child_func->ref2 = upval_data;
-    for (int i = 0; i < uvm->num_upvals; ++i) {
-      Upval* uv = &uvm->upvals[i];
+
+    for (int i = 0; i < inner_uvm->num_upvals; ++i) {
+      Upval* uv = &inner_uvm->upvals[i];
       switch (uv->scope_result) {
         case SCOPE_RESULT_GLOBAL:
         case SCOPE_RESULT_UNDEFINED:
@@ -793,8 +796,29 @@ static void leave_function(void) {
         case SCOPE_RESULT_PARAMETER:
           ir_STORE(ir_ADD_OFFSET(upval_data, uv->offset), uv->ref);
           break;
-        case SCOPE_RESULT_UPVALUE:
-          error("need to stash something when propagated for this case");
+        case SCOPE_RESULT_UPVALUE: {
+          // This case is that the upval we're trying to capture is itself an
+          // upval in the current function.
+          for (int j = 0; j < parent_uvm->num_upvals; ++j) {
+            Upval* parent_uv = &parent_uvm->upvals[j];
+            if (str_eq(parent_uv->name, uv->name)) {
+              ASSERT(type_eq(parent_uv->type, uv->type));
+              /*
+              base_writef_stderr("want to write %s from %s for %s in %s\n",
+                                 cstr_copy(parser.arena, parent_uv->name),
+                                 cstr_copy(parser.arena, parser.cur_scope->func_sym->name),
+                                 cstr_copy(parser.arena, uv->name),
+                                 cstr_copy(parser.arena, child_func->name));
+                                 */
+              ASSERT(parser.cur_scope->upval_base);
+              ir_STORE(ir_ADD_OFFSET(upval_data, uv->offset),
+                       ir_LOAD(type_to_ir_type(uv->type),
+                               ir_ADD_OFFSET(parser.cur_scope->upval_base, parent_uv->offset)));
+              break;
+            }
+          }
+          break;
+        }
       }
     }
   }
@@ -2363,6 +2387,72 @@ static ScopeResult scope_lookup_recursive(Str name, Sym** sym) {
   return SCOPE_RESULT_UNDEFINED;
 }
 
+static int create_upval(Scope* scope, Str name, Sym* sym) {
+  UpvalMap* uvm = &scope->upval_map;
+  if (uvm->num_upvals >= COUNTOFI(uvm->upvals)) {
+    error("Too many upvals.");
+  }
+  int upval_index = uvm->num_upvals++;
+
+  Type type = sym->type;
+  uvm->alloc_size = ALIGN_UP(uvm->alloc_size, type_align(type));
+
+  Upval* uv = &uvm->upvals[upval_index];
+  *uv = (Upval){.name = name, .type = type, .offset = uvm->alloc_size};
+  uvm->alloc_size += type_size(type);
+
+  // If we created a reference in the current scope, we need to walk up parent
+  // scopes creating upvals there to make sure that middle scopes that didn't
+  // otherwise use the value themselves will have it forwarded to them, so
+  // that it can be captured by the inner-most.
+
+  ASSERT(scope >= &parser.scopes[1] && scope <= &parser.scopes[parser.num_scopes - 1]);
+  Scope* parent_scope = scope - 1;
+  if (parent_scope->upval_base) {
+    Sym* parent_sym;
+    ScopeResult parent_scope_result = scope_lookup_single(parent_scope, name, false, &parent_sym);
+    switch (parent_scope_result) {
+      case SCOPE_RESULT_GLOBAL:
+        error("internal error, shouldn't be upval'ing global");
+        break;
+      case SCOPE_RESULT_UPVALUE:
+        error("internal error, not sure what to do with this yet, nonlocal in middle?");
+        break;
+      case SCOPE_RESULT_PARAMETER:
+        // If it's known in the parent, then save this lookup type, and we're done.
+        ASSERT(parent_sym == sym);
+        uv->scope_result = SCOPE_RESULT_PARAMETER;
+        uv->ref = sym->ref;
+        break;
+      case SCOPE_RESULT_LOCAL:
+        // If it's known in the parent, then save this lookup type, and we're done.
+        ASSERT(parent_sym == sym);
+        uv->scope_result = SCOPE_RESULT_LOCAL;
+        uv->ref = sym->ref;
+        break;
+      case SCOPE_RESULT_UNDEFINED:
+        // This is not defined in the parent, so it must be an upval in the
+        // parent (in a "middle" def that doesn't actually declare or use the
+        // variable we're looking for). We recurse and create an upval in
+        // the parent, but we don't (cannot) create a "load" because the
+        // ir_ref values would be in the current function, not the parent.
+        uv->scope_result = SCOPE_RESULT_UPVALUE;
+        create_upval(parent_scope, name, sym);
+        break;
+    }
+  } else {
+    // If the parent isn't a nested function, then it must be toplevel so
+    // there's nothing to capture-forward to it, and the method of looking
+    // it up must be just a local or a param.
+    // TODO: assert something about sym here.
+    uv->scope_result =
+        sym->scope_decl == SSD_DECLARED_LOCAL ? SCOPE_RESULT_LOCAL : SCOPE_RESULT_PARAMETER;
+    uv->ref = sym->ref;
+  }
+
+  return upval_index;
+}
+
 static Operand find_or_create_upval(Scope* scope, Str name, Sym* sym) {
   ASSERT(!str_is_none(name));
   UpvalMap* uvm = &scope->upval_map;
@@ -2373,69 +2463,12 @@ static Operand find_or_create_upval(Scope* scope, Str name, Sym* sym) {
     }
   }
 
-  Type type = sym->type;
-
   if (upval_index < 0) {
     // Didn't find it in the existing map, add a reference and then return it.
-
-    if (uvm->num_upvals >= COUNTOFI(uvm->upvals)) {
-      error("Too many upvals.");
-    }
-    upval_index = uvm->num_upvals++;
-
-    uvm->alloc_size = ALIGN_UP(uvm->alloc_size, type_align(type));
-
-    Upval* uv = &uvm->upvals[upval_index];
-    *uv = (Upval){.name = name, .type = type, .offset = uvm->alloc_size};
-    uvm->alloc_size += type_size(type);
-
-    // If we created a reference in the current scope, we need to walk up parent
-    // scopes creating upvals there to make sure that middle scopes that didn't
-    // otherwise use the value themselves will have it forwarded to them, so
-    // that it can be captured by the inner-most.
-
-    ASSERT(scope >= &parser.scopes[1] && scope <= &parser.scopes[parser.num_scopes - 1]);
-    Scope* parent_scope = scope - 1;
-    if (parent_scope->upval_base) {
-      Sym* parent_sym;
-      ScopeResult parent_scope_result = scope_lookup_single(parent_scope, name, false, &parent_sym);
-      switch (parent_scope_result) {
-        case SCOPE_RESULT_GLOBAL:
-          error("internal error, shouldn't be upval'ing global");
-          break;
-        case SCOPE_RESULT_UPVALUE:
-          error("internal error, not sure what to do with this yet, nonlocal in middle?");
-          break;
-        case SCOPE_RESULT_PARAMETER:
-          // If it's known in the parent, then save this lookup type, and we're done.
-          ASSERT(parent_sym == sym);
-          uv->scope_result = SCOPE_RESULT_PARAMETER;
-          uv->ref = sym->ref;
-          break;
-        case SCOPE_RESULT_LOCAL:
-          // If it's known in the parent, then save this lookup type, and we're done.
-          ASSERT(parent_sym == sym);
-          uv->scope_result = SCOPE_RESULT_LOCAL;
-          uv->ref = sym->ref;
-          break;
-        case SCOPE_RESULT_UNDEFINED: {
-          // If it's undefined in the parent scope, we need to add an upval to it,
-          // so recurse.
-          find_or_create_upval(parent_scope, name, sym);
-          break;
-        }
-      }
-    } else {
-      // If the parent isn't a nested function, then it must be toplevel so
-      // there's nothing to capture-forward to it, and the method of looking
-      // it up must be just a local or a param.
-      // TODO: assert something about sym here.
-      uv->scope_result =
-          sym->scope_decl == SSD_DECLARED_LOCAL ? SCOPE_RESULT_LOCAL : SCOPE_RESULT_PARAMETER;
-      uv->ref = sym->ref;
-    }
+    upval_index = create_upval(scope, name, sym);
   }
 
+  Type type = sym->type;
   return operand_rvalue_imm(
       type, ir_LOAD(type_to_ir_type(type),
                     ir_ADD_OFFSET(scope->upval_base, uvm->upvals[upval_index].offset)));

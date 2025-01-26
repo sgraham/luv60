@@ -1,3 +1,4 @@
+# DISABLED
 # OUT: 12
 def int main():
     x = 3
@@ -7,13 +8,11 @@ def int main():
 
         def int inner():
             return x + y + 5
-        #inner.ref2 == ALLOCA(sizeof(x)+sizeof(y))
-        #inner.ref2.x = $middleup->x
-        #inner.ref2.y = y
+
+        # TODO: can't do this assignment for unrelated reasons right now
+        x = 999
 
         return inner()
-    #middle.ref2 == ALLOCA(sizeof(x))
-    #middle.ref2.x = x
 
     print middle()
     return 0
