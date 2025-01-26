@@ -50,9 +50,10 @@ typedef struct Sym {
   Type type;
   union {
     ir_ref ref;
-    struct { // kind == SYM_FUNC
+    struct {
+      // (kind == SYM_FUNC) or (kind == SYM_VAR and scope_decl == GLOBAL)
       void* addr;
-      ir_ref ref2;  // upvals
+      ir_ref ref2;  // upvals for SYM_FUNC
     };
   };
   SymScopeDecl scope_decl;
@@ -159,15 +160,33 @@ static Parser parser;
 #define OPK_BIT_CONST 0x1
 #define OPK_BIT_RVAL_REF 0x2
 #define OPK_BIT_LVAL_REF 0x4
-#define OPK_BIT_ADDR 0x8
+#define OPK_BIT_LOCAL_ADDR 0x8
 #define OPK_BIT_SECOND_REF 0x10
+#define OPK_BIT_GLOBAL_ADDR 0x20
 
 typedef enum OpKind {
+  // an actual number at compile time in .val
   OPK_CONST = OPK_BIT_CONST,
+
+  // an immediate value in .ref
   OPK_REF_RVAL = OPK_BIT_RVAL_REF,
-  OPK_REF_RVAL_ADDR = OPK_BIT_RVAL_REF | OPK_BIT_ADDR,
-  OPK_REF_RVAL_ADDR_BOUND_FUNC = OPK_BIT_SECOND_REF | OPK_BIT_RVAL_REF | OPK_BIT_ADDR,
-  OPK_REF_LVAL_ADDR = OPK_BIT_LVAL_REF | OPK_BIT_ADDR,
+
+  // address of a local in .ref, not a named variable (e.g. a compound
+  // literal, range, etc.)
+  OPK_REF_RVAL_LOCAL_ADDR = OPK_BIT_RVAL_REF | OPK_BIT_LOCAL_ADDR,
+
+  // address of a local in .ref to a named variable (could be stored to)
+  OPK_REF_LVAL_LOCAL_ADDR = OPK_BIT_LVAL_REF | OPK_BIT_LOCAL_ADDR,
+
+  // global address as const in .ref, and an additional address that points at
+  // the closure block in .ref2
+  OPK_REF_RVAL_LOCAL_ADDR_BOUND_FUNC = OPK_BIT_SECOND_REF | OPK_BIT_RVAL_REF | OPK_BIT_LOCAL_ADDR,
+
+  // global address as const in .ref (read-only; generally a function address)
+  OPK_REF_RVAL_GLOBAL_ADDR = OPK_BIT_RVAL_REF | OPK_BIT_GLOBAL_ADDR,
+
+  // global variable address as const in .ref (could be stored to)
+  OPK_REF_LVAL_GLOBAL_ADDR = OPK_BIT_LVAL_REF | OPK_BIT_GLOBAL_ADDR,
 } OpKind;
 
 typedef struct Operand {
@@ -184,8 +203,12 @@ static inline FORCE_INLINE bool op_is_const(Operand op) {
   return op.kind == OPK_CONST;
 }
 
-static inline FORCE_INLINE bool op_is_addr(Operand op) {
-  return op.kind & OPK_BIT_ADDR;
+static inline FORCE_INLINE bool op_is_local_addr(Operand op) {
+  return op.kind & OPK_BIT_LOCAL_ADDR;
+}
+
+static inline FORCE_INLINE bool op_is_global_addr(Operand op) {
+  return op.kind & OPK_BIT_GLOBAL_ADDR;
 }
 
 static inline FORCE_INLINE bool op_is_null(Operand op) {
@@ -317,16 +340,25 @@ static Operand operand_sym(Type type, LqSymbol lqsym) {
 }
 #endif
 
-static Operand operand_lvalue(Type type, ir_ref ref) {
-  return (Operand){.kind = OPK_REF_LVAL_ADDR, .type = type, .ref = ref};
+static Operand operand_lvalue_local(Type type, ir_ref ref) {
+  return (Operand){.kind = OPK_REF_LVAL_LOCAL_ADDR, .type = type, .ref = ref};
 }
 
-static Operand operand_rvalue_addr(Type type, ir_ref ref) {
-  return (Operand){.kind = OPK_REF_RVAL_ADDR, .type = type, .ref = ref};
+static Operand operand_rvalue_local_addr(Type type, ir_ref ref) {
+  return (Operand){.kind = OPK_REF_RVAL_LOCAL_ADDR, .type = type, .ref = ref};
 }
 
-static Operand operand_rvalue_addr_bound_function(Type type, ir_ref ref, ir_ref ref2) {
-  return (Operand){.kind = OPK_REF_RVAL_ADDR_BOUND_FUNC, .type = type, .ref = ref, .ref2 = ref2};
+static Operand operand_bound_local_function(Type type, ir_ref ref, ir_ref ref2) {
+  return (Operand){
+      .kind = OPK_REF_RVAL_LOCAL_ADDR_BOUND_FUNC, .type = type, .ref = ref, .ref2 = ref2};
+}
+
+static Operand operand_rvalue_global_addr(Type type, ir_ref ref) {
+  return (Operand){.kind = OPK_REF_RVAL_GLOBAL_ADDR, .type = type, .ref = ref};
+}
+
+static Operand operand_lvalue_global_addr(Type type, ir_ref ref) {
+  return (Operand){.kind = OPK_REF_LVAL_GLOBAL_ADDR, .type = type, .ref = ref};
 }
 
 static Operand operand_rvalue_imm(Type type, ir_ref ref) {
@@ -444,14 +476,23 @@ static ir_ref operand_to_irref_imm(Operand* op) {
     }
     case OPK_REF_RVAL:
       return op->ref;
-    case OPK_REF_RVAL_ADDR:
-    case OPK_REF_RVAL_ADDR_BOUND_FUNC:  // assume something else will load ref2
-    case OPK_REF_LVAL_ADDR:
+    case OPK_REF_RVAL_LOCAL_ADDR_BOUND_FUNC:  // assume something else will load ref2
+    case OPK_REF_LVAL_LOCAL_ADDR:
+    case OPK_REF_RVAL_LOCAL_ADDR:
       if (type_is_aggregate(op->type)) {
         // TODO: This seems questionable.
         return op->ref;
       }
       return ir_VLOAD(type_to_ir_type(op->type), op->ref);
+    case OPK_REF_RVAL_GLOBAL_ADDR:
+    case OPK_REF_LVAL_GLOBAL_ADDR:
+      if (type_is_aggregate(op->type)) {
+        // TODO: This seems questionable. see test/print.luv
+        return op->ref;
+      }
+      return ir_LOAD(type_to_ir_type(op->type), op->ref);
+    default:
+      error("internal error: unhandled OpKind");
   }
 }
 
@@ -617,6 +658,45 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
     }
   }
   new->scope_decl = SSD_DECLARED_LOCAL;
+  return new;
+}
+
+static Sym* make_global(SymKind kind, Str name, Type type, Val initial_value) {
+  Sym* new = sym_new(kind, name, type);
+  void* addr = arena_push(parser.arena, type_size(type), type_align(type));
+  switch (type_kind(type)) {
+    case TYPE_BOOL:
+      *(bool*)addr = initial_value.b;
+      break;
+    case TYPE_U8:
+      *(uint8_t*)addr = initial_value.u8;
+      break;
+    case TYPE_I8:
+      *(int8_t*)addr = initial_value.i8;
+      break;
+    case TYPE_U16:
+      *(uint16_t*)addr = initial_value.u16;
+      break;
+    case TYPE_I16:
+      *(int16_t*)addr = initial_value.i16;
+      break;
+    case TYPE_U32:
+      *(uint32_t*)addr = initial_value.u32;
+      break;
+    case TYPE_I32:
+      *(int32_t*)addr = initial_value.i32;
+      break;
+    case TYPE_U64:
+      *(uint64_t*)addr = initial_value.u64;
+      break;
+    case TYPE_I64:
+      *(int64_t*)addr = initial_value.i64;
+      break;
+    default:
+      error("internal error: unexpected global const init.");
+  }
+  new->addr = addr;
+  new->scope_decl = SSD_DECLARED_GLOBAL;
   return new;
 }
 
@@ -1131,7 +1211,7 @@ static bool cast_operand(Operand* operand, Type type) {
       }
     } else {
       ir_ref ref_to_adjust;
-      if (op_is_addr(*operand)) {
+      if (op_is_local_addr(*operand)) {
         ref_to_adjust = operand_to_irref_imm(operand);
         operand->kind = OPK_REF_RVAL;
       } else {
@@ -1847,7 +1927,7 @@ static Operand parse_compound_literal(bool can_assign, Type* expected) {
     ir_STORE(ir_ADD_OFFSET(base_addr, field_offset), operand_to_irref_imm(&field_values[i]));
   }
 
-  return operand_rvalue_addr(lit_type, base_addr);
+  return operand_rvalue_local_addr(lit_type, base_addr);
 }
 
 static Operand parse_dict_literal(bool can_assign, Type* expected) {
@@ -2134,7 +2214,7 @@ static Operand parse_range(bool can_assign, Type* expected) {
       ir_STORE(astep, operand_to_irref_imm(&third));
     }
   }
-  return operand_rvalue_addr(type_range, range);
+  return operand_rvalue_local_addr(type_range, range);
 }
 
 static Operand parse_sizeof(bool can_assign, Type* expected) {
@@ -2164,9 +2244,9 @@ static Operand parse_string(bool can_assign, Type* expected) {
       error("Invalid string escape.");
     }
     inside_quotes.size = new_len;
-    return operand_rvalue_addr(type_str, emit_string_obj(inside_quotes));
+    return operand_rvalue_global_addr(type_str, emit_string_obj(inside_quotes));
   } else {
-    return operand_rvalue_addr(type_str, emit_string_obj(inside_quotes));
+    return operand_rvalue_global_addr(type_str, emit_string_obj(inside_quotes));
   }
 }
 
@@ -2209,7 +2289,7 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
             errorf("Cannot subscript using type %s.", type_as_str(subscript.type));
           }
           if (left_type_kind == TYPE_ARRAY) {
-            ASSERT(op_is_addr(left));
+            ASSERT(op_is_local_addr(left));
             subtype = type_array_subtype(left.type);
             target_addr = ir_ADD_A(left.ref, ir_MUL_I64(ir_CONST_I64(type_size(subtype)),
                                                         operand_to_irref_imm(&subscript)));
@@ -2479,12 +2559,12 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
     case SCOPE_RESULT_LOCAL:
       if (type_kind(sym->type) == TYPE_FUNC) {
         if (type_func_is_nested(sym->type)) {
-          return operand_rvalue_addr_bound_function(sym->type, ir_CONST_ADDR(sym->addr), sym->ref2);
+          return operand_bound_local_function(sym->type, ir_CONST_ADDR(sym->addr), sym->ref2);
         } else {
-          return operand_rvalue_addr(sym->type, ir_CONST_ADDR(sym->addr));
+          return operand_rvalue_global_addr(sym->type, ir_CONST_ADDR(sym->addr));
         }
       } else {
-        return operand_lvalue(sym->type, sym->ref);
+        return operand_lvalue_local(sym->type, sym->ref);
       }
     case SCOPE_RESULT_PARAMETER: {
       return operand_rvalue_imm(sym->type, sym->ref);
@@ -2492,44 +2572,15 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
     case SCOPE_RESULT_GLOBAL: {
       if (type_kind(sym->type) == TYPE_FUNC) {
         // Doesn't make sense in our use for GLOBAL to be bound I don't think.
-        return operand_rvalue_addr(sym->type, ir_CONST_ADDR(sym->addr));
+        return operand_rvalue_global_addr(sym->type, ir_CONST_ADDR(sym->addr));
       } else {
-        error("TODO: haven't handled reading globals yet.");
+        return operand_lvalue_global_addr(sym->type, ir_CONST_ADDR(sym->addr));
       }
     }
     case SCOPE_RESULT_UPVALUE: {
       // We already did a scope_lookup() so we know the in the current function,
       // we need to reference this value through $up.
       Operand value = find_or_create_upval(parser.cur_scope, var_name, sym);
-#if 0
-      bool created_in_this_scope = false;
-      if (created_in_this_scope) {
-        // Additionally, if it's the first time it was referenced in this
-        // function, and there's at least *2* parent functions i.e. we're in:
-        // inner() and want |x| from main(), we need to also go up to middle()'s
-        // upval map and add it there, so that the invocation of middle() will be
-        // provided with a copy of |x|, so that inner() can in turn capture it.
-        //
-        //   def main():
-        //       x = 4
-        //       def int middle():
-        //           def int inner():
-        //               return x
-        //
-        // We don't need to walk as far as 0,1 in the stack, because the top two
-        // are the module and the top-most function, which doesn't have an
-        // upval_map.
-        for (int i = parser.num_scopes - 2; i >= 2; --i) {
-          Scope* scope = &parser.scopes[i];
-          if (!propagate_upval(scope, var_name, elem_type)) {
-            // If it didn't need to be created in this scope, then either it had
-            // already been, so it's forwarded enough for our inner-more scope,
-            // or we found the actual definition, so no need to go further.
-            break;
-          }
-        }
-      }
-#endif
       return value;
     }
     case SCOPE_RESULT_UNDEFINED: {
@@ -2561,16 +2612,30 @@ static Operand parse_variable(bool can_assign, Type* expected) {
         }
       }
       case SCOPE_RESULT_UNDEFINED: {
-        // If a local wasn't found, then implicitly create and initialize it.
         ASSERT(!sym);
-        if (eq_kind == TOK_EQ) {
+        if (parser.cur_scope->is_function) {
+          ASSERT(!parser.cur_scope->is_module);
+          // If a local wasn't found, then implicitly create and initialize it.
+          if (eq_kind == TOK_EQ) {
+            // Variable declaration without a type.
+            Operand op = parse_expression(NULL);
+            make_local_and_alloc(SYM_VAR, target, op.type, &op);
+            return operand_null;
+          } else {
+            error_offset(eq_offset,
+                         "Cannot use an augmented assignment when implicitly declaring a local.");
+          }
+        } else {
+          ASSERT(parser.cur_scope->is_module);
+          ASSERT(!parser.cur_scope->is_function);
+          ASSERT(eq_kind == TOK_EQ);
           // Variable declaration without a type.
           Operand op = parse_expression(NULL);
-          make_local_and_alloc(SYM_VAR, target, op.type, &op);
+          if (!op_is_const(op)) {
+            error("Global initializers must be constants.");
+          }
+          make_global(SYM_VAR, target, op.type, op.val);
           return operand_null;
-        } else {
-          error_offset(eq_offset,
-                       "Cannot use an augmented assignment when implicitly declaring a local.");
         }
       }
 
@@ -2816,7 +2881,7 @@ static void for_statement(void) {
     consume(TOK_IN, "Expect 'in'.");
     Operand expr = parse_expression(NULL);
     if (type_eq(expr.type, type_range)) {
-      ASSERT(op_is_addr(expr));
+      ASSERT(op_is_local_addr(expr));
       ir_ref astart = expr.ref;
       ir_ref astop = ir_ADD_A(expr.ref, ir_CONST_ADDR(sizeof(int64_t)));
       ir_ref astep = ir_ADD_A(expr.ref, ir_CONST_ADDR(2 * sizeof(int64_t)));

@@ -1,0 +1,6 @@
+# OUT: 123
+something = 123
+
+def int main():
+    print something
+    return 0
