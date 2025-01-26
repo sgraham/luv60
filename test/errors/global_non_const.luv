@@ -1,0 +1,8 @@
+# DISABLED need to figure out where to limit expression parsing in const context
+# RET: 1
+
+
+def int somefunc():
+    return 123
+
+myvar = somefunc()
