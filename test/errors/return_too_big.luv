@@ -1,10 +1,9 @@
-# DISABLED
 # RET: 1
 # RUN: {self} --main-rc
-# ERR: {self}:4:12:    return 123i32
-# ERR: {ssss}                 ^ error: Cannot convert type i32 to expected return type i16.
+# ERR: {self}:6:12:    return 32768i32
+# ERR: {ssss}                 ^ error: Overflow converting constant to i16.
 def i16 func16():
-    return 123i32
+    return 32768i32
 
 def i16 main():
     return func16()

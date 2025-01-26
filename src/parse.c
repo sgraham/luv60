@@ -1005,7 +1005,7 @@ static void consume(TokenKind tok_kind, const char* message) {
 //     [5]int x = [1,2,3,4,5]
 //
 // having to jit and call a function that returns 5 seems a bit heavy. It's
-// probably reasoanble for more complex expressions though because then it's
+// probably reasonable for more complex expressions though because then it's
 // sort of just the difference between running a tree-interpret on the is_const
 // Operands vs. JITing that evaluation.
 //
@@ -2617,7 +2617,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
           ASSERT(!parser.cur_scope->is_module);
           // If a local wasn't found, then implicitly create and initialize it.
           if (eq_kind == TOK_EQ) {
-            // Variable declaration without a type.
+            // Local variable declaration without a type.
             Operand op = parse_expression(NULL);
             make_local_and_alloc(SYM_VAR, target, op.type, &op);
             return operand_null;
@@ -2629,8 +2629,10 @@ static Operand parse_variable(bool can_assign, Type* expected) {
           ASSERT(parser.cur_scope->is_module);
           ASSERT(!parser.cur_scope->is_function);
           ASSERT(eq_kind == TOK_EQ);
-          // Variable declaration without a type.
-          Operand op = parse_expression(NULL);
+          // Global variable declaration without a type. TODO: need to be more
+          // careful about const eval vs in-function eval as this can easily
+          // crash if it starts to emit ir_INSTRs on the RHS.
+          Operand op = const_expression();
           if (!op_is_const(op)) {
             error("Global initializers must be constants.");
           }
