@@ -1,0 +1,5 @@
+# RET: 1
+# ERR: {self}:5:7:myvar = 2
+# ERR: {ssss}           ^ error: Cannot re-initialize an existing global.
+myvar = 1
+myvar = 2

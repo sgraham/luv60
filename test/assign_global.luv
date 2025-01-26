@@ -1,0 +1,10 @@
+# OUT: 123
+# OUT: 456
+
+myvar = 123
+
+def int main():
+    print myvar
+    myvar = 456
+    print myvar
+    return 0
