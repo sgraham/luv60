@@ -268,6 +268,63 @@ don't try to solve escape or closure, potentially some sort of arena integration
 some day.
 
 
+---
+
+list comprehension parsing
+
+from parse_list_literal_or_compr():
+
+Parsing this expression will fail in a list comprehension because the
+expression won't be able to lookup the identifiers that are bound in
+the `for` clause. Not sure how to best resolve this, I'm tempted to put
+the for at the beginning, even though it will be annoyingly flipped
+from Python, i.e.:
+
+   result = [for x in nums: x*3]
+
+rather than:
+
+   result = [x*3 for x in nums]
+
+It feels randomly different, but since it should make the parser
+not-crazy here, it's probably the right way to go?
+
+[for x in nums: if x % 2 == 0: x*3]
+
+This is annoying that it makes a new category of expression-after-for/if without
+a return.
+
+So the other way is some way to find the for. A 'skim' parse_expression would be
+full way where: it doesn't do var lookup or any IR until it's finished the expr.
+then check for `for` and then we know if list literal or comprehension. but that
+seems very not-suitable for the current code because it goes down the whole
+pratt parser rules table, which touches a lot. a second rule table might be
+better, but it has to match the first one's advancment, so the whole thing seems
+a bit stinky.
+
+since `for` can't appear in an expression, maybe it's fine to just peek tokens
+until either TOK_FOR or TOK_RSQUARE? doesn't even have to be a real peek (in
+terms of buffering the categorize) it could just scan through. i think that
+mostly works, except for nested list compr, like:
+
+  [x + [y for y in range(5)] for x in some_lists]
+          ^
+
+then the first x would find the marked one. is it enough to keep a stack of
+LSQUARE/RSQUARE pairs?
+
+==> at start of list after first [, nest_count = 0, if [ increment. if ]
+decrement. if < 0 done and not-comprehension. if for, save location, compile as
+compr, and then compile the expr after bindings.
+
+probably need inc/dec on {( and }) too, if dict/set compr.
+
+seems pretty doable in theory. don't have machinery to skim ahead like that, so
+will need a version of advance() that knows how to do something like that. it
+doesn't need full newline/indent handling, only NL since it's necessarily inside
+[ ]. and the compilation of the expression should just be parse_expression(),
+assert the location is the for, and the set the location to after the clauses.
+easy peasy?
 
 
 # vim: set tw=80 fo=roqnjt:

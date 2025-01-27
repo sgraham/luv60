@@ -1,0 +1,13 @@
+# OUT: 4
+# OUT: 4
+# OUT: 3
+# OUT: 2
+# OUT: 1
+def int main():
+    [4]int nums = [4, 3, 2, 1]
+    print len(nums)
+    print nums[0]
+    print nums[1]
+    print nums[2]
+    print nums[3]
+    return 0

@@ -1985,9 +1985,21 @@ static Operand parse_in_or_not_in(Operand left, bool can_assign, Type* expected)
   ASSERT(false && "not implemented");
   return operand_null;
 }
+
 static Operand parse_len(bool can_assign, Type* expected) {
-  ASSERT(false && "not implemented");
-  return operand_null;
+  consume(TOK_LPAREN, "Expect '(' after len.");
+  Operand len_of = parse_precedence(PREC_OR, NULL);
+  consume(TOK_RPAREN, "Expect ')' after len.");
+  switch (type_kind(len_of.type)) {
+    case TYPE_ARRAY:
+      return operand_const(type_u64, (Val){.u64 = type_array_count(len_of.type)});
+    case TYPE_SLICE:
+    case TYPE_DICT:
+    case TYPE_STR:
+      error("TODO: len impl");
+    default:
+      errorf("Cannot use len on type %s.", type_as_str(len_of.type));
+  }
 }
 
 static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
