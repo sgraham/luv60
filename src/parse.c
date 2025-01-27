@@ -2002,13 +2002,58 @@ static Operand parse_len(bool can_assign, Type* expected) {
   }
 }
 
+static uint32_t scan_to_determine_if_comprehension(void) {
+  return 0;
+}
+
 static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
+  // XXX i think at least cur_kind and prev_kind have to be saved/restored,
+  // possibly others. bundle into a SavedLexState.
+  uint32_t initial_token_index = parser.cur_token_index;
+  uint32_t for_token_index = scan_to_determine_if_comprehension();
+  bool is_compr = for_token_index != 0;
+
   OpVec elems;
   opv_init(&elems, parser.arena);
 
-  if (!match(TOK_RSQUARE)) {
+  if (is_compr) {
+    parser.cur_token_index = for_token_index;
+    consume(TOK_FOR, "Expect 'for' to start list comprehension.");
+    Str it = parse_name("Expect iterator name of list comprehension.");
+    // TODO: other forms?
+    consume(TOK_IN, "Expect 'in'.");
+    Operand over = parse_expression(NULL);
+    if (check(TOK_FOR)) {
+      error("todo; multiple for in list compr");
+    }
+    if (check(TOK_IF)) {
+      error("todo; conditional in list compr");
+    }
+
+    // TODO: enter a full function scope here? or some third non-module,
+    // non-function type of scope?
+    enter_scope(false, false, NULL);
+
+    //make_local_and_alloc(SYM_VAR, it, over.type.subtype, NULL);
+    (void)it;
+    (void)over;
+
+    // loop over
+    // assign iter
+    // etc like for_statement()
+
+    parser.cur_token_index = initial_token_index;
+
+    Operand elem = parse_expression(NULL);
+    opv_append(&elems, elem);
+
+    // end loop
+
+    leave_scope();
+
+  } else {
     for (;;) {
-      if (elems.size > 0 && check(TOK_RSQUARE)) {
+      if (check(TOK_RSQUARE)) {
         // Allow trailing comma.
         break;
       }
@@ -2016,15 +2061,12 @@ static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
       Operand elem = parse_expression(NULL);
       opv_append(&elems, elem);
 
-      if (match(TOK_FOR)) {
-        ASSERT(false && "todo; list compr");
-        abort();
-      } else if (!match(TOK_COMMA)) {
+      if (!match(TOK_COMMA)) {
         break;
       }
     }
-    consume(TOK_RSQUARE, "Expect ']' to terminate list.");
   }
+  consume(TOK_RSQUARE, "Expect ']' to terminate list.");
 
   if (elems.size == 0) {
     if (!expected) {
@@ -3212,7 +3254,6 @@ static void* parse_impl(Arena* main_arena,
   parser.token_offsets = (uint32_t*)base_mem_large_alloc(file.allocated_size * sizeof(uint32_t));
   parser.file_contents = (const char*)file.buffer;
   parser.cur_filename = filename;
-  parser.cur_token_index = 0;
   parser.num_scopes = 0;
   parser.cur_scope = NULL;
   parser.cur_token_index = -1;
