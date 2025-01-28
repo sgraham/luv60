@@ -2042,6 +2042,58 @@ static bool scan_to_determine_if_comprehension(TokenCursor* original, TokenCurso
   }
 }
 
+typedef enum IterationKind {
+  ITK_UNKNOWN = 0,
+  ITK_ARRAY,
+} IterationKind;
+
+typedef struct IterationData {
+  IterationKind kind;
+  Sym* itsym;
+  ir_ref loop;
+  ir_ref cond;
+  union {
+    ir_ref index;
+  } ARRAY;
+} IterationData;
+
+static IterationData iteration_prolog(Str it, Operand* over) {
+  Type it_type;
+  if (type_kind(over->type) == TYPE_ARRAY) {
+    it_type = type_array_subtype(over->type);
+  } else {
+    errorf("Can't iterate over type %s.", type_as_str(over->type));
+  }
+
+  IterationData itd = {.kind = ITK_ARRAY };
+  itd.itsym = make_local_and_alloc(SYM_VAR, it, it_type, NULL);
+
+  itd.ARRAY.index = ir_VAR(IR_U64, "index");
+  ir_VSTORE(itd.ARRAY.index, ir_CONST_U64(0));
+
+  itd.loop = ir_LOOP_BEGIN(ir_END());
+
+  ir_ref cur = ir_VLOAD_U64(itd.ARRAY.index);
+  itd.cond = ir_IF(ir_LT(cur, ir_CONST_U64(type_array_count(over->type))));
+  ir_IF_TRUE(itd.cond);
+
+  ir_ref arr_load_addr = ir_ADD_A(
+      over->ref, ir_MUL(IR_U64, ir_CONST_U64(type_size(it_type)), ir_VLOAD_U64(itd.ARRAY.index)));
+  ir_VSTORE(itd.itsym->ref, ir_LOAD(type_to_ir_type(it_type), arr_load_addr));
+
+  return itd;
+}
+
+static void iteration_epilog(IterationData itd) {
+  if (itd.kind == ITK_ARRAY) {
+    ir_VSTORE(itd.ARRAY.index, ir_ADD_U64(ir_VLOAD_U64(itd.ARRAY.index), ir_CONST_U64(1)));
+    ir_MERGE_SET_OP(itd.loop, 2, ir_LOOP_END());
+    ir_IF_FALSE(itd.cond);
+  } else {
+    error("Unhandled iteration epilog.");
+  }
+}
+
 static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
   TokenCursor original;
   TokenCursor at_for;
@@ -2067,33 +2119,18 @@ static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
 
     // TODO: enter a full function scope here? or some third non-module,
     // non-function type of scope?
-    enter_scope(false, false, NULL);
+    //enter_scope(false, false, NULL);
 
-    Type it_type;
-    if (type_kind(over.type) == TYPE_ARRAY) {
-      it_type = type_array_subtype(over.type);
-    } else {
-      errorf("Can't perform comprehension over type %s.", type_as_str(over.type));
-    }
-
-    make_local_and_alloc(SYM_VAR, it, it_type, NULL);
-
-    // TODO: need iteration over things here, need to factor out code gen so
-    // it's not duplicated for array, range, slice, memfn, etc. for both
-    // for_statement and list comprehension.
-
-    // loop over
-    // assign iter
-    // etc like for_statement()
+    IterationData itd = iteration_prolog(it, &over);
 
     parser.cursor = original;
 
     Operand elem = parse_expression(NULL);
     opv_append(&elems, elem);
 
-    // end loop
+    iteration_epilog(itd);
 
-    leave_scope();
+    //leave_scope();
 
     parser.cursor = after_clauses;
 
