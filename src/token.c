@@ -8,6 +8,14 @@ void token_init(const unsigned char* file_contents) {
   token_continuation_paren_level = 0;
 }
 
+int token_get_continuation_paren_level(void) {
+  return token_continuation_paren_level;
+}
+
+void token_restore_continuation_paren_level(int level) {
+  token_continuation_paren_level = level;
+}
+
 TokenKind token_categorize(uint32_t offset) {
   const unsigned char* p = &token_file_contents[offset];
   const unsigned char* q;

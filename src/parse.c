@@ -126,6 +126,13 @@ typedef struct Scope {
   bool is_full_dict;
 } Scope;
 
+typedef struct TokenCursor {
+  uint32_t token_index;
+  TokenKind cur_kind;
+  TokenKind prev_kind;
+  int paren_level;
+} TokenCursor;
+
 typedef struct Parser {
   Arena* arena;
   Arena* var_scope_arena;
@@ -134,13 +141,11 @@ typedef struct Parser {
   const char* file_contents;
   uint32_t num_tokens;
   uint32_t* token_offsets;
-  uint32_t cur_token_index;
 
-  TokenKind cur_kind;
-  TokenKind prev_kind;
+  TokenCursor cursor;
+
   TokenKind token_buffer[16];
   int num_buffered_tokens;
-  int continuation_paren_level;
   int indent_levels[12];  // This is the maximum possible in lexer.
   int num_indents;
 
@@ -370,11 +375,11 @@ static Operand operand_const(Type type, Val val) {
 }
 
 static inline uint32_t cur_offset(void) {
-  return parser.token_offsets[parser.cur_token_index];
+  return parser.token_offsets[parser.cursor.token_index];
 }
 
 static inline uint32_t prev_offset(void) {
-  return parser.token_offsets[parser.cur_token_index - 1];
+  return parser.token_offsets[parser.cursor.token_index - 1];
 }
 
 static StrView get_strview_for_offsets(uint32_t from, uint32_t to) {
@@ -908,52 +913,52 @@ static void leave_function(void) {
 
 static void advance(void) {
 again:
-  parser.prev_kind = parser.cur_kind;
+  parser.cursor.prev_kind = parser.cursor.cur_kind;
   if (parser.num_buffered_tokens > 0) {
-    parser.cur_kind = parser.token_buffer[--parser.num_buffered_tokens];
+    parser.cursor.cur_kind = parser.token_buffer[--parser.num_buffered_tokens];
 #if BUILD_DEBUG
     if (parser.verbose > 1) {
-      base_writef_stderr("token %s (buffered)\n", token_enum_name(parser.cur_kind));
+      base_writef_stderr("token %s (buffered)\n", token_enum_name(parser.cursor.cur_kind));
     }
 #endif
     return;
   } else {
-    ++parser.cur_token_index;
-    ASSERT(parser.cur_token_index < parser.num_tokens);
-    parser.cur_kind = token_categorize(parser.token_offsets[parser.cur_token_index]);
+    ++parser.cursor.token_index;
+    ASSERT(parser.cursor.token_index < parser.num_tokens);
+    parser.cursor.cur_kind = token_categorize(parser.token_offsets[parser.cursor.token_index]);
   }
 
-  if (parser.cur_kind == TOK_NL) {
+  if (parser.cursor.cur_kind == TOK_NL) {
     goto again;
   }
-  if (parser.cur_kind == TOK_NEWLINE_BLANK) {
-    parser.cur_kind = TOK_NEWLINE;
-  } else if (parser.cur_kind >= TOK_NEWLINE_INDENT_0 && parser.cur_kind <= TOK_NEWLINE_INDENT_40) {
-    int n = (parser.cur_kind - TOK_NEWLINE_INDENT_0) * 4;
+  if (parser.cursor.cur_kind == TOK_NEWLINE_BLANK) {
+    parser.cursor.cur_kind = TOK_NEWLINE;
+  } else if (parser.cursor.cur_kind >= TOK_NEWLINE_INDENT_0 && parser.cursor.cur_kind <= TOK_NEWLINE_INDENT_40) {
+    int n = (parser.cursor.cur_kind - TOK_NEWLINE_INDENT_0) * 4;
     if (n > parser.indent_levels[parser.num_indents - 1]) {
-      parser.cur_kind = TOK_NEWLINE;
+      parser.cursor.cur_kind = TOK_NEWLINE;
       parser.indent_levels[parser.num_indents++] = n;
       parser.token_buffer[parser.num_buffered_tokens++] = TOK_INDENT;
     } else if (n < parser.indent_levels[parser.num_indents - 1]) {
-      parser.cur_kind = TOK_NEWLINE;
+      parser.cursor.cur_kind = TOK_NEWLINE;
       while (parser.num_indents > 1 && parser.indent_levels[parser.num_indents - 1] > n) {
         parser.token_buffer[parser.num_buffered_tokens++] = TOK_DEDENT;
         --parser.num_indents;
       }
     } else {
-      parser.cur_kind = TOK_NEWLINE;
+      parser.cursor.cur_kind = TOK_NEWLINE;
     }
   }
 
 #if BUILD_DEBUG
   if (parser.verbose > 1) {
-      base_writef_stderr("token %s\n", token_enum_name(parser.cur_kind));
+      base_writef_stderr("token %s\n", token_enum_name(parser.cursor.cur_kind));
   }
 #endif
 }
 
 static bool match(TokenKind tok_kind) {
-  if (parser.cur_kind != tok_kind) {
+  if (parser.cursor.cur_kind != tok_kind) {
     return false;
   }
   advance();
@@ -961,26 +966,26 @@ static bool match(TokenKind tok_kind) {
 }
 
 static bool check(TokenKind tok_kind) {
-  return parser.cur_kind == tok_kind;
+  return parser.cursor.cur_kind == tok_kind;
 }
 
 static bool peek(TokenKind tok_kind) {
-  TokenKind old_cur = parser.cur_kind;
-  TokenKind old_prev = parser.prev_kind;
+  TokenKind old_cur = parser.cursor.cur_kind;
+  TokenKind old_prev = parser.cursor.prev_kind;
   advance();
 
-  bool result = parser.cur_kind == tok_kind;
+  bool result = parser.cursor.cur_kind == tok_kind;
 
   // semi-retreat, but keep categorization by buffering it.
-  parser.token_buffer[parser.num_buffered_tokens++] = parser.cur_kind;
-  parser.cur_kind = old_cur;
-  parser.prev_kind = old_prev;
+  parser.token_buffer[parser.num_buffered_tokens++] = parser.cursor.cur_kind;
+  parser.cursor.cur_kind = old_cur;
+  parser.cursor.prev_kind = old_prev;
 
   return result;
 }
 
 static void consume(TokenKind tok_kind, const char* message) {
-  if (parser.cur_kind == tok_kind) {
+  if (parser.cursor.cur_kind == tok_kind) {
     advance();
     return;
   }
@@ -1285,8 +1290,8 @@ static Type parse_type(void) {
     ASSERT(false); abort();
   }
 
-  if (parser.cur_kind >= TOK_BOOL && parser.cur_kind <= TOK_UINT) {
-    Type t = basic_tok_to_type[parser.cur_kind];
+  if (parser.cursor.cur_kind >= TOK_BOOL && parser.cursor.cur_kind <= TOK_UINT) {
+    Type t = basic_tok_to_type[parser.cursor.cur_kind];
     ASSERT(!type_is_none(t));
     advance();
     return t;
@@ -1464,7 +1469,7 @@ typedef enum Precedence {
 } Precedence;
 
 static bool match_assignment(void) {
-  const TokenKind tok = parser.cur_kind;
+  const TokenKind tok = parser.cursor.cur_kind;
   if (tok != TOK_EQ) {
     return false;
   }
@@ -1743,7 +1748,7 @@ static Operand resolve_binary_cmp_op(ir_op op, Operand left, Operand right, uint
 
 static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
   // Remember the operator.
-  TokenKind op = parser.prev_kind;
+  TokenKind op = parser.cursor.prev_kind;
   uint32_t op_offset = prev_offset();
 
   // Compile the right operand.
@@ -1817,8 +1822,8 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
 }
 
 static Operand parse_bool_literal(bool can_assign, Type* expected) {
-  ASSERT(parser.prev_kind == TOK_FALSE || parser.prev_kind == TOK_TRUE);
-  return operand_const(type_bool, (Val){.b = parser.prev_kind == TOK_FALSE ? 0 : 1});
+  ASSERT(parser.cursor.prev_kind == TOK_FALSE || parser.cursor.prev_kind == TOK_TRUE);
+  return operand_const(type_bool, (Val){.b = parser.cursor.prev_kind == TOK_FALSE ? 0 : 1});
 }
 
 static Operand parse_call(Operand left, bool can_assign, Type* expected) {
@@ -2002,25 +2007,54 @@ static Operand parse_len(bool can_assign, Type* expected) {
   }
 }
 
-static uint32_t scan_to_determine_if_comprehension(void) {
-  return 0;
+static bool scan_to_determine_if_comprehension(TokenCursor* original, TokenCursor* at_for) {
+  ASSERT(parser.num_buffered_tokens == 0);
+
+  *original = parser.cursor;
+  original->paren_level = token_get_continuation_paren_level();
+
+  // We start the scan after the starting [.
+  int square_bracket_count = 1;
+  for (;;) {
+    if (parser.cursor.cur_kind == TOK_LSQUARE) {
+      ++square_bracket_count;
+    } else if (parser.cursor.cur_kind == TOK_RSQUARE) {
+      --square_bracket_count;
+      if (square_bracket_count == 0) {
+        parser.cursor = *original;
+        token_restore_continuation_paren_level(original->paren_level);
+        return false;
+      }
+    } else if (parser.cursor.cur_kind == TOK_FOR) {
+      *at_for = parser.cursor;
+      return true;
+    } else if (parser.cursor.cur_kind == TOK_NEWLINE || parser.cursor.cur_kind == TOK_EOF) {
+      error("Expecting ']' to end list literal or comprehension.");
+    }
+
+    parser.cursor.prev_kind = parser.cursor.cur_kind;
+    ++parser.cursor.token_index;
+    ASSERT(parser.cursor.token_index < parser.num_tokens);
+    parser.cursor.cur_kind = token_categorize(parser.token_offsets[parser.cursor.token_index]);
+    ASSERT(parser.cursor.cur_kind != TOK_NEWLINE_BLANK);
+    ASSERT(parser.cursor.cur_kind < TOK_NEWLINE_INDENT_0 ||
+           parser.cursor.cur_kind > TOK_NEWLINE_INDENT_40);
+  }
 }
 
 static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
-  // XXX i think at least cur_kind and prev_kind have to be saved/restored,
-  // possibly others. bundle into a SavedLexState.
-  uint32_t initial_token_index = parser.cur_token_index;
-  uint32_t for_token_index = scan_to_determine_if_comprehension();
-  bool is_compr = for_token_index != 0;
+  TokenCursor original;
+  TokenCursor at_for;
+  bool is_compr = scan_to_determine_if_comprehension(&original, &at_for);
 
   OpVec elems;
   opv_init(&elems, parser.arena);
 
   if (is_compr) {
-    parser.cur_token_index = for_token_index;
+    parser.cursor = at_for;
     consume(TOK_FOR, "Expect 'for' to start list comprehension.");
     Str it = parse_name("Expect iterator name of list comprehension.");
-    // TODO: other forms?
+    // TODO: other forms for enumerate
     consume(TOK_IN, "Expect 'in'.");
     Operand over = parse_expression(NULL);
     if (check(TOK_FOR)) {
@@ -2029,20 +2063,26 @@ static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
     if (check(TOK_IF)) {
       error("todo; conditional in list compr");
     }
+    TokenCursor after_clauses = parser.cursor;
 
     // TODO: enter a full function scope here? or some third non-module,
     // non-function type of scope?
     enter_scope(false, false, NULL);
 
-    //make_local_and_alloc(SYM_VAR, it, over.type.subtype, NULL);
-    (void)it;
-    (void)over;
+    Type it_type;
+    if (type_kind(over.type) == TYPE_ARRAY) {
+      it_type = type_array_subtype(over.type);
+    } else {
+      errorf("Can't perform comprehension over type %s.", type_as_str(over.type));
+    }
+
+    make_local_and_alloc(SYM_VAR, it, it_type, NULL);
 
     // loop over
     // assign iter
     // etc like for_statement()
 
-    parser.cur_token_index = initial_token_index;
+    parser.cursor = original;
 
     Operand elem = parse_expression(NULL);
     opv_append(&elems, elem);
@@ -2050,6 +2090,8 @@ static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
     // end loop
 
     leave_scope();
+
+    parser.cursor = after_clauses;
 
   } else {
     for (;;) {
@@ -2417,7 +2459,7 @@ static Val eval_unary_op(TokenKind op, Type type, Val val) {
 }
 
 static Operand parse_unary(bool can_assign, Type* expected) {
-  TokenKind op_kind = parser.prev_kind;
+  TokenKind op_kind = parser.cursor.prev_kind;
   Operand expr = parse_precedence(PREC_UNARY, expected);
   if (op_kind == TOK_MINUS) {
     if (op_is_const(expr)) {
@@ -2648,7 +2690,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
   Sym* sym = NULL;
   ScopeResult scope_result = scope_lookup_recursive(target, &sym);
   if (can_assign && match_assignment()) {
-    TokenKind eq_kind = parser.prev_kind;
+    TokenKind eq_kind = parser.cursor.prev_kind;
     TokenKind eq_offset = prev_offset();
     switch (scope_result) {
       case SCOPE_RESULT_LOCAL: {
@@ -2853,19 +2895,19 @@ static Rule* get_rule(TokenKind tok_kind) {
 
 static Operand parse_precedence(Precedence precedence, Type* expected) {
   advance();
-  PrefixFn prefix_rule = get_rule(parser.prev_kind)->prefix;
+  PrefixFn prefix_rule = get_rule(parser.cursor.prev_kind)->prefix;
   if (!prefix_rule) {
-    errorf("Expect expression after prefix %s.", token_enum_name(parser.prev_kind));
+    errorf("Expect expression after prefix %s.", token_enum_name(parser.cursor.prev_kind));
   }
 
   bool can_assign = precedence <= PREC_ASSIGNMENT;
   Operand left = prefix_rule(can_assign, expected);
 
-  while (precedence <= get_rule(parser.cur_kind)->prec_for_infix) {
+  while (precedence <= get_rule(parser.cursor.cur_kind)->prec_for_infix) {
     advance();
-    InfixFn infix_rule = get_rule(parser.prev_kind)->infix;
+    InfixFn infix_rule = get_rule(parser.cursor.prev_kind)->infix;
     if (!infix_rule) {
-      errorf("Expect expression after infix %s.", token_enum_name(parser.prev_kind));
+      errorf("Expect expression after infix %s.", token_enum_name(parser.cursor.prev_kind));
     }
     left = infix_rule(left, can_assign, expected);
   }
@@ -3186,7 +3228,7 @@ static LastStatementType parse_statement(bool toplevel) {
 
   skip_newlines();
 
-  switch (parser.cur_kind) {
+  switch (parser.cursor.cur_kind) {
     case TOK_DEF:
       advance();
       def_statement();
@@ -3256,7 +3298,7 @@ static void* parse_impl(Arena* main_arena,
   parser.cur_filename = filename;
   parser.num_scopes = 0;
   parser.cur_scope = NULL;
-  parser.cur_token_index = -1;
+  parser.cursor = (TokenCursor){-1, 0, 0};
   parser.indent_levels[0] = 0;
   parser.num_indents = 1;
   parser.num_buffered_tokens = 0;
@@ -3283,7 +3325,7 @@ static void* parse_impl(Arena* main_arena,
   }
   advance();
 
-  while (parser.cur_kind != TOK_EOF) {
+  while (parser.cursor.cur_kind != TOK_EOF) {
     parse_statement(/*toplevel=*/true);
   }
 
