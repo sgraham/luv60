@@ -2078,6 +2078,10 @@ static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
 
     make_local_and_alloc(SYM_VAR, it, it_type, NULL);
 
+    // TODO: need iteration over things here, need to factor out code gen so
+    // it's not duplicated for array, range, slice, memfn, etc. for both
+    // for_statement and list comprehension.
+
     // loop over
     // assign iter
     // etc like for_statement()
