@@ -1,5 +1,5 @@
 # RET: 1
-# ERR: {self}:5:10:    x = []
-# ERR: {ssss}               ^ error: Cannot deduce type of empty list with no explicit type on left-hand side.
+# ERR: {self}:5:9:    x = []
+# ERR: {ssss}             ^ error: Cannot deduce type of empty list with no explicit type on left-hand side.
 def int main():
     x = []

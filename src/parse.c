@@ -2094,62 +2094,64 @@ static void iteration_epilog(IterationData itd) {
   }
 }
 
-static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
-  TokenCursor original;
-  TokenCursor at_for;
-  bool is_compr = scan_to_determine_if_comprehension(&original, &at_for);
+static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for, Type* expected) {
+  parser.cursor = at_for;
+  consume(TOK_FOR, "Expect 'for' to start list comprehension.");
+  Str it = parse_name("Expect iterator name of list comprehension.");
+  // TODO: other forms for enumerate
+  consume(TOK_IN, "Expect 'in'.");
+  Operand over = parse_expression(NULL);
+  if (check(TOK_FOR)) {
+    error("todo; multiple for in list compr");
+  }
+  if (check(TOK_IF)) {
+    error("todo; conditional in list compr");
+  }
+  TokenCursor after_clauses = parser.cursor;
 
+  // In general, we have to assume a slice output here because even if iterating
+  // over an array, it could be filtered, so we can't know the number of
+  // outputs. So this only creates an array if |expected| is provided
+  // explicitly.
+  // TODO: implement this once there's slices!
+
+  // TODO: enter a full function scope here? or some third non-module,
+  // non-function type of scope?
+  // enter_scope(false, false, NULL);
+
+  IterationData itd = iteration_prolog(it, &over);
+
+  parser.cursor = original;
+
+  Operand elem = parse_expression(NULL);
+  (void)elem;
+
+  iteration_epilog(itd);
+
+  // leave_scope();
+
+  parser.cursor = after_clauses;
+
+  return operand_null;
+}
+
+static Operand parse_list_literal(Type* expected) {
   OpVec elems;
   opv_init(&elems, parser.arena);
 
-  if (is_compr) {
-    parser.cursor = at_for;
-    consume(TOK_FOR, "Expect 'for' to start list comprehension.");
-    Str it = parse_name("Expect iterator name of list comprehension.");
-    // TODO: other forms for enumerate
-    consume(TOK_IN, "Expect 'in'.");
-    Operand over = parse_expression(NULL);
-    if (check(TOK_FOR)) {
-      error("todo; multiple for in list compr");
+  for (;;) {
+    if (check(TOK_RSQUARE)) {
+      // Allow trailing comma.
+      break;
     }
-    if (check(TOK_IF)) {
-      error("todo; conditional in list compr");
-    }
-    TokenCursor after_clauses = parser.cursor;
-
-    // TODO: enter a full function scope here? or some third non-module,
-    // non-function type of scope?
-    //enter_scope(false, false, NULL);
-
-    IterationData itd = iteration_prolog(it, &over);
-
-    parser.cursor = original;
 
     Operand elem = parse_expression(NULL);
     opv_append(&elems, elem);
 
-    iteration_epilog(itd);
-
-    //leave_scope();
-
-    parser.cursor = after_clauses;
-
-  } else {
-    for (;;) {
-      if (check(TOK_RSQUARE)) {
-        // Allow trailing comma.
-        break;
-      }
-
-      Operand elem = parse_expression(NULL);
-      opv_append(&elems, elem);
-
-      if (!match(TOK_COMMA)) {
-        break;
-      }
+    if (!match(TOK_COMMA)) {
+      break;
     }
   }
-  consume(TOK_RSQUARE, "Expect ']' to terminate list.");
 
   if (elems.size == 0) {
     if (!expected) {
@@ -2179,6 +2181,22 @@ static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
     }
     return operand_rvalue_imm(type_array(first_item.type, elems.size), arr_base);
   }
+}
+
+static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
+  TokenCursor original;
+  TokenCursor at_for;
+  bool is_compr = scan_to_determine_if_comprehension(&original, &at_for);
+
+  Operand result;
+  if (is_compr) {
+    result = parse_list_comprehension(original, at_for, expected);
+  } else {
+    result = parse_list_literal(expected);
+  }
+
+  consume(TOK_RSQUARE, "Expect ']' to terminate list.");
+  return result;
 }
 
 static Operand parse_null_literal(bool can_assign, Type* expected) {
@@ -3339,7 +3357,7 @@ static void* parse_impl(Arena* main_arena,
   parser.cur_filename = filename;
   parser.num_scopes = 0;
   parser.cur_scope = NULL;
-  parser.cursor = (TokenCursor){-1, 0, 0};
+  parser.cursor = (TokenCursor){-1, 0, 0, 0};
   parser.indent_levels[0] = 0;
   parser.num_indents = 1;
   parser.num_buffered_tokens = 0;
