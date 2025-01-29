@@ -3243,7 +3243,7 @@ static void on_statement(void) {
     } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_TYPE) {
       strukt = sym->type;
     } else {
-      ASSERT(false && "todo");
+      error("internal error: unexpected lookup result.");
     }
   } else {
     error("Expect struct type name.");
