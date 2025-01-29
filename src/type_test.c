@@ -189,7 +189,6 @@ TEST(Type, StructInitializer) {
   arena_destroy(arena);
 }
 
-
 TEST(Type, ArrayBasic) {
   Arena* arena = arena_create(KiB(128), KiB(128));
   type_init(arena);
@@ -216,6 +215,22 @@ TEST(Type, ArrayBasic) {
   EXPECT_EQ(type_array_count(a1), 16);
   EXPECT_EQ(type_array_count(a2), 17);
   EXPECT_EQ(type_array_count(a3), 16);
+
+  type_destroy_for_tests();
+  arena_destroy(arena);
+}
+
+TEST(Type, ListBasic) {
+  Arena* arena = arena_create(KiB(128), KiB(128));
+  type_init(arena);
+
+  Type a0 = type_list(type_i32);
+  Type a1 = type_list(type_i32);
+  EXPECT_TRUE(type_eq(a0, a1));
+
+  Type a2 = type_list(type_u32);
+  EXPECT_TRUE(!type_eq(a0, a2));
+  EXPECT_TRUE(!type_eq(a1, a2));
 
   type_destroy_for_tests();
   arena_destroy(arena);

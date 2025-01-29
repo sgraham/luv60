@@ -27,6 +27,12 @@ typedef union TypeData {
   struct {
     uint32_t size;
     uint32_t align;
+    Type subtype;
+    uint32_t unused0;
+  } LIST;
+  struct {
+    uint32_t size;
+    uint32_t align;
     Type key;
     Type value;
   } DICT;
@@ -43,7 +49,7 @@ typedef union TypeData {
     uint32_t unused0; // Should make this param0 type
   } FUNC;
 
-  // TODO: slice, tuple, enum, union
+  // TODO: tuple, enum, union
 } TypeData;
 
 // Structs were going to fit nicely in 12 bytes, but mucked that up with Str
@@ -81,7 +87,8 @@ static int num_typedata;
 
 static DictImpl cached_func_types;
 static DictImpl cached_ptr_types;
-static DictImpl cached_arr_types;
+static DictImpl cached_array_types;
+static DictImpl cached_list_types;
 static Arena* arena_;
 
 const char* natural_builtin_type_names[NUM_TYPE_KINDS] = {
@@ -329,7 +336,7 @@ Type type_array(Type subtype, size_t size) {
   td->ARRAY.count = size;
 
   // The dict is only a set of intern'd Type, but we know they're all TYPE_ARRAY.
-  DictInsert res = dict_deferred_insert(&cached_arr_types, &arr, plaintype_hash_func,
+  DictInsert res = dict_deferred_insert(&cached_array_types, &arr, plaintype_hash_func,
                                         plaintype_eq_func, sizeof(Type), _Alignof(Type));
   Type* arrtype = ((Type*)dict_rawiter_get(&res.iter));
   if (res.inserted) {
@@ -341,6 +348,26 @@ Type type_array(Type subtype, size_t size) {
   }
 }
 
+Type type_list(Type subtype) {
+  uint32_t rewind_location;
+  Type list = type_alloc(TYPE_LIST, 0, &rewind_location);
+  TypeData* td = type_td(list);
+  td->LIST.size = 16;
+  td->LIST.align = type_align(subtype);
+  td->LIST.subtype = subtype;
+
+  // The dict is only a set of intern'd Type, but we know they're all TYPE_LIST.
+  DictInsert res = dict_deferred_insert(&cached_list_types, &list, plaintype_hash_func,
+                                        plaintype_eq_func, sizeof(Type), _Alignof(Type));
+  Type* listtype = ((Type*)dict_rawiter_get(&res.iter));
+  if (res.inserted) {
+    listtype->u = list.u;
+    return list;
+  } else {
+    num_typedata = rewind_location;
+    return *listtype;
+  }
+}
 
 // Returned str is either the cstr() of an interned string, or a constant.
 // Not fast or memory efficient, should only be used during errors though.
@@ -381,7 +408,8 @@ void type_init(Arena* arena) {
   arena_ = arena;
   cached_func_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
   cached_ptr_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
-  cached_arr_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
+  cached_array_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
+  cached_list_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
 
   set_builtin_typedata(TYPE_VOID, 0, 1);
   set_builtin_typedata(TYPE_BOOL, 1, 1);
@@ -460,7 +488,7 @@ bool type_is_aggregate(Type type) {
   switch (type_kind(type)) {
     case TYPE_STR:
     case TYPE_RANGE:
-    case TYPE_SLICE:
+    case TYPE_LIST:
     case TYPE_ARRAY:
     case TYPE_DICT:
     case TYPE_STRUCT:
@@ -475,7 +503,7 @@ bool type_is_condition(Type type) {
   switch (type_kind(type)) {
     case TYPE_BOOL:
     case TYPE_STR:
-    case TYPE_SLICE:
+    case TYPE_LIST:
     case TYPE_PTR:
       return true;
     default:

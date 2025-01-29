@@ -145,7 +145,7 @@ typedef struct Type {
   X(DOUBLE)         \
   X(STR)            \
   X(RANGE)          \
-  X(SLICE)          \
+  X(LIST)           \
   X(ARRAY)          \
   X(PTR)            \
   X(FUNC)           \
@@ -195,6 +195,7 @@ size_t type_padding(Type type);
 Type type_function(Type* params, size_t num_params, Type return_type, bool is_nested);
 Type type_ptr(Type subtype);
 Type type_array(Type subtype, size_t size);
+Type type_list(Type subtype);
 // structs are different than e.g. ptrs in that they're never the same as
 // another one, so this is not 'intern'ing, but simply creating the Type value,
 // and every call will result in a different (new) Type being returned.

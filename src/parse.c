@@ -617,7 +617,7 @@ static void print_range(Operand* op) {
 
 static void initialize_aggregate(ir_ref base_addr, Type type) {
   size_t size = type_size(type);
-  if (type_struct_has_initializer(type)) {
+  if (type_kind(type) == TYPE_STRUCT && type_struct_has_initializer(type)) {
     ir_ref memcpy_addr = ir_CONST_ADDR(memcpy);
     ir_ref default_blob = ir_CONST_ADDR(type_struct_initializer_blob(type));
     ir_CALL_3(IR_VOID, memcpy_addr, base_addr, default_blob, ir_CONST_U64(size));
@@ -1273,10 +1273,10 @@ static Type parse_type(void) {
     consume(TOK_RSQUARE, "Expect ']' to close array type.");
     Type elem = parse_type();
     if (type_is_none(elem)) {
-      error("Expecting type of array or slice.");
+      error("Expecting type of array or list.");
     }
     if (count == 0) {
-      error("todo; slice");
+      return type_list(elem);
     } else {
       return type_array(elem, count);
     }
@@ -1998,7 +1998,8 @@ static Operand parse_len(bool can_assign, Type* expected) {
   switch (type_kind(len_of.type)) {
     case TYPE_ARRAY:
       return operand_const(type_u64, (Val){.u64 = type_array_count(len_of.type)});
-    case TYPE_SLICE:
+    case TYPE_LIST:
+      return operand_rvalue_imm(type_u64, ir_LOAD_U64(ir_ADD_OFFSET(len_of.ref, 8)));
     case TYPE_DICT:
     case TYPE_STR:
       error("TODO: len impl");
@@ -2157,7 +2158,7 @@ static Operand parse_list_literal(Type* expected) {
     if (!expected) {
       error("Cannot deduce type of empty list with no explicit type on left-hand side.");
     }
-    if (type_kind(*expected) == TYPE_SLICE || type_kind(*expected) == TYPE_ARRAY) {
+    if (type_kind(*expected) == TYPE_LIST || type_kind(*expected) == TYPE_ARRAY) {
       error("todo; empty slice/array");
     } else {
       errorf("Cannot convert empty list literal to expected type %s.", type_as_str(*expected));
@@ -2437,7 +2438,7 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
       TypeKind left_type_kind = type_kind(left.type);
       switch (left_type_kind) {
         case TYPE_ARRAY:
-        case TYPE_SLICE:
+        case TYPE_LIST:
         case TYPE_PTR:
         case TYPE_STR: {
           if (!type_is_integer(subscript.type)) {
