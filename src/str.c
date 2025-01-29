@@ -167,7 +167,6 @@ Str str_intern(const char* ptr) {
 }
 
 Str str_internf(const char* fmt, ...) {
-  // TODO: not intern'd at all, just dup/leaked into the arena!
   va_list args;
   va_start(args, fmt);
   uint32_t len = vsnprintf(NULL, 0, fmt, args);

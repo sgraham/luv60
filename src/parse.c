@@ -1946,6 +1946,22 @@ static Operand parse_dict_literal(bool can_assign, Type* expected) {
   return operand_null;
 }
 
+static Str memfn_name_from_type_name(Str type_name, Str func_name) {
+  return str_internf("%.*s:%.*s", str_len(type_name), str_raw_ptr(type_name), str_len(func_name),
+                     str_raw_ptr(func_name));
+}
+
+static Str memfn_name_from_type(Type type, Str func_name) {
+  ASSERT(type_kind(type) == TYPE_STRUCT);
+  return memfn_name_from_type_name(type_struct_decl_name(type), func_name);
+}
+
+#if 0
+static Type check_for_memfn(Type lhs, Str memfn_name) {
+  build_sym_name_for_memfn_from_type(lhs, memfn_name, /*natural=*/true, lhs_name_for_err);
+}
+#endif
+
 static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
   // TODO: package, and maybe const or types after . ?
   Str name = parse_name("Expect property name after '.'.");
@@ -1969,8 +1985,9 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       error("todo; assigning to unexpected thing");
     }
   } else {
-    // TODO: ptr following down left
-
+    while (type_kind(left.type) == TYPE_PTR) {
+      left = operand_lvalue_local(type_ptr_subtype(left.type), ir_LOAD(IR_ADDR, left.ref));
+    }
     if (type_kind(left.type) == TYPE_STRUCT) {
       uint32_t field_offset;
       Type field_type;
@@ -1983,8 +2000,41 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       // Not an error yet; could be a memfn below.
     }
 
-    // TODO: package, union, special memfn on array/slice/dict, general memfn
-    errorf("Cannot get field from type.");
+    Sym* func_sym = {0};
+    switch (type_kind(left.type)) {
+      case TYPE_ARRAY:
+      case TYPE_LIST:
+        error("TODO: polymorphic array/list memfns");
+
+      case TYPE_DICT:
+        error("TODO: polymorphic dict memfns");
+
+      default: {
+        Str memfn_name = memfn_name_from_type(left.type, name);
+        Sym* sym;
+        ScopeResult scope_result = scope_lookup_recursive(memfn_name, &sym);
+        if (scope_result == SCOPE_RESULT_UNDEFINED) {
+          errorf("Undefined member function %s (resolved to %s).", cstr_copy(parser.arena, name),
+                 cstr_copy(parser.arena, memfn_name));
+        } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_FUNC) {
+          func_sym = sym;
+        } else {
+          ASSERT(false && "todo");
+        }
+        break;
+      }
+    }
+
+    if (type_kind(func_sym->type) != TYPE_FUNC) {
+      error("internal error: memfn resolved to non-function");
+    }
+    if (type_func_num_params(func_sym->type) < 1) {
+      // Parser shouldn't get this far.
+      error("internal error: memfn with no parameters");
+    }
+
+    // TODO: need to bind this to &left as |self|
+    return operand_rvalue_global_addr(func_sym->type, ir_CONST_ADDR(func_sym->addr));
   }
 }
 
@@ -3181,10 +3231,11 @@ static void def_statement(void) {
 
 static void on_statement(void) {
   Type strukt;
+  Str type_name;
   if (check(
           TOK_IDENT_TYPE) /*todo: || parser.cur_kind >= TOK_BOOL || parser.cur_kind <= TOK_UINT*/) {
     advance();
-    Str type_name = str_from_previous();
+    type_name = str_from_previous();
     Sym* sym;
     ScopeResult scope_result = scope_lookup_recursive(type_name, &sym);
     if (scope_result == SCOPE_RESULT_UNDEFINED) {
@@ -3232,7 +3283,8 @@ static void on_statement(void) {
 
   Type functype = type_function(param_types, num_params, return_type, TDFF_MEMFN);
 
-  Sym* funcsym = sym_new(SYM_FUNC, func_name, functype);
+  Str full_name = memfn_name_from_type_name(type_name, func_name);
+  Sym* funcsym = sym_new(SYM_FUNC, full_name, functype);
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
   enter_function(funcsym, param_names, param_types);
   LastStatementType lst = parse_block();
