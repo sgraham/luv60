@@ -12,15 +12,15 @@ TEST(Type, FuncNoParam) {
   Arena* arena = arena_create(KiB(128), KiB(128));
   type_init(arena);
 
-  Type a = type_function(NULL, 0, type_i32, false);
-  Type b = type_function(NULL, 0, type_i32, false);
+  Type a = type_function(NULL, 0, type_i32, TDFF_NONE);
+  Type b = type_function(NULL, 0, type_i32, TDFF_NONE);
   EXPECT_EQ(a.u, b.u);
   EXPECT_TRUE(type_eq(a, b));
 
-  Type c = type_function(NULL, 0, type_bool, false);
+  Type c = type_function(NULL, 0, type_bool, TDFF_NONE);
   EXPECT_TRUE(!type_eq(a, c));
 
-  Type d = type_function(NULL, 0, type_void, false);
+  Type d = type_function(NULL, 0, type_void, TDFF_NONE);
   EXPECT_TRUE(!type_eq(a, d));
   EXPECT_TRUE(!type_eq(c, d));
 
@@ -36,17 +36,17 @@ TEST(Type, FuncWithBasicParams) {
   Type params_b[4] = { type_i32, type_bool, type_float, type_i32 };
   Type params_c[3] = { type_i32, type_i32, type_bool };
 
-  Type a0 = type_function(params_a, 4, type_void, false);
-  Type a0_again = type_function(params_a, 4, type_void, false);
+  Type a0 = type_function(params_a, 4, type_void, TDFF_NONE);
+  Type a0_again = type_function(params_a, 4, type_void, TDFF_NONE);
   EXPECT_TRUE(type_eq(a0, a0_again));
 
-  Type a1 = type_function(params_a, 4, type_bool, false); // diff return
+  Type a1 = type_function(params_a, 4, type_bool, TDFF_NONE); // diff return
   EXPECT_TRUE(!type_eq(a0, a1));
 
-  Type b = type_function(params_b, 4, type_void, false);
+  Type b = type_function(params_b, 4, type_void, TDFF_NONE);
   EXPECT_TRUE(!type_eq(a0, b));  // diff args, same return
 
-  Type c = type_function(params_c, 3, type_void, false);
+  Type c = type_function(params_c, 3, type_void, TDFF_NONE);
   EXPECT_TRUE(!type_eq(a0, c));  // same return, same args up to 3
 
   type_destroy_for_tests();
@@ -59,11 +59,11 @@ TEST(Type, FuncNested) {
 
   Type params[1] = { type_i32 };
 
-  Type a0 = type_function(params, 1, type_void, /*is_nested=*/true);
-  Type a0_again = type_function(params, 1, type_void, /*is_nested=*/true);
+  Type a0 = type_function(params, 1, type_void, TDFF_NESTED);
+  Type a0_again = type_function(params, 1, type_void, TDFF_NESTED);
   EXPECT_TRUE(type_eq(a0, a0_again));
 
-  Type a1 = type_function(params, 1, type_void, /*is_nested=*/false);
+  Type a1 = type_function(params, 1, type_void, TDFF_NONE);
   EXPECT_TRUE(!type_eq(a0, a1));
 
   EXPECT_EQ(type_func_is_nested(a0), true);
@@ -85,7 +85,7 @@ TEST(Type, CrackFuncs) {
 
   Type params[4] = { type_i32, type_i32, type_bool, type_double };
 
-  Type f = type_function(params, 4, type_float, false);
+  Type f = type_function(params, 4, type_float, TDFF_NONE);
   EXPECT_EQ(type_kind(f), TYPE_FUNC);
   EXPECT_EQ(type_func_num_params(f), 4);
   EXPECT_TRUE(type_eq(type_func_return_type(f), type_float));

@@ -326,9 +326,7 @@ static ir_type type_to_ir_type(Type type) {
     case TYPE_FLOAT:
       return IR_FLOAT;
     case TYPE_PTR:
-      if (type_kind(type_ptr_subtype(type)) == TYPE_VOID) {
-        return IR_ADDR;
-      }
+      return IR_ADDR;
     default:
       base_writef_stderr("type_to_ir_type: %s\n", type_as_str(type));
       ASSERT(false && "todo");
@@ -1314,13 +1312,21 @@ static Type parse_type(void) {
 }
 
 static uint32_t parse_func_params(bool is_nested,
+                                  Type* memfn_self,
+                                  Str self_name,
                                   Type out_types[MAX_FUNC_PARAMS],
                                   Str out_names[MAX_FUNC_PARAMS]) {
   uint32_t num_params = 0;
   bool require_more = false;
   if (is_nested) {
+    ASSERT(!memfn_self);
     out_types[num_params] = type_ptr(type_void);
     out_names[num_params] = str_intern_len("$up", 3);
+    ++num_params;
+  } else if (memfn_self) {
+    ASSERT(!is_nested);
+    out_types[num_params] = *memfn_self;
+    out_names[num_params] = self_name;
     ++num_params;
   }
   while (require_more || !check(TOK_RPAREN)) {
@@ -3147,17 +3153,87 @@ static void def_statement(void) {
     ASSERT(parser.scopes[parser.num_scopes - 1].is_function);
     ASSERT(parser.scopes[0].is_module);
   }
-  uint32_t num_params = parse_func_params(is_nested, param_types, param_names);
+  uint32_t num_params =
+      parse_func_params(is_nested, /*memfn_self=*/NULL, (Str){0}, param_types, param_names);
 
   consume(TOK_COLON, "Expect ':' before function body.");
   consume(TOK_NEWLINE, "Expect newline before function body. (TODO: single line)");
   skip_newlines();
   consume(TOK_INDENT, "Expect indent before function body. (TODO: single line)");
 
-  Type functype = type_function(param_types, num_params, return_type, is_nested);
+  Type functype =
+      type_function(param_types, num_params, return_type, is_nested ? TDFF_NESTED : TDFF_NONE);
 
   Sym* funcsym = sym_new(SYM_FUNC, name, functype);
   funcsym->scope_decl = is_nested ? SSD_DECLARED_LOCAL : SSD_DECLARED_GLOBAL;  // ?
+  enter_function(funcsym, param_names, param_types);
+  LastStatementType lst = parse_block();
+  if (lst == LST_NON_RETURN) {
+    if (!type_eq(type_void, type_func_return_type(functype))) {
+      errorf_offset(function_start_offset,
+                    "Function returns %s, but there is no return at the end of the body.",
+                    type_as_str(type_func_return_type(functype)));
+    }
+  }
+
+  leave_function();
+}
+
+static void on_statement(void) {
+  Type strukt;
+  if (check(
+          TOK_IDENT_TYPE) /*todo: || parser.cur_kind >= TOK_BOOL || parser.cur_kind <= TOK_UINT*/) {
+    advance();
+    Str type_name = str_from_previous();
+    Sym* sym;
+    ScopeResult scope_result = scope_lookup_recursive(type_name, &sym);
+    if (scope_result == SCOPE_RESULT_UNDEFINED) {
+      errorf("Undefined type %s.", cstr_copy(parser.arena, type_name));
+    } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_TYPE) {
+      strukt = sym->type;
+    } else {
+      ASSERT(false && "todo");
+    }
+  } else {
+    error("Expect struct type name.");
+  }
+
+  bool is_foreign = false;
+  if (match(TOK_FOREIGN)) {
+    is_foreign = true;
+  } else {
+    consume(TOK_DEF, "Expect 'def' to start function body.");
+  }
+
+  Type return_type = parse_type();
+  if (type_is_none(return_type)) {
+    return_type = type_void;
+  }
+  uint32_t function_start_offset = cur_offset();
+  Str func_name = parse_name("Expect function name.");
+  consume(TOK_LPAREN, "Expect '(' after function name.");
+  Str self_name = parse_name("Expect 'self' token.");
+
+  Type param_types[MAX_FUNC_PARAMS];
+  Str param_names[MAX_FUNC_PARAMS];
+  Type self_arg = type_ptr(strukt);
+  uint32_t num_params = parse_func_params(/*is_nested=*/false, /*is_memfn=*/&self_arg, self_name,
+                                          param_types, param_names);
+
+  ASSERT(!is_foreign && "todo");
+
+  if (!is_foreign) {
+    consume(TOK_COLON, "Expect ':' before function body.");
+    consume(TOK_NEWLINE, "Expect newline before function body. (TODO: single line)");
+    while (match(TOK_NEWLINE)) {
+    }
+    consume(TOK_INDENT, "Expect indented function body.");
+  }
+
+  Type functype = type_function(param_types, num_params, return_type, TDFF_MEMFN);
+
+  Sym* funcsym = sym_new(SYM_FUNC, func_name, functype);
+  funcsym->scope_decl = SSD_DECLARED_GLOBAL;
   enter_function(funcsym, param_names, param_types);
   LastStatementType lst = parse_block();
   if (lst == LST_NON_RETURN) {
@@ -3292,6 +3368,11 @@ static LastStatementType parse_statement(bool toplevel) {
     case TOK_DEF:
       advance();
       def_statement();
+      break;
+    case TOK_ON:
+      advance();
+      if (!toplevel) error("'on' only allowed at top level.");
+      on_statement();
       break;
     case TOK_STRUCT:
       advance();

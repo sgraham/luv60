@@ -1,0 +1,13 @@
+# DISABLED
+# RUN: {self} --main-rc
+# RET: 10
+struct Stuff:
+    int a
+
+on Stuff def int memfn(self):
+    return self.a * 5
+
+def int main():
+    s = Stuff(a=2)
+    return s.memfn()
+

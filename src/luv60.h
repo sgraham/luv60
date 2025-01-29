@@ -192,7 +192,14 @@ size_t type_size(Type type);
 size_t type_align(Type type);
 size_t type_padding(Type type);
 
-Type type_function(Type* params, size_t num_params, Type return_type, bool is_nested);
+typedef enum TypeDataFuncFlags {
+  TDFF_NONE = 0,
+  TDFF_NESTED = 1,
+  TDFF_MEMFN = 2,
+  TDFF_FOREIGN = 4,
+} TypeDataFuncFlags;
+
+Type type_function(Type* params, size_t num_params, Type return_type, TypeDataFuncFlags flags);
 Type type_ptr(Type subtype);
 Type type_array(Type subtype, size_t size);
 Type type_list(Type subtype);

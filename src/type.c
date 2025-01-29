@@ -4,10 +4,6 @@
 
 _Static_assert(NUM_TYPE_KINDS < (1<<8), "Too many TypeKind");
 
-typedef enum TypeDataFuncFlags {
-  TDFF_NESTED = 1,
-} TypeDataFuncFlags;
-
 typedef union TypeData {
   struct {
     uint32_t size;
@@ -194,7 +190,7 @@ static bool functype_eq_func(void* keyvoid, void* slotvoid) {
   return memcmp(ktd + 1, std + 1, extra_typedata_blocks * sizeof(TypeDataExtra)) == 0;
 }
 
-Type type_function(Type* params, size_t num_params, Type return_type, bool is_nested) {
+Type type_function(Type* params, size_t num_params, Type return_type, TypeDataFuncFlags flags) {
   uint32_t rewind_location;
   Type func =
       type_alloc(TYPE_FUNC, /*extra=*/ROUND_UP(num_params, WORDS_IN_EXTRA), &rewind_location);
@@ -207,7 +203,7 @@ Type type_function(Type* params, size_t num_params, Type return_type, bool is_ne
   TypeData* td = type_td(func);
   td->FUNC.num_params = num_params;
   td->FUNC.return_type = return_type;
-  td->FUNC.flags = is_nested ? TDFF_NESTED : 0;
+  td->FUNC.flags = flags;
   /* This would be the typed version, but it's just a memcpy into TypeDataExtra.
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
   for (size_t i = 0; i < num_params; ++i) {
