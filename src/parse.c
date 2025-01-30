@@ -2046,7 +2046,9 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
     // build that from the left that we originally had.
     ir_ref self_ptr;
     if (type_kind(original_left_type) == TYPE_STRUCT) {
-      self_ptr = left.ref;
+      ir_ref addr = ir_VAR(IR_ADDR, "self*");
+      ir_VSTORE(addr, operand_to_irref_imm(&left));
+      self_ptr = ir_VADDR(addr);
     } else {
       error("TODO: self ptr");
     }
