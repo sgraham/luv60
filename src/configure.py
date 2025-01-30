@@ -127,6 +127,7 @@ def get_tests():
         err_prefix = "# ERR: "
         out_prefix = "# OUT: "
         disabled_prefix = "# DISABLED"
+        imported_prefix = "# IMPORTED"
         ret_set = False
         with open(test, "r", encoding="utf-8") as f:
             for l in f.readlines():
@@ -139,7 +140,7 @@ def get_tests():
                     err += l[len(err_prefix) :].rstrip() + "\n"
                 if l.startswith(out_prefix):
                     out += l[len(out_prefix) :].rstrip() + "\n"
-                if l.startswith(disabled_prefix):
+                if l.startswith(disabled_prefix) or l.startswith(imported_prefix):
                     disabled = True
 
             def sub(t):

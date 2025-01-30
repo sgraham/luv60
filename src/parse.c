@@ -64,6 +64,7 @@ typedef struct Sym {
 #define MAX_STRUCT_FIELDS 64
 #define MAX_PENDING_CONDS 32
 #define MAX_UPVALS 32
+#define MAX_PACKAGE_DEPTH 16
 
 typedef struct PendingCond {
   ir_ref iftrue;
@@ -3398,6 +3399,21 @@ static void struct_statement() {
   new->scope_decl = SSD_DECLARED_GLOBAL;
 }
 
+static void import_statement(void) {
+  Str parts[MAX_PACKAGE_DEPTH];
+  int num_parts = 0;
+  parts[num_parts++] = parse_name("Expect package name.");
+  for (;;) {
+    if (match(TOK_DOT)) {
+      parts[num_parts++] = parse_name("Expecting nested package name after '.'.");
+    } else {
+      break;
+    }
+  }
+
+  // TODO: many things
+}
+
 static void parse_variable_statement(Type type) {
   Str name = parse_name("Expect variable or typed variable name.");
   ASSERT(name.i);
@@ -3450,12 +3466,17 @@ static LastStatementType parse_statement(bool toplevel) {
       break;
     case TOK_ON:
       advance();
-      if (!toplevel) error("'on' only allowed at top level.");
+      if (!toplevel) error("on statement only allowed at top level.");
       on_statement();
+      break;
+    case TOK_IMPORT:
+      advance();
+      if (!toplevel) error("import statement only allowed at top level.");
+      import_statement();
       break;
     case TOK_STRUCT:
       advance();
-      if (!toplevel) error("struct statement only allowed at top level currently.");
+      if (!toplevel) error("struct statement only allowed at top level.");
       struct_statement();
       break;
     case TOK_IF:
