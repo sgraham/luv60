@@ -55,8 +55,8 @@ CLANG_CL_WIN = "C:\\Program Files\\LLVM\\bin\\clang-cl.exe"
 LLD_LINK_WIN = "C:\\Program Files\\LLVM\\bin\\lld-link.exe"
 CLANG = "clang"
 
-DEBUG_DEFINES = "-DIR_DEBUG -D_DEBUG -DBUILD_DEBUG=1 -D_CRT_SECURE_NO_DEPRECATE /DIR_DISASM_INTEL_SYNTAX=1"
-RELEASE_DEFINES = "-DNDEBUG -DBUILD_DEBUG=0 -D_CRT_SECURE_NO_DEPRECATE /DIR_DISASM_INTEL_SYNTAX=1"
+DEBUG_DEFINES = "-DIR_DEBUG -D_DEBUG -DBUILD_DEBUG=1 -D_CRT_SECURE_NO_DEPRECATE"
+RELEASE_DEFINES = "-DNDEBUG -DBUILD_DEBUG=0 -D_CRT_SECURE_NO_DEPRECATE"
 
 WIN_COMMON_CC_FLAGS = "/showIncludes /nologo /FS /Zi /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb"
 WIN_COMMON_LD_FLAGS = "/nologo /DEBUG $in /out:$out /pdb:$out.pdb"
