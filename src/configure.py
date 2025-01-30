@@ -12,7 +12,6 @@ COMMON_FILELIST = [
     "../third_party/ir/ir.c",
     "../third_party/ir/ir_cfg.c",
     "../third_party/ir/ir_check.c",
-    "../third_party/ir/ir_disasm.c",
     "../third_party/ir/ir_dump.c",
     "../third_party/ir/ir_emit.c",
     "../third_party/ir/ir_gcm.c",
@@ -56,36 +55,34 @@ CLANG_CL_WIN = "C:\\Program Files\\LLVM\\bin\\clang-cl.exe"
 LLD_LINK_WIN = "C:\\Program Files\\LLVM\\bin\\lld-link.exe"
 CLANG = "clang"
 
+DEBUG_DEFINES = "-DIR_DEBUG -D_DEBUG -DBUILD_DEBUG=1 -D_CRT_SECURE_NO_DEPRECATE /DIR_DISASM_INTEL_SYNTAX=1"
+RELEASE_DEFINES = "-DNDEBUG -DBUILD_DEBUG=0 -D_CRT_SECURE_NO_DEPRECATE /DIR_DISASM_INTEL_SYNTAX=1"
+
+WIN_COMMON_CC_FLAGS = "/showIncludes /nologo /FS /Zi /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb"
+WIN_COMMON_LD_FLAGS = "/nologo /DEBUG $in /out:$out /pdb:$out.pdb"
+
 CONFIGS = {
     "w": {
         "d": {
-            "COMPILE": CLANG_CL_WIN
-            + " /showIncludes /nologo /TC /FS /Od /Zi /DIR_DEBUG /D_DEBUG /DBUILD_DEBUG=1 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo:$out /Fd:$out.pdb",
-            "LINK": LLD_LINK_WIN + " /nologo /DEBUG $in /out:$out /pdb:$out.pdb",
-            "ML": CLANG_CL_WIN
-            + " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
+            "COMPILE": f"{CLANG_CL_WIN} /Od {DEBUG_DEFINES} {WIN_COMMON_CC_FLAGS}",
+            "LINK": f"{LLD_LINK_WIN} {WIN_COMMON_LD_FLAGS}",
+            "ML": f"{CLANG_CL_WIN} /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
         },
         "r": {
-            "COMPILE": CLANG_CL_WIN
-            + " /showIncludes /nologo -flto -fuse-ld=lld /FS /O2 /Zi /DNDEBUG /DBUILD_DEBUG=0 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb",
-            "LINK": LLD_LINK_WIN
-            + " /nologo /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb",
+            "COMPILE": f"{CLANG_CL_WIN} -flto -fuse-ld=lld /O2 {RELEASE_DEFINES} {WIN_COMMON_CC_FLAGS}",
+            "LINK": f"{LLD_LINK_WIN} /ltcg /OPT:REF /OPT:ICF {WIN_COMMON_LD_FLAGS}",
             "ML": CLANG_CL_WIN
             + " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
         },
         "p": {
-            "COMPILE": CLANG_CL_WIN
-            + " /showIncludes /nologo -flto -fuse-ld=lld /FS /O2 /Zi /DTRACY_ENABLE=1 /DNDEBUG /DBUILD_DEBUG=0 /D_CRT_SECURE_NO_DEPRECATE /I$src/../third_party/tracy/public/tracy /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo$out /Fd:$out.pdb",
-            "LINK": LLD_LINK_WIN
-            + " /nologo /ltcg /DEBUG /OPT:REF /OPT:ICF $in /out:$out /pdb:$out.pdb",
+            "COMPILE": f"{CLANG_CL_WIN} -flto -fuse-ld=lld /O2 /DTRACY_ENABLE=1 {RELEASE_DEFINES} /I$src/../third_party/tracy/public/tracy {WIN_COMMON_CC_FLAGS}",
+            "LINK": f"{LLD_LINK_WIN} /ltcg /OPT:REF /OPT:ICF {WIN_COMMON_LD_FLAGS}",
             "ML": CLANG_CL_WIN
             + " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
         },
         "a": {
-            "COMPILE": CLANG_CL_WIN
-            + " /showIncludes -fsanitize=address -std:c11 /nologo /TC /FS /Od /Zi /D_DEBUG /DBUILD_DEBUG=1 /D_CRT_SECURE_NO_DEPRECATE /W4 /WX $extra -mavx2 -mpclmul -Wno-unused-parameter /I$src /I. /c $in /Fo:$out /Fd:$out.pdb",
-            "LINK": CLANG_CL_WIN
-            + " $in -fsanitize=address /link /out:$out /pdb:$out.pdb",
+            "COMPILE": f"{CLANG_CL_WIN} -fsanitize=address /Od {DEBUG_DEFINES} {WIN_COMMON_CC_FLAGS}",
+            "LINK": f"{CLANG_CL_WIN} $in -fsanitize=address /link /out:$out /pdb:$out.pdb",
             "ML": CLANG_CL_WIN
             + " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
         },
@@ -96,15 +93,13 @@ CONFIGS = {
     },
     "m": {
         "d": {
-            "COMPILE": CLANG
-            + " -MMD -MF $out.d -std=c11 -O0 -g -DIR_DEBUG -D_DEBUG -DBUILD_DEBUG=1 -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
-            "LINK": CLANG + " -g $in -lcapstone -o $out",
+            "COMPILE": f"{CLANG} -MMD -MF $out.d -std=c11 -O0 -g {DEBUG_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            "LINK": CLANG + " -g $in -o $out",
             "ML": CLANG + " $in -o $out",
         },
         "r": {
-            "COMPILE": CLANG
-            + " -MMD -MF $out.d -std=c11 -flto -O3 -g -DNDEBUG -DBUILD_DEBUG=0 -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
-            "LINK": CLANG + " -g $in -lcapstone -o $out",
+            "COMPILE": f"{CLANG} -MMD -MF $out.d -std=c11 -flto -O3 -g {RELEASE_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            "LINK": CLANG + " -g $in -o $out",
             "ML": CLANG + " $in -o $out",
         },
         "__": {
@@ -269,9 +264,6 @@ def generate(platform, config, settings, cmdlines, tests):
             if sys.platform == "darwin" and "_win." in src:
                 continue
             elif sys.platform == "win32" and "_mac." in src:
-                continue
-            if sys.platform == "win32" and "ir_disasm.c" in src:
-                # TODO: no capstone on win right now
                 continue
             obj = getobj(src)
             common_objs.append(obj)

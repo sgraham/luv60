@@ -832,16 +832,17 @@ static void leave_function(void) {
     void* entry = ir_jit_compile(_ir_CTX, /*opt=*/parser.opt_level, &size);
     if (entry) {
       if (parser.verbose) {
-        //base_writef_stderr("memset at %p\n", memset);
-        //base_writef_stderr("memcpy at %p\n", memcpy);
         base_writef_stderr("=> codegen to %zu bytes at %p for '%s'\n", size, entry,
                            cstr_copy(parser.arena, parser.cur_scope->func_sym->name));
-#  if !OS_WINDOWS  // TODO: don't have capstone or ir_disasm on win32 right now
-        ir_disasm_init();
-        ir_disasm(cstr_copy(parser.arena, parser.cur_scope->func_sym->name), entry, size, false, _ir_CTX,
-                  stderr);
-        ir_disasm_free();
-#  endif
+#if BUILD_DEBUG
+        // ir_disasm uses capstone, but it makes the compiler binary about ~10x
+        // larger, so just save the code in verbose mode and use an external
+        // disassembler when we care.
+        FILE* f = fopen("code.raw", "wb");
+        fwrite(entry, 1, size, f);
+        fclose(f);
+        base_writef_stderr("Wrote code.raw\n");
+#endif
       }
       if (str_eq(parser.cur_scope->func_sym->name, str_intern("main"))) {
         parser.main_func_entry = entry;
