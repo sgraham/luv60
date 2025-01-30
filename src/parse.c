@@ -832,8 +832,10 @@ static void leave_function(void) {
     void* entry = ir_jit_compile(_ir_CTX, /*opt=*/parser.opt_level, &size);
     if (entry) {
       if (parser.verbose) {
-        fprintf(stderr, "=> codegen to %zu bytes at %p for '%s'\n", size, entry,
-                cstr_copy(parser.arena, parser.cur_scope->func_sym->name));
+        //base_writef_stderr("memset at %p\n", memset);
+        //base_writef_stderr("memcpy at %p\n", memcpy);
+        base_writef_stderr("=> codegen to %zu bytes at %p for '%s'\n", size, entry,
+                           cstr_copy(parser.arena, parser.cur_scope->func_sym->name));
 #  if !OS_WINDOWS  // TODO: don't have capstone or ir_disasm on win32 right now
         ir_disasm_init();
         ir_disasm(cstr_copy(parser.arena, parser.cur_scope->func_sym->name), entry, size, false, _ir_CTX,
