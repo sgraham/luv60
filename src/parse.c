@@ -190,6 +190,10 @@ typedef enum OpKind {
   // global address as const in .ref (read-only; generally a function address)
   OPK_REF_RVAL_GLOBAL_ADDR = OPK_BIT_RVAL_REF | OPK_BIT_GLOBAL_ADDR,
 
+  // global address as const in .ref (read-only; generally a function address),
+  // and a self pointer in .ref2.
+  OPK_REF_RVAL_GLOBAL_ADDR_BOUND_FUNC = OPK_BIT_SECOND_REF | OPK_BIT_RVAL_REF | OPK_BIT_GLOBAL_ADDR,
+
   // global variable address as const in .ref (could be stored to)
   OPK_REF_LVAL_GLOBAL_ADDR = OPK_BIT_LVAL_REF | OPK_BIT_GLOBAL_ADDR,
 } OpKind;
@@ -358,6 +362,11 @@ static Operand operand_bound_local_function(Type type, ir_ref ref, ir_ref ref2) 
 
 static Operand operand_rvalue_global_addr(Type type, ir_ref ref) {
   return (Operand){.kind = OPK_REF_RVAL_GLOBAL_ADDR, .type = type, .ref = ref};
+}
+
+static Operand operand_rvalue_global_addr_bound(Type type, ir_ref ref, ir_ref ref2) {
+  return (Operand){
+      .kind = OPK_REF_RVAL_GLOBAL_ADDR_BOUND_FUNC, .type = type, .ref = ref, .ref2 = ref2};
 }
 
 static Operand operand_lvalue_global_addr(Type type, ir_ref ref) {
@@ -1839,11 +1848,10 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
   if (type_kind(left.type) != TYPE_FUNC) {
     errorf("Expected function type, but type is %s.", type_as_str(left.type));
   }
-  bool is_nested = type_func_is_nested(left.type);
   ir_ref arg_values[MAX_FUNC_PARAMS];
   uint32_t num_args = 0;
 
-  if (is_nested) {
+  if (type_func_flags(left.type) & (TFF_NESTED | TFF_MEMFN)) {
     ASSERT(op_has_ref2(left));
     arg_values[0] = left.ref2;
     ++num_args;
@@ -1956,12 +1964,6 @@ static Str memfn_name_from_type(Type type, Str func_name) {
   return memfn_name_from_type_name(type_struct_decl_name(type), func_name);
 }
 
-#if 0
-static Type check_for_memfn(Type lhs, Str memfn_name) {
-  build_sym_name_for_memfn_from_type(lhs, memfn_name, /*natural=*/true, lhs_name_for_err);
-}
-#endif
-
 static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
   // TODO: package, and maybe const or types after . ?
   Str name = parse_name("Expect property name after '.'.");
@@ -1985,6 +1987,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       error("todo; assigning to unexpected thing");
     }
   } else {
+    Type original_left_type = left.type;
     while (type_kind(left.type) == TYPE_PTR) {
       left = operand_lvalue_local(type_ptr_subtype(left.type), ir_LOAD(IR_ADDR, left.ref));
     }
@@ -2033,8 +2036,20 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       error("internal error: memfn with no parameters");
     }
 
-    // TODO: need to bind this to &left as |self|
-    return operand_rvalue_global_addr(func_sym->type, ir_CONST_ADDR(func_sym->addr));
+    // left could have been:
+    //    ****Stuff x
+    //    x.memfn()
+    // The auto-deref would find Stuff for memfn lookup, and now left.type will
+    // just be Stuff. The target memfn always just gets *Stuff, so we need to
+    // build that from the left that we originally had.
+    ir_ref self_ptr;
+    if (type_kind(original_left_type) == TYPE_STRUCT) {
+      self_ptr = left.ref;
+    } else {
+      error("TODO: self ptr");
+    }
+    return operand_rvalue_global_addr_bound(func_sym->type, ir_CONST_ADDR(func_sym->addr),
+                                            self_ptr);
   }
 }
 
@@ -3212,7 +3227,7 @@ static void def_statement(void) {
   consume(TOK_INDENT, "Expect indent before function body. (TODO: single line)");
 
   Type functype =
-      type_function(param_types, num_params, return_type, is_nested ? TDFF_NESTED : TDFF_NONE);
+      type_function(param_types, num_params, return_type, is_nested ? TFF_NESTED : TFF_NONE);
 
   Sym* funcsym = sym_new(SYM_FUNC, name, functype);
   funcsym->scope_decl = is_nested ? SSD_DECLARED_LOCAL : SSD_DECLARED_GLOBAL;  // ?
@@ -3281,7 +3296,7 @@ static void on_statement(void) {
     consume(TOK_INDENT, "Expect indented function body.");
   }
 
-  Type functype = type_function(param_types, num_params, return_type, TDFF_MEMFN);
+  Type functype = type_function(param_types, num_params, return_type, TFF_MEMFN);
 
   Str full_name = memfn_name_from_type_name(type_name, func_name);
   Sym* funcsym = sym_new(SYM_FUNC, full_name, functype);

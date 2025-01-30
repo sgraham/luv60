@@ -192,14 +192,14 @@ size_t type_size(Type type);
 size_t type_align(Type type);
 size_t type_padding(Type type);
 
-typedef enum TypeDataFuncFlags {
-  TDFF_NONE = 0,
-  TDFF_NESTED = 1,
-  TDFF_MEMFN = 2,
-  TDFF_FOREIGN = 4,
-} TypeDataFuncFlags;
+typedef enum TypeFuncFlags {
+  TFF_NONE = 0,
+  TFF_NESTED = 1,
+  TFF_MEMFN = 2,
+  TFF_FOREIGN = 4,
+} TypeFuncFlags;
 
-Type type_function(Type* params, size_t num_params, Type return_type, TypeDataFuncFlags flags);
+Type type_function(Type* params, size_t num_params, Type return_type, TypeFuncFlags flags);
 Type type_ptr(Type subtype);
 Type type_array(Type subtype, size_t size);
 Type type_list(Type subtype);
@@ -229,6 +229,8 @@ uint32_t type_func_num_params(Type type);
 Type type_func_return_type(Type type);
 Type type_func_param(Type type, uint32_t i);
 bool type_func_is_nested(Type type);
+bool type_func_is_memfn(Type type);
+TypeFuncFlags type_func_flags(Type type);
 
 Type type_ptr_subtype(Type type);
 

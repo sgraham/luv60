@@ -41,7 +41,7 @@ typedef union TypeData {
   struct {
     Type return_type;
     uint32_t num_params;
-    uint32_t flags;  // TypeDataFuncFlags
+    uint32_t flags;  // TypeFuncFlags
     uint32_t unused0; // Should make this param0 type
   } FUNC;
 
@@ -190,7 +190,7 @@ static bool functype_eq_func(void* keyvoid, void* slotvoid) {
   return memcmp(ktd + 1, std + 1, extra_typedata_blocks * sizeof(TypeDataExtra)) == 0;
 }
 
-Type type_function(Type* params, size_t num_params, Type return_type, TypeDataFuncFlags flags) {
+Type type_function(Type* params, size_t num_params, Type return_type, TypeFuncFlags flags) {
   uint32_t rewind_location;
   Type func =
       type_alloc(TYPE_FUNC, /*extra=*/ROUND_UP(num_params, WORDS_IN_EXTRA), &rewind_location);
@@ -530,7 +530,19 @@ Type type_func_param(Type type, uint32_t i){
 bool type_func_is_nested(Type type) {
   ASSERT(type_kind(type) == TYPE_FUNC);
   TypeData* td = type_td(type);
-  return td->FUNC.flags & TDFF_NESTED;
+  return td->FUNC.flags & TFF_NESTED;
+}
+
+bool type_func_is_memfn(Type type) {
+  ASSERT(type_kind(type) == TYPE_FUNC);
+  TypeData* td = type_td(type);
+  return td->FUNC.flags & TFF_MEMFN;
+}
+
+TypeFuncFlags type_func_flags(Type type) {
+  ASSERT(type_kind(type) == TYPE_FUNC);
+  TypeData* td = type_td(type);
+  return td->FUNC.flags;
 }
 
 Type type_ptr_subtype(Type type) {
