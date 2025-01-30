@@ -2522,7 +2522,12 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
           if (left_type_kind == TYPE_ARRAY) {
             ASSERT(op_is_local_addr(left));
             subtype = type_array_subtype(left.type);
-            target_addr = ir_ADD_A(left.ref, ir_MUL_I64(ir_CONST_I64(type_size(subtype)),
+            target_addr = ir_ADD_A(left.ref, ir_MUL_U64(ir_CONST_U64(type_size(subtype)),
+                                                        operand_to_irref_imm(&subscript)));
+          } else if (left_type_kind == TYPE_PTR) {
+            ASSERT(op_is_local_addr(left));
+            subtype = type_ptr_subtype(left.type);
+            target_addr = ir_ADD_A(left.ref, ir_MUL_U64(ir_CONST_U64(type_size(subtype)),
                                                         operand_to_irref_imm(&subscript)));
           } else {
             error("TODO: subscript impl");
@@ -2611,6 +2616,8 @@ static Operand parse_unary(bool can_assign, Type* expected) {
     } else {
       errorf("Type %s cannot be used in a boolean not.", type_as_str(expr.type));
     }
+  } else if (op_kind == TOK_AMPERSAND) {
+    return operand_rvalue_imm(type_ptr(expr.type), ir_VADDR(expr.ref));
   } else {
     error("unary operator not implemented");
   }
