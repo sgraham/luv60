@@ -465,7 +465,7 @@ uint32_t lex_indexer_fallback(const uint8_t* buf,
           c = buf[++i];
           if (c == '\n') break;
         }
-        // We don't want the comment indexed, but we do want tbe newline at
+        // We don't want the comment indexed, but we do want the newline that
         // terminates the comment as its own thing.
         *to++ = i++;
         break;

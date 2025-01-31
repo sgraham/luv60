@@ -1,0 +1,31 @@
+# DISABLED
+# OUT: 1.000000
+# OUT: 2.000000
+# OUT: 3.000000
+# OUT: 4.000000
+# OUT: 5.000000
+# OUT: 6.000000
+# OUT: 7.000000
+# OUT: 8.000000
+def int main():
+    float a = 1.00
+    double b = 2.00
+    f32 c = 3.00
+    f64 d = 4.00
+
+    print a
+    print b
+    print c
+    print d
+
+    a = 5.0
+    b = 6.0
+    c = 7.0
+    d = 8.0
+
+    print a
+    print b
+    print c
+    print d
+
+    return 0

@@ -1924,7 +1924,8 @@ static Operand lower_structs_and_call(Operand* func, uint32_t num_args, ir_ref* 
     if (ret_type_packed_into_int) {
       new_ret_type = type_u64;
     } else {
-      // Create a slot for the callee to write to, and pass that as the first arg.
+      // Create a slot for the callee to write to, and pass that as the first
+      // arg. That same pointer will be returned by the callee.
       out_ret = ir_ALLOCA(ir_CONST_U64(type_size(ret_type)));
       new_ret_type = type_ptr(ret_type);
       //new_arg_types[num_new_args] = new_ret_type;
