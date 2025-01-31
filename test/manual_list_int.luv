@@ -1,0 +1,55 @@
+# DISABLED
+# OUT: 0
+# OUT: []
+# OUT: 3
+# OUT: [10, 20, 30]
+
+struct ListData_int:
+    *int data
+    u64 length
+    u64 capacity
+
+on ListData_int def ensure_capacity(self, u64 cap):
+    if self.capacity >= cap:
+        return
+    # TODO: handle {null,0,0}, grow by at least 16 or double or something
+    # cap = round_up(capacity, cap, 16)
+    #*int new = alloc(int, cap)
+    #if self.data:
+        #memcpy(new, self.data, sizeof(int) * self.length)
+        #del self.data
+    #self.data = new
+    #self.capacity = cap
+
+on ListData_int def append(self, int item):
+    self.ensure_capacity(self.length + 1)
+    self.data[self.length] = item
+    self.length = self.length + 1
+
+on ListData_int def u64 __len__(self):
+    return self.length
+
+on ListData_int def int __getitem__(self, u64 index):
+    check index < self.length
+    return self.data[index]
+
+on ListData_int def str __repr__(self):
+    # TODO: StringBuilder
+    # TODO: arena
+    str ret = "["
+    for i in range(self.length):
+        ret = ret + self.data[i]).__repr__()
+        if i < self.length - 1:
+            ret = ret + ", "
+    ret = ret + "]"
+    return ret
+
+def int main():
+    ListData_int lst
+    print len(lst)
+    print lst
+    lst.append(10)
+    lst.append(20)
+    lst.append(30)
+    print len(lst)
+    print lst
