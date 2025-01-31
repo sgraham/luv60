@@ -188,6 +188,8 @@ void type_destroy_for_tests(void);
 // returned str is either allocated into the arena passed to type_init(), or a constant.
 const char* type_as_str(Type type);
 
+Str type_decl_name(Type type);
+
 size_t type_size(Type type);
 size_t type_align(Type type);
 size_t type_padding(Type type);

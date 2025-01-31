@@ -6,6 +6,7 @@ _Static_assert(NUM_TYPE_KINDS < (1<<8), "Too many TypeKind");
 
 typedef union TypeData {
   struct {
+    Str name;
     uint32_t size;
     uint32_t align;
   } BASIC;
@@ -87,34 +88,34 @@ static DictImpl cached_array_types;
 static DictImpl cached_list_types;
 static Arena* arena_;
 
-const char* natural_builtin_type_names[NUM_TYPE_KINDS] = {
-    [TYPE_VOID] = "opaque",    //
-    [TYPE_BOOL] = "bool",      //
-    [TYPE_U8] = "u8",          //
-    [TYPE_U16] = "u16",        //
-    [TYPE_U32] = "u32",        //
-    [TYPE_U64] = "u64",        //
-    [TYPE_I8] = "i8",          //
-    [TYPE_I16] = "i16",        //
-    [TYPE_I32] = "i32",        //
-    [TYPE_I64] = "i64",        //
-    [TYPE_FLOAT] = "float",    //
-    [TYPE_DOUBLE] = "double",  //
-    [TYPE_STR] = "str",        //
-    [TYPE_RANGE] = "Range",    //
-    [TYPE_CHAR] = "char",      //
-};
-
-static void set_builtin_typedata(uint32_t index, uint32_t size, uint32_t align) {
+static void set_builtin_typedata(uint32_t index, const char* name, uint32_t size, uint32_t align) {
   ASSERT(index < COUNTOF(typedata));
   ASSERT(typedata[index].BASIC.size == 0);
   ASSERT(typedata[index].BASIC.align == 0);
+  typedata[index].BASIC.name = str_intern(name);
   typedata[index].BASIC.size = size;
   typedata[index].BASIC.align = align;
 }
 
 static inline TypeData* type_td(Type t) {
   return &typedata[t.u >> 8];
+}
+
+bool type_is_basic(Type type) {
+  TypeKind kind = type_kind(type);
+  return kind >= TYPE_BOOL && kind <= TYPE_RANGE && kind != TYPE_ENUM;
+}
+
+Str type_decl_name(Type type) {
+  TypeKind kind = type_kind(type);
+  if (kind == TYPE_STRUCT) {
+    return type_struct_decl_name(type);
+  } else if (type_is_basic(type)) {
+    return type_td(type)->BASIC.name;
+  } else {
+    ASSERT(false);
+    return (Str){0};
+  }
 }
 
 size_t type_size(Type type) {
@@ -368,8 +369,8 @@ Type type_list(Type subtype) {
 // Returned str is either the cstr() of an interned string, or a constant.
 // Not fast or memory efficient, should only be used during errors though.
 const char* type_as_str(Type type) {
-  if (natural_builtin_type_names[type_kind(type)]) {
-    return natural_builtin_type_names[type_kind(type)];
+  if (type_is_basic(type)) {
+    return cstr_copy(arena_, type_td(type)->BASIC.name);
   }
   switch (type_kind(type)) {
     case TYPE_FUNC: {
@@ -407,20 +408,20 @@ void type_init(Arena* arena) {
   cached_array_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
   cached_list_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
 
-  set_builtin_typedata(TYPE_VOID, 0, 1);
-  set_builtin_typedata(TYPE_BOOL, 1, 1);
-  set_builtin_typedata(TYPE_U8, 1, 1);
-  set_builtin_typedata(TYPE_I8, 1, 1);
-  set_builtin_typedata(TYPE_U16, 2, 2);
-  set_builtin_typedata(TYPE_I16, 2, 2);
-  set_builtin_typedata(TYPE_U32, 4, 4);
-  set_builtin_typedata(TYPE_I32, 4, 4);
-  set_builtin_typedata(TYPE_U64, 8, 8);
-  set_builtin_typedata(TYPE_I64, 8, 8);
-  set_builtin_typedata(TYPE_FLOAT, 4, 4);
-  set_builtin_typedata(TYPE_DOUBLE, 8, 8);
-  set_builtin_typedata(TYPE_STR, 16, 8);
-  set_builtin_typedata(TYPE_RANGE, 24, 8);
+  set_builtin_typedata(TYPE_VOID, "void", 0, 1);
+  set_builtin_typedata(TYPE_BOOL, "bool", 1, 1);
+  set_builtin_typedata(TYPE_U8, "u8", 1, 1);
+  set_builtin_typedata(TYPE_I8, "i8", 1, 1);
+  set_builtin_typedata(TYPE_U16, "u16", 2, 2);
+  set_builtin_typedata(TYPE_I16, "i16", 2, 2);
+  set_builtin_typedata(TYPE_U32, "u32", 4, 4);
+  set_builtin_typedata(TYPE_I32, "i32", 4, 4);
+  set_builtin_typedata(TYPE_U64, "u64", 8, 8);
+  set_builtin_typedata(TYPE_I64, "i64", 8, 8);
+  set_builtin_typedata(TYPE_FLOAT, "float", 4, 4);
+  set_builtin_typedata(TYPE_DOUBLE, "double", 8, 8);
+  set_builtin_typedata(TYPE_STR, "str", 16, 8);
+  set_builtin_typedata(TYPE_RANGE, "Range", 24, 8);
   num_typedata = NUM_TYPE_KINDS;
 }
 

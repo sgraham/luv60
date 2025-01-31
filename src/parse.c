@@ -159,6 +159,10 @@ typedef struct Parser {
   bool ir_only;
   int opt_level;
   ir_code_buffer code_buffer;
+
+  Str static_str_repr;
+  Str static_str_ret;
+  Str static_str_up;
 } Parser;
 
 static Parser parser;
@@ -509,6 +513,12 @@ static ir_ref operand_to_irref_imm(Operand* op) {
   }
 }
 
+static ir_ref addr_for_operand(Operand* op) {
+  ir_ref var = ir_VAR(type_to_ir_type(op->type), "&");
+  ir_VSTORE(var, operand_to_irref_imm(op));
+  return ir_VADDR(var);
+}
+
 typedef struct NameSymPair {
   Str name;
   Sym sym;
@@ -791,11 +801,11 @@ static void enter_function(Sym* sym,
     parser.cur_scope->return_slot = NULL;
   } else {
     parser.cur_scope->return_slot =
-        make_local_and_alloc(SYM_VAR, str_intern_len("$ret", 4), ret_type, NULL);
+        make_local_and_alloc(SYM_VAR, parser.static_str_ret, ret_type, NULL);
   }
 
   if (is_nested) {
-    ASSERT(str_eq(param_syms[0]->name, str_intern_len("$up", 3)));
+    ASSERT(str_eq(param_syms[0]->name, parser.static_str_up));
     ASSERT(type_kind(param_syms[0]->type) == TYPE_PTR);
     ASSERT(type_eq(type_ptr_subtype(param_syms[0]->type), type_void));
     parser.cur_scope->upval_base = param_syms[0]->ref;
@@ -1964,8 +1974,20 @@ static Str memfn_name_from_type_name(Str type_name, Str func_name) {
 }
 
 static Str memfn_name_from_type(Type type, Str func_name) {
-  ASSERT(type_kind(type) == TYPE_STRUCT);
-  return memfn_name_from_type_name(type_struct_decl_name(type), func_name);
+  return memfn_name_from_type_name(type_decl_name(type), func_name);
+}
+
+static Sym* lookup_memfn(Type type, Str func_name) {
+  Str memfn_name = memfn_name_from_type(type, func_name);
+  Sym* sym;
+  ScopeResult scope_result = scope_lookup_recursive(memfn_name, &sym);
+  if (scope_result == SCOPE_RESULT_UNDEFINED) {
+    return NULL;
+  } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_FUNC) {
+    return sym;
+  } else {
+    error("internal error: lookup_memfn");
+  }
 }
 
 static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
@@ -2017,16 +2039,11 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
         error("TODO: polymorphic dict memfns");
 
       default: {
-        Str memfn_name = memfn_name_from_type(left.type, name);
-        Sym* sym;
-        ScopeResult scope_result = scope_lookup_recursive(memfn_name, &sym);
-        if (scope_result == SCOPE_RESULT_UNDEFINED) {
-          errorf("Undefined member function %s (resolved to %s).", cstr_copy(parser.arena, name),
-                 cstr_copy(parser.arena, memfn_name));
-        } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_FUNC) {
-          func_sym = sym;
+        Sym* sym = lookup_memfn(left.type, name);
+        if (!sym) {
+          errorf("Undefined member function %s.", cstr_copy(parser.arena, name));
         } else {
-          ASSERT(false && "todo");
+          func_sym = sym;
         }
         break;
       }
@@ -3182,17 +3199,25 @@ static void for_statement(void) {
 
 static void print_statement(void) {
   Operand val = parse_expression(NULL);
-  (void)val;
-  if (type_eq(val.type, type_str)) {
-    print_str(&val);
-  } else if (type_eq(val.type, type_range)) {
-    print_range(&val);
-  } else if (type_eq(val.type, type_bool)) {
-    print_bool(&val);
-  } else if (convert_operand(&val, type_i32)) {
-    print_i32(&val);
+
+  // If __repr__ exists for the type, call it, and then use print_str.
+  Sym* sym = lookup_memfn(val.type, parser.static_str_repr);
+  if (sym) {
+    ir_ref str = ir_CALL_1(IR_I32, ir_CONST_ADDR(sym->addr), addr_for_operand(&val));
+    ir_ref addr = ir_CONST_ADDR(print_i32_impl);
+    ir_CALL_1(IR_VOID, addr, str);
   } else {
-    errorf("TODO: don't know how to print type %s.", type_as_str(val.type));
+    if (type_eq(val.type, type_str)) {
+      print_str(&val);
+    } else if (type_eq(val.type, type_range)) {
+      print_range(&val);
+    } else if (type_eq(val.type, type_bool)) {
+      print_bool(&val);
+    } else if (convert_operand(&val, type_i32)) {
+      print_i32(&val);
+    } else {
+      errorf("TODO: don't know how to print type %s.", type_as_str(val.type));
+    }
   }
   expect_end_of_statement("print");
 }
@@ -3555,6 +3580,9 @@ static void* parse_impl(Arena* main_arena,
   parser.verbose = verbose;
   parser.ir_only = ir_only;
   parser.opt_level = opt_level;
+  parser.static_str_repr = str_intern_len("__repr__", 8);
+  parser.static_str_ret = str_intern_len("$ret", 4);
+  parser.static_str_up = str_intern_len("$up", 3);
 
 #if ENABLE_CODE_GEN
   size_t code_buffer_size = MiB(512);
