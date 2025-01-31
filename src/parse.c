@@ -161,6 +161,7 @@ typedef struct Parser {
   int opt_level;
   ir_code_buffer code_buffer;
 
+  Str static_str_main;
   Str static_str_repr;
   Str static_str_ret;
   Str static_str_up;
@@ -856,7 +857,7 @@ static void leave_function(void) {
         base_writef_stderr("Wrote code.raw\n");
 #endif
       }
-      if (str_eq(parser.cur_scope->func_sym->name, str_intern("main"))) {
+      if (str_eq(parser.cur_scope->func_sym->name, parser.static_str_main)) {
         parser.main_func_entry = entry;
       }
     } else {
@@ -1345,7 +1346,7 @@ static uint32_t parse_func_params(bool is_nested,
   if (is_nested) {
     ASSERT(!memfn_self);
     out_types[num_params] = type_ptr(type_void);
-    out_names[num_params] = str_intern_len("$up", 3);
+    out_names[num_params] = parser.static_str_up;
     ++num_params;
   } else if (memfn_self) {
     ASSERT(!is_nested);
@@ -3709,6 +3710,7 @@ static void* parse_impl(Arena* main_arena,
   parser.verbose = verbose;
   parser.ir_only = ir_only;
   parser.opt_level = opt_level;
+  parser.static_str_main = str_intern_len("main", 4);
   parser.static_str_repr = str_intern_len("__repr__", 8);
   parser.static_str_ret = str_intern_len("$ret", 4);
   parser.static_str_up = str_intern_len("$up", 3);
