@@ -2527,10 +2527,10 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
             target_addr = ir_ADD_A(left.ref, ir_MUL_U64(ir_CONST_U64(type_size(subtype)),
                                                         operand_to_irref_imm(&subscript)));
           } else if (left_type_kind == TYPE_PTR) {
-            ASSERT(op_is_local_addr(left));
             subtype = type_ptr_subtype(left.type);
-            target_addr = ir_ADD_A(left.ref, ir_MUL_U64(ir_CONST_U64(type_size(subtype)),
-                                                        operand_to_irref_imm(&subscript)));
+            target_addr = ir_ADD_A(
+                op_is_local_addr(left) ? ir_VLOAD(IR_ADDR, left.ref) : left.ref,
+                ir_MUL_U64(ir_CONST_U64(type_size(subtype)), operand_to_irref_imm(&subscript)));
           } else {
             error("TODO: subscript impl");
           }
@@ -3292,6 +3292,9 @@ static void on_statement(void) {
   Str func_name = parse_name("Expect function name.");
   consume(TOK_LPAREN, "Expect '(' after function name.");
   Str self_name = parse_name("Expect 'self' token.");
+  if (!check(TOK_RPAREN)) {
+    consume(TOK_COMMA, "Expect comma after 'self' name.");
+  }
 
   Type param_types[MAX_FUNC_PARAMS];
   Str param_names[MAX_FUNC_PARAMS];
@@ -3412,6 +3415,11 @@ static void import_statement(void) {
   }
 
   // TODO: many things
+  // The end result from the imported package is a DictImpl containing
+  // name->syms for def, struct, const, var.
+  // need address/value for def/var/const.
+  // need Type to check and call propertly
+  // need struct layout, so it's pretty much the full sym_dict
 }
 
 static void parse_variable_statement(Type type) {

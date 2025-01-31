@@ -1,0 +1,21 @@
+# OUT: 999
+# OUT: 999
+# OUT: 999
+# OUT: 999
+# OUT: 123
+# OUT: 123
+# OUT: 123
+def int main():
+    int x = 999
+    *int px = &x
+    **int ppx = &px
+    ***int pppx = &ppx
+    print x
+    print px[0]
+    print ppx[0][0]
+    print pppx[0][0][0]
+    x = 123
+    print px[0]
+    print ppx[0][0]
+    print pppx[0][0][0]
+    return 0
