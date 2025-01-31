@@ -1,0 +1,50 @@
+# RUN: {self} --internal-register-test-helpers
+# OUT: 99
+# OUT: 97
+# OUT: 87
+# OUT: 66
+# OUT: s.x: 10
+# OUT: s.y: 100
+# OUT: s.z: 1000
+# OUT: s.w: 10000
+# OUT: a.x: 1
+# OUT: a.y: 2
+# OUT: a.z: 3
+# OUT: a.w: 4
+# OUT: b.x: 5
+# OUT: b.y: 6
+# OUT: b.z: 7
+# OUT: b.w: 8
+# OUT: 2
+# OUT: 3
+# OUT: 5
+# OUT: 8
+struct Stuff4:
+    int x
+    int y
+    int z
+    int w
+
+foreign Stuff4 testhelper_returns_stuff4()
+foreign testhelper_takes_stuff4(Stuff4 s)
+foreign Stuff4 testhelper_takes_and_returns_stuff4(Stuff4 a, Stuff4 b)
+
+def int main():
+    Stuff4 ret0 = testhelper_returns_stuff4()
+    print ret0.x
+    print ret0.y
+    print ret0.z
+    print ret0.w
+
+    Stuff4 to_pass = Stuff4(10, 100, 1000, 10000)
+    testhelper_takes_stuff4(to_pass)
+
+    Stuff4 to_pass2 = Stuff4(1, 2, 3, 4)
+    Stuff4 to_pass3 = Stuff4(5, 6, 7, 8)
+    Stuff4 ret1 = testhelper_takes_and_returns_stuff4(to_pass2, to_pass3)
+    print ret1.x
+    print ret1.y
+    print ret1.z
+    print ret1.w
+
+    return 0

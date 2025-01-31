@@ -155,6 +155,7 @@ typedef struct Parser {
   Scope* cur_scope;
 
   void* main_func_entry;
+  void* (*get_extern)(StrView);
   int verbose;
   bool ir_only;
   int opt_level;
@@ -1855,6 +1856,100 @@ static Operand parse_bool_literal(bool can_assign, Type* expected) {
   return operand_const(type_bool, (Val){.b = parser.cursor.prev_kind == TOK_FALSE ? 0 : 1});
 }
 
+#if OS_WINDOWS && ARCH_X64
+static bool is_aggregate_in_int_register_x64win(Type type) {
+  ASSERT(type_is_aggregate(type));
+  switch (type_size(type)) {
+    case 1:
+    case 2:
+    case 4:
+    case 8:
+      // Note that e.g. `struct {char x[3];}` is passed by pointer, even though
+      // it would otherwise "fit".
+      return true;
+    default:
+      return false;
+  }
+}
+#endif
+
+// For 'normal' arguments, this is roughly just using ir_CALL_N. But, because
+// structs aren't supported at the IR level, they need to be handled here
+// specially. This is different per ABI.
+static Operand lower_structs_and_call(Operand* func, uint32_t num_args, ir_ref* arg_values) {
+  // TODO: SysV, AArch64, etc. They're just using the non-aggregate case for now.
+#if OS_WINDOWS && ARCH_X64
+  if ((type_func_flags(func->type) & TFF_HAS_AGGREGATE_ARGS) == 0)
+#endif
+  {
+    Type ret_type = type_func_return_type(func->type);
+    return operand_rvalue_imm(
+        ret_type, ir_CALL_N(type_to_ir_type(ret_type), func->ref, num_args, arg_values));
+  }
+
+#if OS_WINDOWS && ARCH_X64
+  // Ref: https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention in
+  // particular, "Parameter passing" and "Return values". IR handles integer and
+  // floating point values in general, we just need to handle the cases of small
+  // (8/16/32/64) aggregates being passed in integer registers, and large
+  // aggregates being passed by pointer.
+  //Type new_arg_types[MAX_FUNC_PARAMS];
+  ir_ref new_arg_values[MAX_FUNC_PARAMS];
+  Type new_ret_type;
+  uint32_t num_new_args = 0;
+  Type ret_type = type_func_return_type(func->type);
+  bool ret_in_alloca = false;
+  ir_ref out_ret;
+  if (type_is_aggregate(ret_type)) {
+    if (is_aggregate_in_int_register_x64win(ret_type)) {
+      error("todo; small aggregate return value");
+    } else {
+      // Create a slot for the callee to write to, and pass that as the first arg.
+      out_ret = ir_ALLOCA(ir_CONST_U64(type_size(ret_type)));
+      new_ret_type = type_ptr(ret_type);
+      //new_arg_types[num_new_args] = new_ret_type;
+      new_arg_values[num_new_args] = out_ret;
+      ++num_new_args;
+    }
+  } else {
+    new_ret_type = ret_type;
+  }
+
+  ASSERT(type_func_num_params(func->type) == num_args);
+  for (uint32_t i = 0; i < num_args; ++i) {
+    Type param = type_func_param(func->type, i);
+    if (type_is_aggregate(param)) {
+      if (is_aggregate_in_int_register_x64win(param)) {
+        error("todo; small aggregate argument");
+      } else {
+        // Copy the argument by value to a new stack location (it can't be the one
+        // already on the stack because the callee might modify it), and then
+        // pass a pointer to that.
+        ir_ref size = ir_CONST_U64(type_size(param));
+        ir_ref copy = ir_ALLOCA(size);
+        ir_ref memcpy_addr = ir_CONST_ADDR(memcpy);
+        // TODO: maybe pass Operand so we can check the arg_values is an addr.
+        ir_CALL_3(IR_VOID, memcpy_addr, copy, arg_values[i], size);
+        //Type new_type = type_ptr(param);
+        //new_arg_types[num_new_args] = new_type;
+        new_arg_values[num_new_args] = copy;
+        ++num_new_args;
+      }
+    } else {
+      new_arg_values[num_new_args++] = arg_values[i];
+    }
+  }
+
+  ir_ref rv = ir_CALL_N(type_to_ir_type(new_ret_type), func->ref, num_new_args, new_arg_values);
+  ASSERT(!type_is_aggregate(new_ret_type));
+  if (ret_in_alloca) {
+    return operand_rvalue_local_addr(ret_type, rv);
+  } else {
+    return operand_rvalue_imm(ret_type, rv);
+  }
+#endif
+}
+
 static Operand parse_call(Operand left, bool can_assign, Type* expected) {
   if (can_assign && match_assignment()) {
     CHECK(false && "todo; returning address i think");
@@ -1874,8 +1969,8 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
   if (!check(TOK_RPAREN)) {
     for (;;) {
       if (num_args >= type_func_num_params(left.type)) {
-        errorf("Passing >= %d arguments to function, but it expects %d.", num_args + 1,
-               type_func_num_params(left.type));
+        errorf("Passing >= %d argument%s to function, but it expects %d.", num_args + 1,
+               num_args + 1 == 1 ? "" : "s", type_func_num_params(left.type));
       }
       uint32_t arg_offset = cur_offset();
       Type param_type = type_func_param(left.type, num_args);
@@ -1891,10 +1986,13 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
       }
     }
   }
+  if (num_args < type_func_num_params(left.type)) {
+    errorf("Passing only %d argument%s to function, but it expects %d.", num_args,
+           num_args == 1 ? "" : "s", type_func_num_params(left.type));
+  }
+
   consume(TOK_RPAREN, "Expect ')' after arguments.");
-  Type ret_type = type_func_return_type(left.type);
-  return operand_rvalue_imm(ret_type,
-                            ir_CALL_N(type_to_ir_type(ret_type), left.ref, num_args, arg_values));
+  return lower_structs_and_call(&left, num_args, arg_values);
 }
 
 static Operand parse_compound_literal(bool can_assign, Type* expected) {
@@ -3282,6 +3380,26 @@ static void def_statement(void) {
   leave_function();
 }
 
+static void foreign_statement(void) {
+  Type return_type = parse_type();
+  if (type_is_none(return_type)) {
+    return_type = type_void;
+  }
+  Str name = parse_name("Expect function name.");
+  consume(TOK_LPAREN, "Expect '(' after function name.");
+
+  Type param_types[MAX_FUNC_PARAMS];
+  Str param_names[MAX_FUNC_PARAMS];
+  uint32_t num_params = parse_func_params(/*is_nested=*/false, /*memfn_self=*/NULL, (Str){0},
+                                          param_types, param_names);
+  Type functype =
+      type_function(param_types, num_params, return_type, TFF_FOREIGN);
+  Sym* funcsym = sym_new(SYM_FUNC, name, functype);
+  funcsym->scope_decl = SSD_DECLARED_GLOBAL;
+
+  funcsym->addr = parser.get_extern((StrView){str_raw_ptr(name), str_len(name)});
+}
+
 static void on_statement(void) {
   Type strukt;
   Str type_name;
@@ -3497,6 +3615,11 @@ static LastStatementType parse_statement(bool toplevel) {
       advance();
       def_statement();
       break;
+    case TOK_FOREIGN:
+      advance();
+      if (!toplevel) error("foreign statement only allowed at top level.");
+      foreign_statement();
+      break;
     case TOK_ON:
       advance();
       if (!toplevel) error("on statement only allowed at top level.");
@@ -3554,10 +3677,15 @@ static LastStatementType parse_statement(bool toplevel) {
   return lst;
 }
 
+static void* always_fail_get_extern(StrView name) {
+  errorf("Unresolved external '%.*s'.", name.size, name.data);
+}
+
 static void* parse_impl(Arena* main_arena,
                    Arena* temp_arena,
                    const char* filename,
                    ReadFileResult file,
+                   void* (*get_extern)(StrView),
                    int verbose,
                    bool ir_only,
                    int opt_level) {
@@ -3577,6 +3705,7 @@ static void* parse_impl(Arena* main_arena,
   parser.num_indents = 1;
   parser.num_buffered_tokens = 0;
   parser.main_func_entry = NULL;
+  parser.get_extern = get_extern ? get_extern : always_fail_get_extern;
   parser.verbose = verbose;
   parser.ir_only = ir_only;
   parser.opt_level = opt_level;

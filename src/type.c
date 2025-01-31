@@ -191,6 +191,15 @@ static bool functype_eq_func(void* keyvoid, void* slotvoid) {
   return memcmp(ktd + 1, std + 1, extra_typedata_blocks * sizeof(TypeDataExtra)) == 0;
 }
 
+static bool contains_aggregate(uint32_t num_params, Type* params) {
+  for (uint32_t i = 0; i < num_params; ++i) {
+    if (type_is_aggregate(params[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
 Type type_function(Type* params, size_t num_params, Type return_type, TypeFuncFlags flags) {
   uint32_t rewind_location;
   Type func =
@@ -204,6 +213,9 @@ Type type_function(Type* params, size_t num_params, Type return_type, TypeFuncFl
   TypeData* td = type_td(func);
   td->FUNC.num_params = num_params;
   td->FUNC.return_type = return_type;
+  if (type_is_aggregate(return_type) || contains_aggregate(num_params, params)) {
+    flags |= TFF_HAS_AGGREGATE_ARGS;
+  }
   td->FUNC.flags = flags;
   /* This would be the typed version, but it's just a memcpy into TypeDataExtra.
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1);

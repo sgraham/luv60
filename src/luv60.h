@@ -199,6 +199,7 @@ typedef enum TypeFuncFlags {
   TFF_NESTED = 1,
   TFF_MEMFN = 2,
   TFF_FOREIGN = 4,
+  TFF_HAS_AGGREGATE_ARGS = 8,
 } TypeFuncFlags;
 
 Type type_function(Type* params, size_t num_params, Type return_type, TypeFuncFlags flags);
@@ -256,6 +257,7 @@ void* parse_code_gen(Arena* arena,
                      Arena* temp_arena,
                      const char* filename,
                      ReadFileResult file,
+                     void* (*get_extern)(StrView),
                      int verbose,
                      bool ir_only,
                      int opt_level);
@@ -263,6 +265,7 @@ void* parse_syntax_check(Arena* arena,
                          Arena* temp_arena,
                          const char* filename,
                          ReadFileResult file,
+                         void* (*get_extern)(StrView),
                          int verbose,
                          bool ir_only,
                          int opt_level);
