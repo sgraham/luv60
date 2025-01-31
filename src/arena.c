@@ -106,7 +106,7 @@ void* arena_ir_realloc(void* ptr, size_t size) {
 
   void* new_p = arena_ir_malloc(size);
   if (ptr) {
-    memcpy(new_p, ptr, CLAMP_MIN(arena_ir_allocated_size(ptr), size));
+    memcpy(new_p, ptr, MIN(arena_ir_allocated_size(ptr), size));
   }
   arena_ir_free(ptr);
   return new_p;
