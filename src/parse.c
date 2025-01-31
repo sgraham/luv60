@@ -604,6 +604,24 @@ static void print_bool(Operand* op) {
   ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
 }
 
+static void print_float_impl(float val) {
+  printf("%f\n", val);
+}
+
+static void print_float(Operand* op) {
+  ir_ref addr = ir_CONST_ADDR(print_float_impl);
+  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
+}
+
+static void print_double_impl(float val) {
+  printf("%f\n", val);
+}
+
+static void print_double(Operand* op) {
+  ir_ref addr = ir_CONST_ADDR(print_double_impl);
+  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
+}
+
 static void print_str_impl(RuntimeStr str) {
   printf("%.*s\n", (int)str.length, str.data);
 }
@@ -1899,11 +1917,12 @@ static Operand lower_structs_and_call(Operand* func, uint32_t num_args, ir_ref* 
   Type new_ret_type;
   uint32_t num_new_args = 0;
   Type ret_type = type_func_return_type(func->type);
-  bool ret_in_alloca = false;
   ir_ref out_ret;
+  bool ret_type_packed_into_int = false;
   if (type_is_aggregate(ret_type)) {
-    if (is_aggregate_in_int_register_x64win(ret_type)) {
-      error("todo; small aggregate return value");
+    ret_type_packed_into_int = is_aggregate_in_int_register_x64win(ret_type);
+    if (ret_type_packed_into_int) {
+      new_ret_type = type_u64;
     } else {
       // Create a slot for the callee to write to, and pass that as the first arg.
       out_ret = ir_ALLOCA(ir_CONST_U64(type_size(ret_type)));
@@ -1943,8 +1962,14 @@ static Operand lower_structs_and_call(Operand* func, uint32_t num_args, ir_ref* 
 
   ir_ref rv = ir_CALL_N(type_to_ir_type(new_ret_type), func->ref, num_new_args, new_arg_values);
   ASSERT(!type_is_aggregate(new_ret_type));
-  if (ret_in_alloca) {
-    return operand_rvalue_local_addr(ret_type, rv);
+  if (ret_type_packed_into_int) {
+    ir_ref tmp_int = ir_VAR(IR_U64, "unpack");
+    ir_VSTORE(tmp_int, rv);
+    ir_ref size = ir_CONST_U64(type_size(ret_type));
+    ir_ref unpacked = ir_ALLOCA(size);
+    ir_ref memcpy_addr = ir_CONST_ADDR(memcpy);
+    ir_CALL_3(IR_VOID, memcpy_addr, unpacked, ir_VADDR(tmp_int), size);
+    return operand_rvalue_local_addr(ret_type, unpacked);
   } else {
     return operand_rvalue_imm(ret_type, rv);
   }
@@ -3312,6 +3337,10 @@ static void print_statement(void) {
       print_range(&val);
     } else if (type_eq(val.type, type_bool)) {
       print_bool(&val);
+    } else if (type_eq(val.type, type_float)) {
+      print_float(&val);
+    } else if (type_eq(val.type, type_double)) {
+      print_double(&val);
     } else if (convert_operand(&val, type_i32)) {
       print_i32(&val);
     } else {

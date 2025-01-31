@@ -69,6 +69,11 @@ struct Stuff4 {
   int x, y, z, w;
 };
 
+struct LittleStuff {
+  int x;
+  float y;
+};
+
 static struct Stuff4 testhelper_returns_stuff4(void) {
   return (struct Stuff4){99, 97, 87, 66};
 }
@@ -92,6 +97,10 @@ static struct Stuff4 testhelper_takes_and_returns_stuff4(struct Stuff4 a, struct
   return (struct Stuff4){2, 3, 5, 8};
 }
 
+static struct LittleStuff testhelper_returns_littlestuff(void) {
+  return (struct LittleStuff){123, 3.14f};
+}
+
 static void* get_testhelper_addresses(StrView name) {
 #define EXPORT_FUNC(x)                          \
   if (strncmp(name.data, #x, name.size) == 0) { \
@@ -100,6 +109,7 @@ static void* get_testhelper_addresses(StrView name) {
   EXPORT_FUNC(testhelper_returns_stuff4);
   EXPORT_FUNC(testhelper_takes_stuff4);
   EXPORT_FUNC(testhelper_takes_and_returns_stuff4);
+  EXPORT_FUNC(testhelper_returns_littlestuff);
   return NULL;
 }
 

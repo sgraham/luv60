@@ -1,0 +1,29 @@
+# RUN: {self} --internal-register-test-helpers
+# OUT: 123
+# OUT: 3.140000
+struct LittleStuff:
+    int x
+    float y
+
+struct Stuff4:
+    int x
+    int y
+    int z
+    int w
+
+foreign LittleStuff testhelper_returns_littlestuff()
+
+# TODO: unrelated to struct packing, haven't done enough fp support to call this
+#foreign testhelper_takes_littlestuff(LittleStuff ls)
+#foreign LittleStuff testhelper_takes_and_returns_little_and_big(LittleStuff a, Stuff4 b, LittleStuff c)
+
+def int main():
+    LittleStuff ret0 = testhelper_returns_littlestuff()
+    print ret0.x
+    print ret0.y
+
+    #testhelper_takes_littlestuff(LittleStuff(10, 100))
+    #Stuff4 to_pass = Stuff4(10, 100, 1000, 10000)
+    #testhelper_takes_stuff4(to_pass)
+
+    return 0
