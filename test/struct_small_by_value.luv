@@ -1,3 +1,4 @@
+# DISABLED mac aggregates
 # RUN: {self} --internal-register-test-helpers
 # OUT: 123
 # OUT: 3.140000

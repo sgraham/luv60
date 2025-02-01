@@ -1913,8 +1913,11 @@ static bool is_aggregate_in_int_register_x64win(Type type) {
 // structs aren't supported at the IR level, they need to be handled here
 // specially. This is different per ABI.
 static Operand lower_structs_and_call(Operand* func, uint32_t num_args, ir_ref* arg_values) {
-  // TODO: SysV, AArch64, etc. They're just using the non-aggregate case for now.
-#if OS_WINDOWS && ARCH_X64
+  // TODO: Other cases, mostly Linux+SysV.
+
+  // The complex case below would work without this, but bail to a simple CALL_N
+  // if we know the function type doesn't have any aggregates being passed.
+#if (OS_WINDOWS && ARCH_X64) || (OS_MAC && ARCH_ARM64)
   if ((type_func_flags(func->type) & TFF_HAS_AGGREGATE_ARGS) == 0)
 #endif
   {
@@ -1929,7 +1932,6 @@ static Operand lower_structs_and_call(Operand* func, uint32_t num_args, ir_ref* 
   // floating point values in general, we just need to handle the cases of small
   // (8/16/32/64) aggregates being passed in integer registers, and large
   // aggregates being passed by pointer.
-  //Type new_arg_types[MAX_FUNC_PARAMS];
   ir_ref new_arg_values[MAX_FUNC_PARAMS];
   Type new_ret_type;
   uint32_t num_new_args = 0;
@@ -1945,7 +1947,6 @@ static Operand lower_structs_and_call(Operand* func, uint32_t num_args, ir_ref* 
       // arg. That same pointer will be returned by the callee.
       out_ret = ir_ALLOCA(ir_CONST_U64(type_size(ret_type)));
       new_ret_type = type_ptr(ret_type);
-      //new_arg_types[num_new_args] = new_ret_type;
       new_arg_values[num_new_args] = out_ret;
       ++num_new_args;
     }
@@ -1972,8 +1973,6 @@ static Operand lower_structs_and_call(Operand* func, uint32_t num_args, ir_ref* 
         ir_ref memcpy_addr = ir_CONST_ADDR(memcpy);
         // TODO: maybe pass Operand so we can check the arg_values is an addr.
         ir_CALL_3(IR_VOID, memcpy_addr, copy, arg_values[i], size);
-        //Type new_type = type_ptr(param);
-        //new_arg_types[num_new_args] = new_type;
         new_arg_values[num_new_args] = copy;
         ++num_new_args;
       }
@@ -1995,6 +1994,36 @@ static Operand lower_structs_and_call(Operand* func, uint32_t num_args, ir_ref* 
   } else {
     return operand_rvalue_imm(ret_type, rv);
   }
+#elif OS_MAC && ARCH_ARM64
+
+  // aarch64 generally: https://github.com/ARM-software/abi-aa/blob/a82eef0433556b30539c0d4463768d9feb8cfd0b/aapcs64/aapcs64.rst#682parameter-passing-rules
+  // macOS: https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms#Pass-arguments-to-functions-correctly
+  // I don't think we need to do anything extra for Apple, as I think it only
+  // involves details that would be handled by IR lower down.
+  //
+  // Roughly for struct calling:
+  // - >16, copy to alloca, and replace with pointer.
+  // - <= 16, copy in 8 byte chunks to uint64 registers
+  //
+  // Struct return is more troublesome:
+  // - <= 16 into same registers used for passing, think we can only get out 8
+  // because there's no U128, so we can get x0, but not x1.
+  // - >16 pointer goes in x8, don't think this can be done without IR changes
+
+  Type ret_type = type_func_return_type(func->type);
+  if (type_is_aggregate(ret_type)) {
+    error("todo; cannot return aggregates on macOS yet");
+  }
+
+  ASSERT(type_func_num_params(func->type) == num_args);
+  for (uint32_t i = 0; i < num_args; ++i) {
+    Type param = type_func_param(func->type, i);
+    if (type_is_aggregate(param)) {
+      error("todo; cannot pass aggregates on macOS yet");
+    }
+  }
+
+  error("internal error; lower_structs_and_call");
 #endif
 }
 
