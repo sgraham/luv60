@@ -1957,13 +1957,17 @@ static Operand lower_structs_and_call(Operand* func, uint32_t num_args, ir_ref* 
   for (uint32_t i = 0; i < num_args; ++i) {
     Type param = type_func_param(func->type, i);
     if (type_is_aggregate(param)) {
+      ir_ref size = ir_CONST_U64(type_size(param));
       if (is_aggregate_in_int_register_x64win(param)) {
-        error("todo; small aggregate argument");
+        ir_ref tmp_int = ir_VAR(IR_U64, "pack");
+        ir_ref memcpy_addr = ir_CONST_ADDR(memcpy);
+        ir_CALL_3(IR_VOID, memcpy_addr, ir_VADDR(tmp_int), arg_values[i], size);
+        new_arg_values[num_new_args] = ir_VLOAD(IR_U64, tmp_int);
+        ++num_new_args;
       } else {
         // Copy the argument by value to a new stack location (it can't be the one
         // already on the stack because the callee might modify it), and then
         // pass a pointer to that.
-        ir_ref size = ir_CONST_U64(type_size(param));
         ir_ref copy = ir_ALLOCA(size);
         ir_ref memcpy_addr = ir_CONST_ADDR(memcpy);
         // TODO: maybe pass Operand so we can check the arg_values is an addr.
@@ -2449,6 +2453,7 @@ static double scan_double(StrView num) {
   memcpy(copy, num.data, num.size);
   copy[num.size] = 0;
   char* end;
+  *(char*)memchr(copy, '`', num.size) = '.';
   return strtod(copy, &end);
 }
 

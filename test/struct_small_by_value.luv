@@ -1,6 +1,18 @@
 # RUN: {self} --internal-register-test-helpers
 # OUT: 123
 # OUT: 3.140000
+# OUT: ls.x: 10
+# OUT: ls.y: 2.718281
+# OUT: a.x: 111
+# OUT: a.y: 222.500000
+# OUT: b.x: 20000
+# OUT: b.y: 2000
+# OUT: b.z: 200
+# OUT: b.w: 20
+# OUT: c.x: 222
+# OUT: c.y: 30.400000
+# OUT: 999
+# OUT: 888.000000
 struct LittleStuff:
     int x
     float y
@@ -13,17 +25,22 @@ struct Stuff4:
 
 foreign LittleStuff testhelper_returns_littlestuff()
 
-# TODO: unrelated to struct packing, haven't done enough fp support to call this
-#foreign testhelper_takes_littlestuff(LittleStuff ls)
-#foreign LittleStuff testhelper_takes_and_returns_little_and_big(LittleStuff a, Stuff4 b, LittleStuff c)
+foreign testhelper_takes_littlestuff(LittleStuff ls)
+foreign LittleStuff testhelper_takes_and_returns_little_and_big(LittleStuff a, Stuff4 b, LittleStuff c)
 
 def int main():
     LittleStuff ret0 = testhelper_returns_littlestuff()
     print ret0.x
     print ret0.y
 
-    #testhelper_takes_littlestuff(LittleStuff(10, 100))
-    #Stuff4 to_pass = Stuff4(10, 100, 1000, 10000)
-    #testhelper_takes_stuff4(to_pass)
+    to_pass0 = LittleStuff(10, 2`718281)
+    testhelper_takes_littlestuff(to_pass0)
+
+    l0 = LittleStuff(111, 222`5)
+    b1 = Stuff4(20000, 2000, 200, 20)
+    l2 = LittleStuff(222, 30`4)
+    res = testhelper_takes_and_returns_little_and_big(l0, b1, l2)
+    print res.x
+    print res.y
 
     return 0

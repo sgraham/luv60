@@ -101,6 +101,23 @@ static struct LittleStuff testhelper_returns_littlestuff(void) {
   return (struct LittleStuff){123, 3.14f};
 }
 
+static void testhelper_takes_littlestuff(struct LittleStuff ls) {
+  printf("ls.x: %d\n", ls.x);
+  printf("ls.y: %f\n", ls.y);
+}
+
+static struct LittleStuff testhelper_takes_and_returns_little_and_big(struct LittleStuff a, struct Stuff4 b, struct LittleStuff c) {
+  printf("a.x: %d\n", a.x);
+  printf("a.y: %f\n", a.y);
+  printf("b.x: %d\n", b.x);
+  printf("b.y: %d\n", b.y);
+  printf("b.z: %d\n", b.z);
+  printf("b.w: %d\n", b.w);
+  printf("c.x: %d\n", c.x);
+  printf("c.y: %f\n", c.y);
+  return (struct LittleStuff){999, 888.0f};
+}
+
 static void* get_testhelper_addresses(StrView name) {
 #define EXPORT_FUNC(x)                          \
   if (strncmp(name.data, #x, name.size) == 0) { \
@@ -110,6 +127,8 @@ static void* get_testhelper_addresses(StrView name) {
   EXPORT_FUNC(testhelper_takes_stuff4);
   EXPORT_FUNC(testhelper_takes_and_returns_stuff4);
   EXPORT_FUNC(testhelper_returns_littlestuff);
+  EXPORT_FUNC(testhelper_takes_littlestuff);
+  EXPORT_FUNC(testhelper_takes_and_returns_little_and_big);
   return NULL;
 }
 
