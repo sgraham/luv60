@@ -16,6 +16,7 @@ typedef struct _ir_fake_code_buffer {
 } ir_code_buffer;
 typedef struct _ir_fake_ctx {
   ir_ref ret_type;
+  int mflags;
   struct _ir_fake_code_buffer* code_buffer;
 } ir_ctx;
 typedef uint32_t ir_type;
@@ -672,6 +673,16 @@ typedef struct _ir_val {
 #define ir_MERGE_WITH(_src2) 0
 #define ir_MERGE_WITH_EMPTY_TRUE(_if) 0
 #define ir_MERGE_WITH_EMPTY_FALSE(_if) 0
+
+#define IR_X86_SSE2 0
+#define IR_X86_SSE3 0
+#define IR_X86_SSSE3 0
+#define IR_X86_SSE41 0
+#define IR_X86_SSE42 0
+#define IR_X86_AVX 0
+#define IR_X86_AVX2 0
+#define IR_X86_BMI1 0
+#define IR_X86_CLDEMOTE 0
 
 #define ir_init(ctx, flag, consts_limit, insns_limt) 0
 #define ir_consistency_check() 0

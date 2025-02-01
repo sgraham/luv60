@@ -14,6 +14,7 @@ bin = '0b' [01_]+ intsuffix?;
 oct = '0o' [0-7_]+ intsuffix?;
 dec = [0-9_]+ intsuffix?;
 hex = '0x' [0-9a-fA-F_]+ intsuffix?;
+float = [0-9]+ '`' [0-9]+;
 decorator = '@' [a-z_][a-zA-Z0-9_]*;
 
   "alignof"   { return TOK_ALIGNOF; }
@@ -131,6 +132,7 @@ decorator = '@' [a-z_][a-zA-Z0-9_]*;
   hex         { return TOK_INT_LITERAL; }
   oct         { return TOK_INT_LITERAL; }
   bin         { return TOK_INT_LITERAL; }
+  float       { return TOK_FLOAT_LITERAL; }
   varname     { return TOK_IDENT_VAR; }
   typename    { return TOK_IDENT_TYPE; }
   constname   { return TOK_IDENT_CONST; }

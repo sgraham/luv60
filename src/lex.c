@@ -39,6 +39,7 @@ typedef struct Simd64 {
 typedef struct Classes {
   uint64_t space;
   uint64_t punct;
+  uint64_t backtick;
 } Classes;
 
 #  define EQ_CHAR(name, ch)                                                                        \
@@ -75,6 +76,7 @@ EQ_CHAR(bang, '!')
       return backslash_bitmask;                                                    \
     }
 
+HAS_BIT(0)
 HAS_BIT(1)
 
 // "cumulative bitwise xor," flipping bits each time a 1 is encountered.
@@ -104,7 +106,7 @@ static FORCE_INLINE uint64_t prefix_xor(const uint64_t bitmask) {
 // location.
 //
 //          hi    lo
-// bit 0:  not used yet
+// bit 0:    6     0    '`'
 // bit 1:    2     0    <SPACE>
 // bit 2:    5     F    '_'
 // bit 3:    3   0-9    '0'..'9'
@@ -119,7 +121,7 @@ static FORCE_INLINE uint64_t prefix_xor(const uint64_t bitmask) {
 //     low    |
 //     nibble |  0   1   2   3   4   5   6   7   8   9   a   b   c   d   e   f
 // high       |
-// nibble     | 46  56  56  56  56  56  56  56  56  56  48  16  16  16  16  20
+// nibble     | 47  56  56  56  56  56  56  56  56  56  48  16  16  16  16  20
 // ---------------------------------------------------------------------------
 //   0      0 |
 //   1      0 |
@@ -127,7 +129,7 @@ static FORCE_INLINE uint64_t prefix_xor(const uint64_t bitmask) {
 //   3      8 |  8   8   8   8   8   8   8   8   8   8
 //   4     20 |  4  16  16  16  16  16  16  16  16  16  16  16  16  16  16  16
 //   5     36 | 32  32  32  32  32  32  32  32  32  32  32                   4
-//   6     16 |     16  16  16  16  16  16  16  16  16  16  16  16  16  16  16
+//   6     17 |  1  16  16  16  16  16  16  16  16  16  16  16  16  16  16  16
 //   7     32 |     32  32  32  32  32  32  32  32  32  32
 //   8      0 |
 //   9      0 |
@@ -140,11 +142,11 @@ static FORCE_INLINE uint64_t prefix_xor(const uint64_t bitmask) {
 
 static FORCE_INLINE Classes classify(const Simd64* __restrict in) {
   const __m256i low_lut =
-      _mm256_setr_epi8(46, 56, 56, 56, 56, 56, 56, 56, 56, 56, 48, 16, 16, 16, 16, 20,  //
-                       46, 56, 56, 56, 56, 56, 56, 56, 56, 56, 48, 16, 16, 16, 16, 20   //
+      _mm256_setr_epi8(47, 56, 56, 56, 56, 56, 56, 56, 56, 56, 48, 16, 16, 16, 16, 20,  //
+                       47, 56, 56, 56, 56, 56, 56, 56, 56, 56, 48, 16, 16, 16, 16, 20   //
       );
-  const __m256i high_lut = _mm256_setr_epi8(0, 0, 2, 8, 20, 36, 16, 32, 0, 0, 0, 0, 0, 0, 0, 0,  //
-                                            0, 0, 2, 8, 20, 36, 16, 32, 0, 0, 0, 0, 0, 0, 0, 0   //
+  const __m256i high_lut = _mm256_setr_epi8(0, 0, 2, 8, 20, 36, 17, 32, 0, 0, 0, 0, 0, 0, 0, 0,  //
+                                            0, 0, 2, 8, 20, 36, 17, 32, 0, 0, 0, 0, 0, 0, 0, 0   //
   );
 
   const Simd64 low_mask = {_mm256_shuffle_epi8(low_lut, in->chunks[0]),
@@ -160,7 +162,8 @@ static FORCE_INLINE Classes classify(const Simd64* __restrict in) {
   const Simd64 mask = {_mm256_and_si256(low_mask.chunks[0], high_mask.chunks[0]),
                        _mm256_and_si256(low_mask.chunks[1], high_mask.chunks[1])};
 
-  return (Classes){.space = has_bit_1(&mask), .punct = eq_zero(&mask)};
+  return (Classes){
+      .space = has_bit_1(&mask), .punct = eq_zero(&mask), .backtick = has_bit_0(&mask)};
 }
 
 static const uint64_t ODD_BITS = 0xAAAAAAAAAAAAAAAAull;
@@ -355,12 +358,15 @@ uint32_t lex_indexer_simd(const uint8_t* buf,
       state_in_quoted = set_all_bits_if_high_bit_set(quotes_mask);
     }
 
+    Classes classes = classify(&data);
+
     // For double character tokens, we don't want indexes at both of them for
     // <<, >>, <=, >=, ==, !=.
     //
     // We use the same categorization helper as backslashes, and handle
     // 'carries' across blocks (i.e. < and the end of the block followed by
     // another < at the beginning of the next.)
+    // TODO: Can these roll into classify()? Need to revisit.
     const uint64_t lt = eq_less_than(&data);
     const uint64_t gt = eq_greater_than(&data);
     const uint64_t eq = eq_equal(&data);
@@ -372,9 +378,15 @@ uint32_t lex_indexer_simd(const uint8_t* buf,
     const uint64_t double_mask =
         (ltesc & (lt | eq)) | (gtesc & (gt | eq)) | (eqesc & eq) | (bangesc & eq);
 
-    Classes classes = classify(&data);
+    // TODO: Handling '.' seems quite troublesome. In `a.b`, it's a separator, so
+    // there's indexes at each of those characters. In `1.00`, it's not, so
+    // there should only be an index on the '1'. This can't be handled like
+    // double character tokens because the "skipping" needs to continue so
+    // there's also not an index on either of the '0's. So, it's more like
+    // skipping a string or comment. For now, the mantissa and fraction are
+    // separated by '`' (ick!).
 
-    uint64_t S = classes.punct & ~(quotes_mask | comments_mask);
+    uint64_t S = classes.punct & ~(quotes_mask | comments_mask) & ~classes.backtick;
 #  if DO_PRINTS
     print_with_coloured_bits("S", S, "");
 #  endif
@@ -452,6 +464,13 @@ uint32_t lex_indexer_fallback(const uint8_t* buf,
       ['w'] = true, ['x'] = true, ['y'] = true, ['z'] = true,
   };
 
+#if 0
+  static bool is_digit[256] = {
+      ['0'] = true, ['1'] = true, ['2'] = true, ['3'] = true, ['4'] = true,
+      ['5'] = true, ['6'] = true, ['7'] = true, ['8'] = true, ['9'] = true,
+  };
+#endif
+
   uint32_t i = 0;
   for (;;) {
     char c = buf[i];
@@ -485,6 +504,22 @@ uint32_t lex_indexer_fallback(const uint8_t* buf,
         ++i;
         break;
       default:
+#if 0
+        // Just 'identifierish' handled idents and ints (including bin/hex
+        // prefixes). But because '.' is a separator in `a.b`, but just part
+        // of the number for a float, we need to handle number specially
+        // here unfortunately.
+        if ((c == '0' && buf[i + 1] != 'x' && buf[i + 1] != 'b' && buf[i + 1] != 'o') ||
+            (c >= '1' && c <= '9')) {
+          *to++ = i;
+          for (;;) {
+            c = buf[++i];
+            if (!is_digit[(int)c] && c != '.') {
+              break;
+            }
+          }
+        } else
+#endif
         if (is_identifierish[(int)c]) {
           *to++ = i;
           for (;;) {

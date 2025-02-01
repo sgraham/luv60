@@ -34,6 +34,8 @@ typedef union Val {
   uint64_t u64;
   int64_t i64;
   uintptr_t p;
+  float f;
+  double d;
 } Val;
 
 typedef enum SymScopeDecl {
@@ -489,6 +491,10 @@ static ir_ref operand_to_irref_imm(Operand* op) {
           return ir_CONST_U64(op->val.u64);
         case TYPE_I64:
           return ir_CONST_I64(op->val.i64);
+        case TYPE_FLOAT:
+          return ir_CONST_FLOAT(op->val.f);
+        case TYPE_DOUBLE:
+          return ir_CONST_DOUBLE(op->val.d);
         default:
           error("internal error: unexpected const type.");
       }
@@ -613,7 +619,7 @@ static void print_float(Operand* op) {
   ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
 }
 
-static void print_double_impl(float val) {
+static void print_double_impl(double val) {
   printf("%f\n", val);
 }
 
@@ -804,6 +810,12 @@ static void enter_function(Sym* sym,
     opts |= IR_OPT_MEM2SSA;
   }
   ir_init(_ir_CTX, IR_FUNCTION | opts, 4096, 4096);
+#if ARCH_X64
+  parser.cur_scope->ctx.mflags = IR_X86_SSE2 | IR_X86_SSE3 | IR_X86_SSSE3 | IR_X86_SSE41 |
+                                 IR_X86_SSE42 | IR_X86_AVX | IR_X86_AVX2 | IR_X86_BMI1 |
+                                 IR_X86_CLDEMOTE;
+#endif
+
   parser.cur_scope->ctx.code_buffer = &parser.code_buffer;
   ir_START();
 
@@ -1237,23 +1249,28 @@ static bool cast_operand(Operand* operand, Type type) {
       return false;
     }
     if (op_is_const(*operand)) {
-      // TODO: floats
       // TODO: enums
       TypeKind from_type_kind = type_kind(operand->type);
       TypeKind to_type_kind = type_kind(type);
-      switch (from_type_kind) {
-        CASE(TYPE_BOOL, b)
-        CASE(TYPE_U8, u8)
-        CASE(TYPE_I8, i8)
-        CASE(TYPE_U16, u16)
-        CASE(TYPE_I16, i16)
-        CASE(TYPE_U32, u32)
-        CASE(TYPE_I32, i32)
-        CASE(TYPE_U64, u64)
-        CASE(TYPE_I64, i64)
-        CASE(TYPE_PTR, p)
-        default:
-          error("internal error in const cast");
+      if (from_type_kind == TYPE_FLOAT && to_type_kind == TYPE_DOUBLE) {
+        operand->val.d = (double)operand->val.f;
+      } else if (from_type_kind == TYPE_DOUBLE && to_type_kind == TYPE_FLOAT) {
+        operand->val.f = (double)operand->val.d;
+      } else {
+        switch (from_type_kind) {
+          CASE(TYPE_BOOL, b)
+          CASE(TYPE_U8, u8)
+          CASE(TYPE_I8, i8)
+          CASE(TYPE_U16, u16)
+          CASE(TYPE_I16, i16)
+          CASE(TYPE_U32, u32)
+          CASE(TYPE_I32, i32)
+          CASE(TYPE_U64, u64)
+          CASE(TYPE_I64, i64)
+          CASE(TYPE_PTR, p)
+          default:
+            error("internal error in const cast");
+        }
       }
     } else {
       ir_ref ref_to_adjust;
@@ -2424,7 +2441,27 @@ static Operand parse_null_literal(bool can_assign, Type* expected) {
   return operand_null;
 }
 
-static Operand parse_number(bool can_assign, Type* expected) {
+// Should probably write one that doesn't require nul termination instead.
+// We also don't support 'e' in the lexer, but this does, and probably other
+// minor variations. But this is OK for simple 1.0 type things for now.
+static double scan_double(StrView num) {
+  char* copy = arena_push(parser.arena, num.size + 1, 1);
+  memcpy(copy, num.data, num.size);
+  copy[num.size] = 0;
+  char* end;
+  return strtod(copy, &end);
+}
+
+static Operand parse_float_literal(bool can_assign, Type* expected) {
+  StrView view = get_strview_for_offsets(prev_offset(), cur_offset());
+  while (view.data[view.size - 1] == ' ') {
+    --view.size;
+  }
+  double val = scan_double(view);
+  return operand_const(type_double, (Val){.d = val});
+}
+
+static Operand parse_int_literal(bool can_assign, Type* expected) {
   Type suffix = {0};
   StrView view = get_strview_for_offsets(prev_offset(), cur_offset());
   ASSERT(view.size > 0);
@@ -3097,6 +3134,7 @@ static Rule rules[NUM_TOKEN_KINDS] = {
     {NULL, parse_binary, PREC_EQUALITY},                        // TOK_EQEQ
     {NULL, NULL, PREC_NONE},                                    // TOK_ERROR
     {parse_bool_literal, NULL, PREC_NONE},                      // TOK_FALSE
+    {parse_float_literal, NULL, PREC_NONE},                     // TOK_FLOAT_LITERAL
     {NULL, NULL, PREC_NONE},                                    // TOK_FOR
     {NULL, NULL, PREC_NONE},                                    // TOK_FOREIGN
     {NULL, parse_binary, PREC_COMPARISON},                      // TOK_GEQ
@@ -3109,7 +3147,7 @@ static Rule rules[NUM_TOKEN_KINDS] = {
     {NULL, NULL, PREC_NONE},                                    // TOK_IF
     {NULL, NULL, PREC_NONE},                                    // TOK_IMPORT
     {NULL, parse_in_or_not_in, PREC_COMPARISON},                // TOK_IN
-    {parse_number, NULL, PREC_NONE},                            // TOK_INT_LITERAL
+    {parse_int_literal, NULL, PREC_NONE},                       // TOK_INT_LITERAL
     {parse_dict_literal, NULL, PREC_NONE},                      // TOK_LBRACE
     {parse_len, NULL, PREC_NONE},                               // TOK_LEN
     {NULL, parse_binary, PREC_COMPARISON},                      // TOK_LEQ
