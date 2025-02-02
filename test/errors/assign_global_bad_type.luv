@@ -1,6 +1,5 @@
-# DISABLED
 # RET: 1
-# ERR: {self}:7:13:    myvar = "hi!"
+# ERR: {self}:8:13:    myvar = "hi!"
 # ERR: {ssss}                  ^ error: Cannot assign type str to type i32.
 myvar = 1
 

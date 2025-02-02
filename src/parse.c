@@ -2866,8 +2866,14 @@ static ScopeResult scope_lookup_single(Scope* scope, Str name, bool crossed_func
     *sym = found_sym;
     SymScopeDecl sd = found_sym->scope_decl;
     switch (sd) {
-      case SSD_DECLARED_GLOBAL:
-        return SCOPE_RESULT_GLOBAL;
+      case SSD_DECLARED_GLOBAL: {
+        if (scope->is_module) {
+          return SCOPE_RESULT_GLOBAL;
+        } else {
+          ASSERT(scope->is_function && !crossed_function);
+          return SCOPE_RESULT_LOCAL;
+        }
+      }
       case SSD_DECLARED_LOCAL:
         if (scope->is_module) {
           return SCOPE_RESULT_GLOBAL;
@@ -3017,7 +3023,11 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
           return operand_rvalue_global_addr(sym->type, ir_CONST_ADDR(sym->addr));
         }
       } else {
-        return operand_lvalue_local(sym->type, sym->ref);
+        if (sym->scope_decl == SSD_DECLARED_GLOBAL) {
+          return operand_lvalue_global_addr(sym->type, ir_CONST_ADDR(sym->addr));
+        } else {
+          return operand_lvalue_local(sym->type, sym->ref);
+        }
       }
     case SCOPE_RESULT_PARAMETER: {
       return operand_rvalue_imm(sym->type, sym->ref);
