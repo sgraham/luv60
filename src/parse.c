@@ -2171,6 +2171,10 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
   uint32_t name_offset = prev_offset();
 
   if (can_assign && match_assignment()) {
+    while (type_kind(left.type) == TYPE_PTR) {
+      left = operand_lvalue_local(type_ptr_subtype(left.type), ir_LOAD(IR_ADDR, left.ref));
+    }
+
     if (type_kind(left.type) == TYPE_STRUCT) {
       uint32_t field_offset;
       Type field_type;
@@ -2243,6 +2247,9 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       ir_ref addr = ir_VAR(IR_ADDR, "self*");
       ir_VSTORE(addr, operand_to_irref_imm(&left));
       self_ptr = ir_VADDR(addr);
+    } else if (type_kind(original_left_type) == TYPE_PTR &&
+               type_kind(type_ptr_subtype(original_left_type)) == TYPE_STRUCT) {
+      self_ptr = left.ref;
     } else {
       error("TODO: self ptr");
     }

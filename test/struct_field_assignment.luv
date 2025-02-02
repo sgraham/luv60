@@ -1,0 +1,21 @@
+# OUT: 123
+# OUT: 124
+# OUT: 999
+# OUT: 1000
+struct Stuff:
+    int x
+
+on Stuff def do_thing(self):
+    self.x = self.x + 1
+
+def int main():
+    s = Stuff(123)
+    print s.x
+    s.do_thing()
+    print s.x
+    s.x = 999
+    print s.x
+    s.do_thing()
+    print s.x
+
+    return 0
