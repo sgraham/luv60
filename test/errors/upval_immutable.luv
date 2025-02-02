@@ -1,0 +1,12 @@
+# RET: 1
+# ERR: {self}:8:19:        something = 99
+# ERR: {ssss}                        ^ error: Upvalues are immutable.
+def int main():
+    something = 1
+
+    def func_b():
+        something = 99
+
+    func_b()
+    return 0
+

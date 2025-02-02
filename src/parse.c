@@ -3121,8 +3121,9 @@ static Operand parse_variable(bool can_assign, Type* expected) {
         error_offset(eq_offset, "Function parameters are immutable.");
       }
 
-      case SCOPE_RESULT_UPVALUE:
-        error("TODO: unhandled case in variable assignment.");
+      case SCOPE_RESULT_UPVALUE: {
+        error_offset(eq_offset, "Upvalues are immutable.");
+      }
     }
   } else {
     return load_value(scope_result, sym, target);

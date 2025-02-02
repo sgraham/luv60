@@ -1,0 +1,13 @@
+# OUT: 1
+# OUT: 99
+def int main():
+    something = 1
+    ps = &something
+
+    def func_b():
+        ps[0] = 99
+
+    print something
+    func_b()
+    print something
+    return 0
