@@ -1,0 +1,6 @@
+# RET: 1
+# ERR: {self}:5:12:    global weewaa
+# ERR: {ssss}                 ^ error: Undefined global 'weewaa'.
+def int main():
+    global weewaa
+    return 0

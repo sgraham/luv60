@@ -3716,13 +3716,16 @@ static LastStatementType return_statement(void) {
 }
 
 static void global_statement(void) {
-  Str var = parse_name("Expect variable name after global.");
-  (void)var;
-}
+  Str name = parse_name("Expect variable name after global.");
 
-static void nonlocal_statement(void) {
-  Str var = parse_name("Expect variable name after nonlocal.");
-  (void)var;
+  Sym* sym;
+  ScopeResult scope_result = scope_lookup_single(&parser.scopes[0], name, true, &sym);
+  if (scope_result != SCOPE_RESULT_GLOBAL) {
+    errorf("Undefined global '%.*s'.", str_len(name), str_raw_ptr(name));
+  }
+  Sym* new = sym_new(SYM_VAR, name, sym->type);
+  new->scope_decl = SSD_DECLARED_GLOBAL;
+  new->addr = sym->addr;
 }
 
 static LastStatementType parse_statement(bool toplevel) {
@@ -3784,11 +3787,6 @@ static LastStatementType parse_statement(bool toplevel) {
       advance();
       if (toplevel) error("global statement not allowed at top level.");
       global_statement();
-      break;
-    case TOK_NONLOCAL:
-      advance();
-      if (toplevel) error("nonlocal statement not allowed at top level.");
-      nonlocal_statement();
       break;
     default: {
       Type var_type = parse_type();
