@@ -142,7 +142,7 @@ size_t type_align(Type type) {
     case TYPE_PTR:
       return 8;
     case TYPE_ARRAY:
-      ASSERT(false && "todo");
+      return type_td(type)->ARRAY.align;
       abort();
     case TYPE_DICT:
       ASSERT(false && "todo");
