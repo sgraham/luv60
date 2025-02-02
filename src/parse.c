@@ -3064,11 +3064,29 @@ static Operand parse_variable(bool can_assign, Type* expected) {
           error_offset(eq_offset, "Unhandled assignment type.");
         }
       }
-      case SCOPE_RESULT_UNDEFINED: {
-        ASSERT(!sym);
+      case SCOPE_RESULT_UNDEFINED:
+      case SCOPE_RESULT_GLOBAL: {
         if (parser.cur_scope->is_function) {
           ASSERT(!parser.cur_scope->is_module);
+
+#if 0
+          // Assigning to a global from a function.
+          ASSERT(sym);
+          Operand op = parse_expression(NULL);
+          if (!convert_operand(&op, sym->type)) {
+            errorf("Cannot assign type %s to type %s.", type_as_str(op.type),
+                   type_as_str(sym->type));
+          }
+          ASSERT(eq_kind == TOK_EQ);
+          ir_STORE(ir_CONST_ADDR(sym->addr), operand_to_irref_imm(&op));
+          return operand_null;
+#endif
+          ASSERT((scope_result == SCOPE_RESULT_UNDEFINED && !sym) ||
+                 (scope_result == SCOPE_RESULT_GLOBAL && sym));
           // If a local wasn't found, then implicitly create and initialize it.
+          // (If it was found in the global scope, then it's not relevant for
+          // assignment because a `global blah` will be found as a local with a
+          // scope_decl of GLOBAL instead.)
           if (eq_kind == TOK_EQ) {
             // Local variable declaration without a type.
             Operand op = parse_expression(NULL);
@@ -3082,15 +3100,20 @@ static Operand parse_variable(bool can_assign, Type* expected) {
           ASSERT(parser.cur_scope->is_module);
           ASSERT(!parser.cur_scope->is_function);
           ASSERT(eq_kind == TOK_EQ);
-          // Global variable declaration without a type. TODO: need to be more
-          // careful about const eval vs in-function eval as this can easily
-          // crash if it starts to emit ir_INSTRs on the RHS.
-          Operand op = const_expression();
-          if (!op_is_const(op)) {
-            error("Global initializers must be constants.");
+          if (scope_result == SCOPE_RESULT_UNDEFINED) {
+            // Global variable declaration without a type. TODO: need to be more
+            // careful about const eval vs in-function eval as this can easily
+            // crash if it starts to emit ir_INSTRs on the RHS.
+            Operand op = const_expression();
+            if (!op_is_const(op)) {
+              error("Global initializers must be constants.");
+            }
+            make_global(SYM_VAR, target, op.type, op.val);
+            return operand_null;
+          } else {
+            ASSERT(scope_result == SCOPE_RESULT_GLOBAL);
+            error("Cannot re-initialize an existing global.");
           }
-          make_global(SYM_VAR, target, op.type, op.val);
-          return operand_null;
         }
       }
 
@@ -3100,23 +3123,6 @@ static Operand parse_variable(bool can_assign, Type* expected) {
 
       case SCOPE_RESULT_UPVALUE:
         error("TODO: unhandled case in variable assignment.");
-
-      case SCOPE_RESULT_GLOBAL:
-        if (parser.cur_scope->is_function) {
-          // Assigning to a global from a function.
-          ASSERT(sym);
-          Operand op = parse_expression(NULL);
-          if (!convert_operand(&op, sym->type)) {
-            errorf("Cannot assign type %s to type %s.", type_as_str(op.type),
-                   type_as_str(sym->type));
-          }
-          ASSERT(eq_kind == TOK_EQ);
-          ir_STORE(ir_CONST_ADDR(sym->addr), operand_to_irref_imm(&op));
-          return operand_null;
-        } else {
-          ASSERT(parser.cur_scope->is_module);
-          error("Cannot re-initialize an existing global.");
-        }
     }
   } else {
     return load_value(scope_result, sym, target);
@@ -3709,9 +3715,13 @@ static LastStatementType return_statement(void) {
 }
 
 static void global_statement(void) {
+  Str var = parse_name("Expect variable name after global.");
+  (void)var;
 }
 
 static void nonlocal_statement(void) {
+  Str var = parse_name("Expect variable name after nonlocal.");
+  (void)var;
 }
 
 static LastStatementType parse_statement(bool toplevel) {

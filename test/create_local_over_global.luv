@@ -1,0 +1,14 @@
+# OUT: 1
+# OUT: 99
+# OUT: 1
+
+something = 1
+
+def func_a():
+    something = 99
+    print something
+
+def main():
+    print something
+    func_a()
+    print something
