@@ -92,15 +92,16 @@ CONFIGS = {
         },
     },
     "m": {
+        # Temporarily using Rosetta until aarch64 aggregate passing can be resolved.
         "d": {
-            "COMPILE": f"{CLANG} -MMD -MF $out.d -std=c11 -O0 -g {DEBUG_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
-            "LINK": CLANG + " -g $in -o $out",
-            "ML": CLANG + " $in -o $out",
+            "COMPILE": f"{CLANG} -MMD -MF $out.d -arch x86_64 -O0 -g {DEBUG_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            "LINK": CLANG + " -arch x86_64 -g $in -o $out",
+            "ML": CLANG + " -arch x86_64 $in -o $out",
         },
         "r": {
-            "COMPILE": f"{CLANG} -MMD -MF $out.d -std=c11 -flto -O3 -g {RELEASE_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
-            "LINK": CLANG + " -g $in -o $out",
-            "ML": CLANG + " $in -o $out",
+            "COMPILE": f"{CLANG} -MMD -MF $out.d -arch x86_64 -flto -O3 -g {RELEASE_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            "LINK": CLANG + " -arch x86_64 -g $in -o $out",
+            "ML": CLANG + " -arch x86_64 $in -o $out",
         },
         "__": {
             "exe_ext": "",

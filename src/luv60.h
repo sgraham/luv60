@@ -3,7 +3,7 @@
 #include "base_config.h"
 #include "base_core.h"
 
-#if ARCH_X64
+#if OS_WINDOWS && ARCH_X64
 #include <intrin.h>
 #endif
 

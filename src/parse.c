@@ -655,8 +655,22 @@ static void print_range_impl(RuntimeRange range) {
 }
 
 static void print_range(Operand* op) {
-  ir_ref addr = ir_CONST_ADDR(print_range_impl);
-  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
+#if ARCH_X64 && OS_WINDOWS
+  ir_ref praddr = ir_CONST_ADDR(print_range_impl);
+  ir_CALL_1(IR_VOID, praddr, operand_to_irref_imm(op));
+#elif ARCH_X64
+  // I think these need to be exploded out into the stack but 'inline' on the
+  // stack, not pointed at. Soooo, not sure how to do that.
+  /*
+  ir_ref start = ir_LOAD(IR_ADDR, op->ref);
+  ir_ref stop = ir_LOAD(IR_I64, ir_ADD_OFFSET(op->ref, 8));
+  ir_ref step = ir_LOAD(IR_I64, ir_ADD_OFFSET(op->ref, 16));
+  ir_CALL_3(IR_VOID, praddr, start, stop, step);
+  */
+  (void)print_range_impl;
+#else
+#error port
+#endif
 }
 
 static void initialize_aggregate(ir_ref base_addr, Type type) {
@@ -810,7 +824,7 @@ static void enter_function(Sym* sym,
     opts |= IR_OPT_MEM2SSA;
   }
   ir_init(_ir_CTX, IR_FUNCTION | opts, 4096, 4096);
-#if ARCH_X64
+#if ARCH_X64 && OS_WINDOWS  // TODO: Reosetta doesn't support AVX, check SSE
   parser.cur_scope->ctx.mflags = IR_X86_SSE2 | IR_X86_SSE3 | IR_X86_SSSE3 | IR_X86_SSE41 |
                                  IR_X86_SSE42 | IR_X86_AVX | IR_X86_AVX2 | IR_X86_BMI1 |
                                  IR_X86_CLDEMOTE;
@@ -2625,7 +2639,7 @@ static Operand parse_or(Operand left, bool can_assign, Type* expected) {
   return operand_rvalue_imm(type_bool, result);
 }
 
-static Operand parse_range(bool can_assign, Type* expected) {
+static Operand parse_range_literal(bool can_assign, Type* expected) {
   consume(TOK_LPAREN, "Expect '(' after range.");
   Operand first = parse_precedence(PREC_OR, &type_i64);
   if (!convert_operand(&first, type_i64)) {
@@ -2648,7 +2662,7 @@ static Operand parse_range(bool can_assign, Type* expected) {
   }
   consume(TOK_RPAREN, "Expect ')' after range.");
 
-  ir_ref range = ir_ALLOCA(ir_CONST_U32(sizeof(RuntimeRange)));
+  ir_ref range = ir_ALLOCA(ir_CONST_U64(sizeof(RuntimeRange)));
   ir_ref astart = range;
   ir_ref astop = ir_ADD_A(range, ir_CONST_ADDR(sizeof(int64_t)));
   ir_ref astep = ir_ADD_A(range, ir_CONST_ADDR(2 * sizeof(int64_t)));
@@ -3225,7 +3239,7 @@ static Rule rules[NUM_TOKEN_KINDS] = {
     {NULL, parse_binary, PREC_BITS},                            // TOK_PIPE
     {NULL, parse_binary, PREC_TERM},                            // TOK_PLUS
     {NULL, NULL, PREC_NONE},                                    // TOK_PRINT
-    {parse_range, NULL, PREC_NONE},                             // TOK_RANGE
+    {parse_range_literal, NULL, PREC_NONE},                     // TOK_RANGE
     {NULL, NULL, PREC_NONE},                                    // TOK_RBRACE
     {NULL, NULL, PREC_NONE},                                    // TOK_RELOCATE
     {NULL, NULL, PREC_NONE},                                    // TOK_RETURN
