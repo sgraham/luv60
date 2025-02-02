@@ -1,7 +1,9 @@
-# DISABLED
+# OUT: 3
 # OUT: 12
+# OUT: 999
 def int main():
     x = 3
+    px = &x
 
     def int middle():
         y = 4
@@ -9,10 +11,13 @@ def int main():
         def int inner():
             return x + y + 5
 
-        # TODO: can't do this assignment for unrelated reasons right now
-        x = 999
+        # Ensure inner() captured by value at def point.
+        y = 100
+        px[0] = 999
 
         return inner()
 
+    print x
     print middle()
+    print x
     return 0
