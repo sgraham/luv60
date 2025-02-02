@@ -2,7 +2,7 @@
 # OUT: 2
 # OUT: 2
 # OUT: 1
-# OUT: 2
+# OUT: 3
 something = 1
 
 def int main():
@@ -14,6 +14,7 @@ def int main():
     def func_b():
         nonlocal something
         print something
+        something = 3
 
     def func_c():
         global something
@@ -23,3 +24,5 @@ def int main():
     func_b()
     func_c()
     print something
+
+    return 0

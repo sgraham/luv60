@@ -3708,6 +3708,12 @@ static LastStatementType return_statement(void) {
   }
 }
 
+static void global_statement(void) {
+}
+
+static void nonlocal_statement(void) {
+}
+
 static LastStatementType parse_statement(bool toplevel) {
   LastStatementType lst = LST_NON_RETURN;
 
@@ -3762,6 +3768,16 @@ static LastStatementType parse_statement(bool toplevel) {
       advance();
       if (toplevel) error("return statement not allowed at top level.");
       lst = return_statement();
+      break;
+    case TOK_GLOBAL:
+      advance();
+      if (toplevel) error("global statement not allowed at top level.");
+      global_statement();
+      break;
+    case TOK_NONLOCAL:
+      advance();
+      if (toplevel) error("nonlocal statement not allowed at top level.");
+      nonlocal_statement();
       break;
     default: {
       Type var_type = parse_type();

@@ -58,6 +58,13 @@ def main():
     env = os.environ.copy()
     env["ASAN_OPTIONS"] = "exitcode=117"
 
+    if (
+        (sys.platform == "win32" and "win" in cmds["disabled"])
+        or (sys.platform == "darwin" and "mac" in cmds["disabled"])
+        or (sys.platform == "linux" and "linux" in cmds["disabled"])
+    ):
+        return 0
+
     if cmds["out"] or cmds["err"]:
         res = subprocess.run(
             [ccbin] + cmds["run"].split(" "),
@@ -71,18 +78,18 @@ def main():
         if out != cmds["out"]:
             print("got stdout:\n")
             print(out)
-            print(hexdump(out.encode('utf-8')))
+            print(hexdump(out.encode("utf-8")))
             print("but expected:\n")
             print(cmds["out"])
-            print(hexdump(cmds["out"].encode('utf-8')))
+            print(hexdump(cmds["out"].encode("utf-8")))
             return 1
         if err != cmds["err"]:
             print("got stderr:\n")
             print(err)
-            print(hexdump(err.encode('utf-8')))
+            print(hexdump(err.encode("utf-8")))
             print("but expected:\n")
             print(cmds["err"])
-            print(hexdump(cmds["err"].encode('utf-8')))
+            print(hexdump(cmds["err"].encode("utf-8")))
             return 1
     else:
         res = subprocess.run([ccbin] + cmds["run"].split(" "), cwd=root, env=env)

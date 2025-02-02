@@ -1,4 +1,4 @@
-# DISABLED mac aggregates
+# DISABLED_MAC aggregates
 # RUN: {self} --internal-register-test-helpers
 # OUT: 99
 # OUT: 97

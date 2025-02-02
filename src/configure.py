@@ -121,11 +121,14 @@ def get_tests():
         ret = "0"
         out = ""
         err = ""
-        disabled = False
+        disabled = []
         run_prefix = "# RUN: "
         ret_prefix = "# RET: "
         err_prefix = "# ERR: "
         out_prefix = "# OUT: "
+        disabled_linux_prefix = "# DISABLED_LINUX"
+        disabled_win_prefix = "# DISABLED_WIN"
+        disabled_mac_prefix = "# DISABLED_MAC"
         disabled_prefix = "# DISABLED"
         imported_prefix = "# IMPORTED"
         ret_set = False
@@ -133,31 +136,37 @@ def get_tests():
             for l in f.readlines():
                 if l.startswith(run_prefix):
                     run = l[len(run_prefix) :].rstrip()
-                if l.startswith(ret_prefix):
+                elif l.startswith(ret_prefix):
                     ret = l[len(ret_prefix) :].rstrip()
                     ret_set = True
-                if l.startswith(err_prefix):
+                elif l.startswith(err_prefix):
                     err += l[len(err_prefix) :].rstrip() + "\n"
-                if l.startswith(out_prefix):
+                elif l.startswith(out_prefix):
                     out += l[len(out_prefix) :].rstrip() + "\n"
-                if l.startswith(disabled_prefix) or l.startswith(imported_prefix):
-                    disabled = True
+                elif l.startswith(disabled_linux_prefix):
+                    disabled.append('linux')
+                elif l.startswith(disabled_win_prefix):
+                    disabled.append('win')
+                elif l.startswith(disabled_mac_prefix):
+                    disabled.append('mac')
+                elif l.startswith(disabled_prefix) or l.startswith(imported_prefix):
+                    disabled.extend(['linux', 'win', 'mac'])
 
             def sub(t):
                 t = t.replace("{self}", test)
                 spaces = len(test) * " "
                 return t.replace("{ssss}", spaces)
 
-            if not disabled:
-                if not ret_set and not out and not err:
-                    print("Nothing being tested in %s?" % test)
-                    sys.exit(1)
-                tests[test] = {
-                    "run": sub(run),
-                    "ret": int(ret),
-                    "out": sub(out),
-                    "err": sub(err),
-                }
+            if not disabled and not ret_set and not out and not err:
+                print("Nothing being tested in %s?" % test)
+                sys.exit(1)
+            tests[test] = {
+                "run": sub(run),
+                "ret": int(ret),
+                "out": sub(out),
+                "err": sub(err),
+                "disabled": disabled
+            }
 
     return tests
 
