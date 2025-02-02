@@ -9,6 +9,9 @@ struct ListData_int:
     u64 length
     u64 capacity
 
+on int def str __repr__(self):
+    return "1234"
+
 on ListData_int def ensure_capacity(self, u64 cap):
     if self.capacity >= cap:
         return
@@ -30,7 +33,7 @@ on ListData_int def u64 __len__(self):
     return self.length
 
 on ListData_int def int __getitem__(self, u64 index):
-    check index < self.length
+    #check index < self.length
     return self.data[index]
 
 on ListData_int def str __repr__(self):
@@ -38,7 +41,7 @@ on ListData_int def str __repr__(self):
     # TODO: arena
     str ret = "["
     for i in range(self.length):
-        ret = ret + self.data[i]).__repr__()
+        ret = ret + self.data[i].__repr__()
         if i < self.length - 1:
             ret = ret + ", "
     ret = ret + "]"

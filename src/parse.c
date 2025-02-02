@@ -2243,7 +2243,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
     // just be Stuff. The target memfn always just gets *Stuff, so we need to
     // build that from the left that we originally had.
     ir_ref self_ptr;
-    if (type_kind(original_left_type) == TYPE_STRUCT) {
+    if (type_kind(original_left_type) == TYPE_STRUCT || type_is_basic(original_left_type)) {
       ir_ref addr = ir_VAR(IR_ADDR, "self*");
       ir_VSTORE(addr, operand_to_irref_imm(&left));
       self_ptr = ir_VADDR(addr);
@@ -3528,18 +3528,21 @@ static void foreign_statement(void) {
 }
 
 static void on_statement(void) {
-  Type strukt;
-  Str type_name;
-  if (check(
-          TOK_IDENT_TYPE) /*todo: || parser.cur_kind >= TOK_BOOL || parser.cur_kind <= TOK_UINT*/) {
+  Type on_type;
+  Str on_type_name;
+  if (parser.cursor.cur_kind >= TOK_BOOL && parser.cursor.cur_kind <= TOK_UINT) {
+    on_type = basic_tok_to_type[parser.cursor.cur_kind];
+    on_type_name = type_decl_name(on_type);
     advance();
-    type_name = str_from_previous();
+  } else if (check(TOK_IDENT_TYPE)) {
+    advance();
+    on_type_name = str_from_previous();
     Sym* sym;
-    ScopeResult scope_result = scope_lookup_recursive(type_name, &sym);
+    ScopeResult scope_result = scope_lookup_recursive(on_type_name, &sym);
     if (scope_result == SCOPE_RESULT_UNDEFINED) {
-      errorf("Undefined type %s.", cstr_copy(parser.arena, type_name));
+      errorf("Undefined type %s.", cstr_copy(parser.arena, on_type_name));
     } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_TYPE) {
-      strukt = sym->type;
+      on_type = sym->type;
     } else {
       error("internal error: unexpected lookup result.");
     }
@@ -3568,7 +3571,7 @@ static void on_statement(void) {
 
   Type param_types[MAX_FUNC_PARAMS];
   Str param_names[MAX_FUNC_PARAMS];
-  Type self_arg = type_ptr(strukt);
+  Type self_arg = type_ptr(on_type);
   uint32_t num_params = parse_func_params(/*is_nested=*/false, /*is_memfn=*/&self_arg, self_name,
                                           param_types, param_names);
 
@@ -3584,7 +3587,8 @@ static void on_statement(void) {
 
   Type functype = type_function(param_types, num_params, return_type, TFF_MEMFN);
 
-  Str full_name = memfn_name_from_type_name(type_name, func_name);
+  ASSERT(str_eq(on_type_name, type_decl_name(on_type)));
+  Str full_name = memfn_name_from_type_name(on_type_name, func_name);
   Sym* funcsym = sym_new(SYM_FUNC, full_name, functype);
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
   enter_function(funcsym, param_names, param_types);

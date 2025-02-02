@@ -1,0 +1,8 @@
+# OUT: 4400
+on int def int memfn_on_basic(self):
+    return self[0] * 100
+
+def int main():
+    int x = 44
+    print x.memfn_on_basic()
+    return 0
