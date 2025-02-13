@@ -9,18 +9,7 @@ ROOT_DIR = os.path.normpath(
 )
 
 COMMON_FILELIST = [
-    "../third_party/ir/ir.c",
-    "../third_party/ir/ir_cfg.c",
-    "../third_party/ir/ir_check.c",
-    "../third_party/ir/ir_dump.c",
-    "../third_party/ir/ir_emit.c",
-    "../third_party/ir/ir_gcm.c",
-    "../third_party/ir/ir_mem2ssa.c",
-    "../third_party/ir/ir_patch.c",
-    "../third_party/ir/ir_ra.c",
-    "../third_party/ir/ir_save.c",
-    "../third_party/ir/ir_sccp.c",
-    "../third_party/ir/ir_strtab.c",
+    "../third_party/sqbe/sqbe.c",
     "arena.c",
     "base_mac.c",
     "base_win.c",
@@ -34,10 +23,6 @@ COMMON_FILELIST = [
 
 LUVC_FILELIST = [
     "luvc_main.c",
-]
-
-GEN_IR_FOLD_HASH_FILELIST = [
-    "../third_party/ir/gen_ir_fold_hash.c",
 ]
 
 UNITTEST_FILELIST = [
@@ -181,7 +166,6 @@ def generate(platform, config, settings, cmdlines, tests):
 
     luvcexe = "luvc" + exe_ext
     miniluaexe = "minilua" + exe_ext
-    gen_ir_fold_hash_exe = "gen_ir_fold_hash" + exe_ext
 
     with open(os.path.join(root_dir, "build.ninja"), "w", newline="\n") as f:
         f.write("src = ../../src\n")
@@ -201,36 +185,9 @@ def generate(platform, config, settings, cmdlines, tests):
         f.write("  command = " + cmdlines["ML"] + "\n")
         f.write("  description = CC $out\n")
         f.write("\n")
-        f.write("rule dynasm_w\n")
-        f.write(
-            "  command = ./minilua"
-            + exe_ext
-            + " $src/../third_party/ir/dynasm/dynasm.lua -D WIN=1 -D X64=1 -D X64WIN=1 -o $out $in\n"
-        )
-        f.write("  description = DYNASM $out\n")
-        f.write("\n")
-        f.write("rule dynasm\n")
-        f.write(
-            "  command = ./minilua $src/../third_party/ir/dynasm/dynasm.lua -o $out $in\n"
-        )
-        f.write("  description = DYNASM $out\n")
-        f.write("\n")
         f.write("rule ripsnip\n")
         f.write("  command = %s $src/clang_rip.py\n" % sys.executable)
         f.write("  description = SNIPRIP $out\n")
-        f.write("\n")
-        f.write("rule gen_ir_fold_hash\n")
-        if platform == "w":
-            f.write(
-                "  command = cmd /c %s < $src/../third_party/ir/ir_fold.h > ir_fold_hash.h\n"
-                % gen_ir_fold_hash_exe
-            )
-        else:
-            f.write(
-                "  command = ./%s < $src/../third_party/ir/ir_fold.h > ir_fold_hash.h\n"
-                % gen_ir_fold_hash_exe
-            )
-        f.write("  description = GEN_IR_FOLD_HASH\n")
         f.write("\n")
         f.write("rule gendumbbench\n")
         f.write("  command = %s $src/gen_dumbbench.py\n" % sys.executable)
@@ -263,12 +220,6 @@ def generate(platform, config, settings, cmdlines, tests):
         def getobj(src):
             return os.path.splitext(src)[0].replace("..", "__") + obj_ext
 
-        def get_extra(src):
-            if platform == "w":
-                return " /FI $src/force_include.h"
-            else:
-                return " -include $src/force_include.h"
-
         common_objs = []
         for src in COMMON_FILELIST:
             if sys.platform == "darwin" and "_win." in src:
@@ -289,7 +240,6 @@ def generate(platform, config, settings, cmdlines, tests):
                 " | ir_fold_hash.h" if src == "../third_party/ir/ir.c" else extra_deps
             )
             f.write("build %s: cc $src/%s%s\n" % (obj, src, extra_deps))
-            f.write("  extra=%s\n" % get_extra(src))
 
         if config == "p":
             tracy_cpp = "../third_party/tracy/public/TracyClient.cpp"
@@ -305,20 +255,11 @@ def generate(platform, config, settings, cmdlines, tests):
             obj = getobj(src)
             luvc_objs.append(obj)
             f.write("build %s: cc $src/%s\n" % (obj, src))
-            f.write("  extra=%s\n" % get_extra(src))
 
         unittest_objs = []
         for src in UNITTEST_FILELIST:
             obj = getobj(src)
             unittest_objs.append(obj)
-            f.write("build %s: cc $src/%s\n" % (obj, src))
-            f.write("  extra=%s\n" % get_extra(src))
-
-        gen_ir_fold_hash_objs = []
-        for src in GEN_IR_FOLD_HASH_FILELIST:
-            obj = getobj(src)
-            gen_ir_fold_hash_objs.append(obj)
-            # No force_include.h here.
             f.write("build %s: cc $src/%s\n" % (obj, src))
 
         lexbench_objs = []
@@ -328,9 +269,9 @@ def generate(platform, config, settings, cmdlines, tests):
             f.write("build %s: cc $src/%s\n" % (obj, src))
             fn = os.path.join(root_dir, "dumbbench.luv").replace("\\", "/")
             if sys.platform == "win32":
-                f.write('  extra=-DFILENAME="""%s""" %s\n' % (fn, get_extra(src)))
+                f.write('  extra=-DFILENAME="""%s"""\n' % fn)
             else:
-                f.write('  extra=-DFILENAME=\\"%s\\" %s\n' % (fn, get_extra(src)))
+                f.write('  extra=-DFILENAME=\\"%s\\"\n' % fn)
 
         alltests = []
         for testf, cmds in tests.items():
@@ -342,24 +283,6 @@ def generate(platform, config, settings, cmdlines, tests):
             alltests.append(testf)
 
         f.write("build %s: link %s\n" % (luvcexe, " ".join(common_objs + luvc_objs)))
-        f.write(
-            "build %s: link %s\n"
-            % (gen_ir_fold_hash_exe, " ".join(gen_ir_fold_hash_objs))
-        )
-        f.write(
-            "build %s: mlbuild $src/../third_party/ir/dynasm/minilua.c\n" % miniluaexe
-        )
-
-        f.write(
-            "build ir_emit_x86.h: dynasm_w $src/../third_party/ir/ir_x86.dasc | %s\n"
-            % miniluaexe
-        )
-        f.write(
-            "build ir_emit_aarch64.h: dynasm $src/../third_party/ir/ir_aarch64.dasc | %s\n"
-            % miniluaexe
-        )
-
-        f.write("build ir_fold_hash.h: gen_ir_fold_hash | %s\n" % gen_ir_fold_hash_exe)
 
         f.write(
             "build %s: link %s\n"
