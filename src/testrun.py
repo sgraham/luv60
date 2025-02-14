@@ -65,16 +65,48 @@ def main():
     ):
         return 0
 
-    if cmds["out"] or cmds["err"]:
+    if cmds["cerr"]:
         res = subprocess.run(
-            [ccbin] + cmds["run"].split(" "),
+            cmds["crun"].replace("LUVC_BIN", ccbin).split(" "),
+            cwd=root,
+            capture_output=True,
+            universal_newlines=True,
+            env=env,
+        )
+        err = res.stderr
+        if err != cmds["cerr"]:
+            print("got stderr:\n")
+            print(err)
+            print(hexdump(err.encode("utf-8")))
+            print("but expected:\n")
+            print(cmds["cerr"])
+            print(hexdump(cmds["cerr"].encode("utf-8")))
+            return 1
+    else:
+        res = subprocess.run(
+            cmds["crun"].replace("LUVC_BIN", ccbin).split(" "), cwd=root, env=env
+        )
+
+    if res.returncode != cmds["cret"]:
+        print(
+            "got luvc return code %d, but expected %d" % (res.returncode, cmds["cret"])
+        )
+        return 2
+
+    # TODO
+    clang_cmd = cmds["clangrun"].split(" ")
+    clang_cmd[0] = "C:\\Program Files\\LLVM\\bin\\clang.exe"
+    subprocess.run(clang_cmd, check=True)
+
+    if cmds["out"]:
+        res = subprocess.run(
+            cmds["run"].split(" "),
             cwd=root,
             capture_output=True,
             universal_newlines=True,
             env=env,
         )
         out = res.stdout
-        err = res.stderr
         if out != cmds["out"]:
             print("got stdout:\n")
             print(out)
@@ -83,27 +115,12 @@ def main():
             print(cmds["out"])
             print(hexdump(cmds["out"].encode("utf-8")))
             return 1
-        if err != cmds["err"]:
-            print("got stderr:\n")
-            print(err)
-            print(hexdump(err.encode("utf-8")))
-            print("but expected:\n")
-            print(cmds["err"])
-            print(hexdump(cmds["err"].encode("utf-8")))
-            return 1
     else:
-        res = subprocess.run([ccbin] + cmds["run"].split(" "), cwd=root, env=env)
+        res = subprocess.run(cmds["run"].split(" "), cwd=root, env=env)
 
-    if cmds["ret"] == "NOCRASH":
-        if res.returncode >= 0 and res.returncode <= 255 and res.returncode != 117:
-            return 0
-        # Something out of range indicates crash, e.g Windows returns -1073741819 on GPF.
-        # Linux is always in the range 0..255, so pick 117 arbitrarily for an ASAN signal.
+    if res.returncode != cmds["ret"]:
+        print("got return code %d, but expected %d" % (res.returncode, cmds["ret"]))
         return 2
-    else:
-        if res.returncode != cmds["ret"]:
-            print("got return code %d, but expected %d" % (res.returncode, cmds["ret"]))
-            return 2
 
 
 if __name__ == "__main__":

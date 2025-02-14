@@ -327,4 +327,53 @@ assert the location is the for, and the set the location to after the clauses.
 easy peasy?
 
 
+---
+
+listener based operation
+
+receives one top level thing at a time
+
+builds ast for the thing
+
+if the thing is a redefinition, dirties anything in the graph that depends on it
+
+forall dirty in dirties:
+  build_debug()
+  build_opt()
+
+debug indirects through heap-type-map which can look up type information for a
+given address, and from that, dynamically get a field
+when setting:
+- if field type changed: print warning, do nothing
+- if field removed: print warning, do nothing
+- if field 
+
+---
+
+garbage collector for debug only
+- we don't know types of arena objects because there's no object model
+- but in practice we do normally know, so rely on cooperation
+- something like __asan_poison(), do __impl_set_type(p, size, typeid())
+
+---
+
+incremental graph update
+
+top level: [can depend on]
+foreign: [struct, import]
+on: [struct, import]
+import: [maybe import]
+struct: [struct]
+def: [struct]
+const: [everything]
+check: [everything]
+
+a top-level chunker, to be able to quickly diff/cache/etc blobs, in lieu of
+having a smalltalk browser where each thing is separate. dirty when the sha
+of the thing is different
+
+what does the dependency look like? need to do a resolve like luv0, then
+create additional links between ast nodes
+
+
 # vim: set tw=80 fo=roqnjt:

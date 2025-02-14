@@ -102,14 +102,19 @@ def get_tests():
     )
     for test in files:
         test = test.replace("\\", "/")
-        run = "{self}"
+        crun = "LUVC_BIN {self} -o {self}.s"
+        cret = "0"
+        cerr = ""
+        clangrun = "CLANG_BIN -g {self}.s -o {self}.exe"
+        run = "{self}.exe"
         ret = "0"
         out = ""
-        err = ""
         disabled = []
+        crun_prefix = "# CRUN: "
+        cret_prefix = "# CRET: "
+        cerr_prefix = "# CERR: "
         run_prefix = "# RUN: "
         ret_prefix = "# RET: "
-        err_prefix = "# ERR: "
         out_prefix = "# OUT: "
         disabled_linux_prefix = "# DISABLED_LINUX"
         disabled_win_prefix = "# DISABLED_WIN"
@@ -117,15 +122,21 @@ def get_tests():
         disabled_prefix = "# DISABLED"
         imported_prefix = "# IMPORTED"
         ret_set = False
+        cret_set = False
         with open(test, "r", encoding="utf-8") as f:
             for l in f.readlines():
                 if l.startswith(run_prefix):
                     run = l[len(run_prefix) :].rstrip()
+                elif l.startswith(crun_prefix):
+                    crun = l[len(crun_prefix) :].rstrip()
                 elif l.startswith(ret_prefix):
                     ret = l[len(ret_prefix) :].rstrip()
                     ret_set = True
-                elif l.startswith(err_prefix):
-                    err += l[len(err_prefix) :].rstrip() + "\n"
+                elif l.startswith(cret_prefix):
+                    cret = l[len(cret_prefix) :].rstrip()
+                    cret_set = True
+                elif l.startswith(cerr_prefix):
+                    cerr += l[len(cerr_prefix) :].rstrip() + "\n"
                 elif l.startswith(out_prefix):
                     out += l[len(out_prefix) :].rstrip() + "\n"
                 elif l.startswith(disabled_linux_prefix):
@@ -142,14 +153,17 @@ def get_tests():
                 spaces = len(test) * " "
                 return t.replace("{ssss}", spaces)
 
-            if not disabled and not ret_set and not out and not err:
+            if not disabled and not cret_set and not ret_set and not out and not err:
                 print("Nothing being tested in %s?" % test)
                 sys.exit(1)
             tests[test] = {
                 "run": sub(run),
+                "crun": sub(crun),
+                "cret": int(cret),
                 "ret": int(ret),
                 "out": sub(out),
-                "err": sub(err),
+                "cerr": sub(cerr),
+                "clangrun": sub(clangrun),
                 "disabled": disabled
             }
 
