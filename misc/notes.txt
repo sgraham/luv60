@@ -376,4 +376,114 @@ what does the dependency look like? need to do a resolve like luv0, then
 create additional links between ast nodes
 
 
+---
+
+listener thoughts again, rambling from phone
+
+Send chunk of compiled x64 to linker/listener it deals with relinking, just
+keeping old version of everything at first and relink from scratch 
+
+Still need to define what happens to old data. The Asan external tagging seems
+plausible
+
+Constructors insert a call to tag, then typeid changes every time it's
+structurally changed, each typeid has a name:type:offset list so field retrieval
+had to indirect through that. Basically smalltalk, but vtable is outside
+
+Alternatively, maybe a fully managed thing just with managed data changes is
+more sensible. Every root can be upgraded or downgraded. Size of obj is max of
+all fields that have been in it this session (so data doesn't get lost). This
+downgrades to release build better where you just drop the management 
+
+Or could it all be integrated into the saved inputs so that when the struct
+changes the game gets replayed as if it was like that before?
+
+*Center everything around saved inputs* all input comes from that buffer
+
+Various asset types, textures audio, code whatever
+
+Fields in struct could change what happens in Sim so there has to be some way to
+deal with that changing as it goes 
+
+If everything was a hash lookup, then failing would still need a zero or
+exceptions or something because you don't want to fail field lookups
+
+Exceptions don't feel super convenient for iteration. Having a default value in
+the struct would make it a bit better. If removed then just zero of the type, if
+added but not in instance then default in struct def. If changed type then in
+old instances, pretend it doesn't exist. In theory could try to do conversions
+but probably very uncommon so don't to be less complex
+
+Field lookups still need to check typeid on every access,
+(typeid:fieldname)->offset every access
+
+Typeid in struct header? Or out of band?
+
+Str intern for field names. Str is 64 in new version. Typeid 32? 64. Maybe some
+sort of hash instead of counter? Probably confusing.
+
+Typeid maps to small table to map name to field type, offset, default or
+something
+
+Annoying that it's totally different in debug/release
+
+Oh, since we track code in inputs, if a struct is redefined, then switch to slow
+mode? If everything is already typed and has offset fields then just functions
+that use that struct rebuild when it's changed and they go into indirect mode
+
+Something along the line of making a heap that's "small" but assume 10x extra
+elsewhere during dev
+
+Mirror of all global data? So when a type is redefined there should be an
+migration process. That would mean moving things so pointers get invalidated
+though, hmm
+
+Functions tricky too? Trivially a large table of name to address to indirect
+through. But runtime linker can just keep a dict and then detours or add jmp
+sled at start of all functions in debug 
+
+Might want a GC for unused functions? Or maybe who cares, just leak them during
+dev
+
+One big decision is whether changing something means recompile deps too, or just
+the thing you touched and have other things work as well as possible with mixed
+defs
+
+Const change would mean rebuild all refs to that. Probably just use a variable
+instead? (Defparameter defvar Defconst)
+
+Clos seems good except for exceptions/restarts
+
+If only building the thing you touched then it's going to have to always be in
+indirect mode for field access. Maybe that's good because then it's always
+exercised. Parse should not call sq directly but instead be macros to something
+higher level so that there's a straightforward compile-to-C path as well
+
+Build listener to start accepts msgpack of assets and does things, contains all
+the saved input and links to SDL. Final version is C file from luvc + listener
+without the listening + SDL lib
+
+LoadTex(file) physfs style
+
+Some sort of rule about conversion of all the stuff in a root to target format,
+and then ask for it by basename
+
+=> only two options:
+
+1) migrate instances when a struct changes. presumably can define some sort of
+   add/remove/change behaviour that makes sense. means that objects have to be
+   able to move and resize at redefine time, which means that any pointers are
+   invalidated which isn't great
+
+2) field lookup has to be indirected, this is basically every dynamic language.
+   still need "zero" for missing fields. pointers to objects work, but they're
+   kind of less useful since *Thing p; p.stuff is really
+   typeid(p).find_offset(str_intern("stuff"))
+
+param => updates
+var => doesn't update
+const => ?
+
+i dunno, redefining structs seems like a big confusing mess.
+
 # vim: set tw=80 fo=roqnjt:

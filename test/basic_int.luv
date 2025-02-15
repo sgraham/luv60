@@ -1,4 +1,3 @@
-# RUN: {self} --main-rc
 # RET: 5
 def int main():
     int x = 5
