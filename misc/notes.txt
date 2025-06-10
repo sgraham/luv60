@@ -85,7 +85,7 @@ building an interpolation list without looking ahead, and then if there's
 expressions inside the escape it's arbitraily far to know if you're ever going
 to get to a `. So that doesn't seem to work?
 
-Sticking with \(), the parser has to some how fully parse/lex the string as it's
+Sticking with \(), the parser has to some how fully parse/lex the string as its
 own little program. It won't be able to call parse_expression() to get the sub
 things otherwise as the whole thing is one big STRING_QUOTED. Maybe that's the
 way to go to keep the normal (non-interpolated) case fast. Maybe a memchr for
@@ -485,5 +485,37 @@ var => doesn't update
 const => ?
 
 i dunno, redefining structs seems like a big confusing mess.
+
+-----------------
+
+clang-format'able syntax instead of python? possibly faster tokenize too, though
+forced 4 space is probably about the same
+
+  def func():
+    stuff
+
+  vs.
+
+  def func() {
+    stuff
+  }
+
+implicit func scope looks wrong though:
+
+  def func:
+    for i in range(10):
+      x = max(rand())
+    print x
+
+  vs. 
+
+  def func() {
+    for i in range(10) {
+      x = max(rand())
+    }
+    print x
+  }
+
+  somehow seem more reasonable that x is still in scope in python version
 
 # vim: set tw=80 fo=roqnjt:

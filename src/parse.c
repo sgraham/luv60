@@ -1080,7 +1080,6 @@ static Type basic_tok_to_type[NUM_TOKEN_KINDS] = {
     [TOK_UINT] = type_u32,       //
 };
 
-#if 0
 static int type_ranks[NUM_TYPE_KINDS] = {
     [TYPE_BOOL] = 1,  //
     [TYPE_U8] = 2,    //
@@ -1098,7 +1097,6 @@ static int type_rank(Type type) {
   ASSERT(rank != 0);
   return rank;
 }
-#endif
 
 static Str str_from_previous(void) {
   StrView view = get_strview_for_offsets(prev_offset(), cur_offset());
@@ -1580,7 +1578,6 @@ static Operand parse_and(Operand left, bool can_assign, Type* expected) {
   return operand_null;
 }
 
-#if 0
 static void promote_small_integers(Operand* operand) {
   switch (type_kind(operand->type)) {
     case TYPE_I8:
@@ -1598,9 +1595,7 @@ static void promote_small_integers(Operand* operand) {
       break;
   }
 }
-#endif
 
-#if 0
 static void unify_arithmetic_operands(Operand* left, Operand* right) {
   // TODO: floats aren't even parsed yet
   ASSERT(type_is_integer(left->type));
@@ -1636,17 +1631,13 @@ static void unify_arithmetic_operands(Operand* left, Operand* right) {
   }
   ASSERT(type_eq(left->type, right->type));
 }
-#endif
 
-#if 0
-static unsigned long long eval_binary_op_ull(ir_op op,
+static unsigned long long eval_binary_op_ull(TokenKind op,
                                              unsigned long long left,
                                              unsigned long long right) {
   error("TODO: ull binary const eval");
 }
-#endif
 
-#if 0
 static unsigned long highest_bit_set(long long val) {
 #if COMPILER_MSVC
   unsigned long index;
@@ -1662,12 +1653,10 @@ static unsigned long highest_bit_set(long long val) {
   return 63 - __builtin_clzll(val);
 #endif
 }
-#endif
 
-#if 0
-static long long eval_binary_op_ll(ir_op op, long long left, long long right) {
+static long long eval_binary_op_ll(TokenKind op, long long left, long long right) {
   switch (op) {
-    case IR_MUL: {
+    case TOK_STAR: {
       long long result;
       if (
 #if COMPILER_MSVC
@@ -1680,32 +1669,34 @@ static long long eval_binary_op_ll(ir_op op, long long left, long long right) {
       }
       return result;
     }
-    case IR_DIV:
+    case TOK_SLASH:
       if (right == 0) {
         error("Divide by zero.");
         return 0;
       }
       return left / right;
-    case IR_MOD:
+    case TOK_PERCENT:
       if (right == 0) {
         error("Divide by zero.");
         return 0;
       }
       return left % right;
-    case IR_AND:
+    case TOK_AMPERSAND:
       return left & right;
-    case IR_SHL: {
+    case TOK_LSHIFT: {
       long long required_bits = highest_bit_set(left) + right + 1;
       if (required_bits > 64) {
         errorf("%llu shifted left by %llu requires %llu bits.", left, right, required_bits);
       }
       return left << right;
     }
+#if 0  // TODO: signed bit passing
     case IR_SHR:
       error("internal error: SHR on signed.");
     case IR_SAR:
       return left >> right;
-    case IR_ADD: {
+#endif
+    case TOK_PLUS: {
       long long result;
       if (
 #if COMPILER_MSVC
@@ -1718,7 +1709,7 @@ static long long eval_binary_op_ll(ir_op op, long long left, long long right) {
       }
       return result;
     }
-    case IR_SUB: {
+    case TOK_MINUS: {
       long long result;
       if (
 #if COMPILER_MSVC
@@ -1731,30 +1722,28 @@ static long long eval_binary_op_ll(ir_op op, long long left, long long right) {
       }
       return result;
     }
-    case IR_OR:
+    case TOK_PIPE:
       return left | right;
-    case IR_XOR:
+    case TOK_CARET:
       return left ^ right;
-    case IR_EQ:
+    case TOK_EQEQ:
       return left == right;
-    case IR_NE:
+    case TOK_BANGEQ:
       return left != right;
-    case IR_LT:
+    case TOK_LT:
       return left < right;
-    case IR_LE:
+    case TOK_LEQ:
       return left <= right;
-    case IR_GT:
+    case TOK_GT:
       return left > right;
-    case IR_GE:
+    case TOK_GEQ:
       return left >= right;
     default:
-      error("internal error: unexpected const ir_op.");
+      error("internal error: unexpected const op.");
   }
 }
-#endif
 
-#if 0
-static Val eval_binary_op(ir_op op, Type type, Val left, Val right) {
+static Val eval_binary_op(TokenKind op, Type type, Val left, Val right) {
   if (type_is_integer(type)) {
     Operand left_operand = operand_const(type, left);
     Operand right_operand = operand_const(type, right);
@@ -1779,7 +1768,7 @@ static Val eval_binary_op(ir_op op, Type type, Val left, Val right) {
   }
 }
 
-static Operand resolve_binary_op(ir_op op, Operand left, Operand right, uint32_t loc) {
+static Operand resolve_binary_op(TokenKind op, Operand left, Operand right, uint32_t loc) {
   ASSERT(type_eq(left.type, right.type));
   // It didn't really seem worth doing constant eval, but it's needed for array
   // sizes in particular, so we do some constant propagation through is_const
@@ -1787,13 +1776,18 @@ static Operand resolve_binary_op(ir_op op, Operand left, Operand right, uint32_t
   if (op_is_const(left) && op_is_const(right)) {
     return operand_const(left.type, eval_binary_op(op, left.type, left.val, right.val));
   } else {
+    ASSERT(false && "sq_something");
+#if 0
     ir_type irt = type_to_ir_type(left.type);
     ir_ref result =
         ir_BINARY_OP(op, irt, operand_to_irref_imm(&left), operand_to_irref_imm(&right));
     return operand_rvalue_imm(left.type, result);
+#endif
+    return operand_null;
   }
 }
 
+#if 0
 static Operand resolve_cmp_op(ir_op op, Operand left, Operand right, uint32_t loc) {
   ASSERT(type_eq(left.type, right.type));
   if (op_is_const(left) && op_is_const(right)) {
@@ -1804,32 +1798,45 @@ static Operand resolve_cmp_op(ir_op op, Operand left, Operand right, uint32_t lo
     return operand_rvalue_imm(type_bool, result);
   }
 }
+#endif
 
-static Operand resolve_binary_arithmetic_op(ir_op op, Operand left, Operand right, uint32_t loc) {
+static Operand resolve_binary_arithmetic_op(TokenKind op,
+                                            Operand left,
+                                            Operand right,
+                                            uint32_t loc) {
   unify_arithmetic_operands(&left, &right);
   return resolve_binary_op(op, left, right, loc);
 }
 
+#if 0
 static Operand resolve_binary_cmp_op(ir_op op, Operand left, Operand right, uint32_t loc) {
   unify_arithmetic_operands(&left, &right);
   return resolve_cmp_op(op, left, right, loc);
 }
-
 #endif
+
 static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
   // Remember the operator.
-#if 0
   TokenKind op = parser.cursor.prev_kind;
   uint32_t op_offset = prev_offset();
-#endif
 
   // Compile the right operand.
-#if 0
   Rule* rule = get_rule(op);
   Operand rhs = parse_precedence(rule->prec_for_infix + 1, expected);
-#endif
 
-  return operand_null;
+  if (op == TOK_MINUS) {
+    if (type_is_arithmetic(left.type) && type_is_arithmetic(rhs.type)) {
+      return resolve_binary_arithmetic_op(op, left, rhs, op_offset);
+    } else {
+      // TODO: special case str + here
+
+      errorf_offset(op_offset, "TODO: %s %s.", type_as_str(left.type), type_as_str(rhs.type));
+    }
+  } else {
+    ASSERT(false && "todo");
+    return operand_null;
+  }
+
 #if 0
   typedef struct IrOpPair {
     ir_op sign;
