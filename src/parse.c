@@ -1824,7 +1824,11 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
   Rule* rule = get_rule(op);
   Operand rhs = parse_precedence(rule->prec_for_infix + 1, expected);
 
-  if (op == TOK_MINUS) {
+#if 0
+  if (tok_is_cmp()) {
+  } else
+#endif
+  if (op == TOK_MINUS || op == TOK_SLASH) {
     if (type_is_arithmetic(left.type) && type_is_arithmetic(rhs.type)) {
       return resolve_binary_arithmetic_op(op, left, rhs, op_offset);
     } else {
