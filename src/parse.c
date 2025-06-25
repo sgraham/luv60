@@ -180,6 +180,8 @@ typedef struct Parser {
   Str static_str_repr;
   Str static_str_ret;
   Str static_str_up;
+
+  SqSymbol i32_print_fmt;
 } Parser;
 
 static Parser parser;
@@ -619,16 +621,15 @@ static Sym* sym_new(SymKind kind, Str name, Type type) {
   }
 }
 
-#if 0
-static void print_i32_impl(int32_t val) {
-  printf("%d\n", val);
-}
-
 static void print_i32(Operand* op) {
-  ir_ref addr = ir_CONST_ADDR(print_i32_impl);
-  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
+  SqRef val = operand_to_sqref_imm(op);
+  SqRef print_func = sq_ref_extern("printf");
+  SqRef fmt_str = sq_ref_for_symbol(parser.i32_print_fmt);
+  sq_i_call3(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str}, sq_varargs_begin,
+             (SqCallArg){sq_type_word, val});
 }
 
+#if 0
 static void print_bool_impl(uint8_t val) {
   printf("%s\n", val ? "true" : "false");
 }
@@ -3562,12 +3563,13 @@ static void print_statement(void) {
       print_float(&val);
     } else if (type_eq(val.type, type_double)) {
       print_double(&val);
-    } else if (convert_operand(&val, type_i32)) {
+    } else
+#endif
+    if (convert_operand(&val, type_i32)) {
       print_i32(&val);
     } else {
       errorf("TODO: don't know how to print type %s.", type_as_str(val.type));
     }
-#endif
   }
   expect_end_of_statement("print");
 }
@@ -3996,6 +3998,10 @@ static void parse_impl(Arena* main_arena,
     config.debug_flags = "P";
   }
   sq_init(&config);
+
+  sq_data_start(sq_linkage_default, "i32_fmt");
+  sq_data_string("%d\n\0");
+  parser.i32_print_fmt = sq_data_end();
 
   enter_scope(/*is_module=*/true, /*is_function=*/false, NULL);
 
