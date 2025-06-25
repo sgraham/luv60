@@ -1,0 +1,28 @@
+# OUT: true
+# OUT: false
+# OUT: false
+# OUT: false
+# OUT: true
+# OUT: true
+# OUT: ---
+# OUT: true
+# OUT: true
+# OUT: true
+# OUT: false
+# OUT: true
+# OUT: false
+def int main():
+    print 10 == 10
+    print 10 != 10
+    print 10 < 10
+    print 10 > 10
+    print 10 <= 10
+    print 10 >= 10
+    print "---"
+    print 10 == 20
+    print 10 != 20
+    print 10 < 20
+    print 10 > 20
+    print 10 <= 20
+    print 10 >= 20
+    return 0

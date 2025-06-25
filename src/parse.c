@@ -630,6 +630,10 @@ static void print_i32(Operand* op) {
              (SqCallArg){sq_type_word, val});
 }
 
+static void print_bool(Operand* op) {
+  ASSERT(false && "todo!");
+}
+
 static void print_str(Operand* op) {
   SqRef obj = operand_to_sqref_imm(op);
   SqRef print_func = sq_ref_extern("printf");
@@ -642,15 +646,6 @@ static void print_str(Operand* op) {
 
 
 #if 0
-static void print_bool_impl(uint8_t val) {
-  printf("%s\n", val ? "true" : "false");
-}
-
-static void print_bool(Operand* op) {
-  ir_ref addr = ir_CONST_ADDR(print_bool_impl);
-  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
-}
-
 static void print_float_impl(float val) {
   printf("%f\n", val);
 }
@@ -1765,6 +1760,7 @@ static Val eval_binary_op(TokenKind op, Type type, Val left, Val right) {
   }
 }
 
+#if 0
 static Operand resolve_binary_op(TokenKind op, Operand left, Operand right, uint32_t loc) {
   ASSERT(type_eq(left.type, right.type));
   // It didn't really seem worth doing constant eval, but it's needed for array
@@ -1783,20 +1779,26 @@ static Operand resolve_binary_op(TokenKind op, Operand left, Operand right, uint
     return operand_null;
   }
 }
+#endif
 
-#if 0
-static Operand resolve_cmp_op(ir_op op, Operand left, Operand right, uint32_t loc) {
+typedef SqRef (*BinOpCmpFunc)(SqType, SqRef, SqRef);
+
+static Operand resolve_cmp_op(TokenKind op,
+                              BinOpCmpFunc func,
+                              Operand left,
+                              Operand right,
+                              uint32_t loc) {
   ASSERT(type_eq(left.type, right.type));
   if (op_is_const(left) && op_is_const(right)) {
     return operand_const(left.type, eval_binary_op(op, left.type, left.val, right.val));
   } else  {
-    ir_ref result =
-        ir_CMP_OP(op, operand_to_irref_imm(&left), operand_to_irref_imm(&right));
+    // TODO: size_class is wrong
+    SqRef result = func(sq_type_word, operand_to_sqref_imm(&left), operand_to_sqref_imm(&right));
     return operand_rvalue_imm(type_bool, result);
   }
 }
-#endif
 
+#if 0
 static Operand resolve_binary_arithmetic_op(TokenKind op,
                                             Operand left,
                                             Operand right,
@@ -1804,13 +1806,12 @@ static Operand resolve_binary_arithmetic_op(TokenKind op,
   unify_arithmetic_operands(&left, &right);
   return resolve_binary_op(op, left, right, loc);
 }
-
-#if 0
-static Operand resolve_binary_cmp_op(ir_op op, Operand left, Operand right, uint32_t loc) {
-  unify_arithmetic_operands(&left, &right);
-  return resolve_cmp_op(op, left, right, loc);
-}
 #endif
+
+static Operand resolve_binary_cmp_op(TokenKind op, BinOpCmpFunc func, Operand left, Operand right, uint32_t loc) {
+  unify_arithmetic_operands(&left, &right);
+  return resolve_cmp_op(op, func, left, right, loc);
+}
 
 static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
   // Remember the operator.
@@ -1821,36 +1822,19 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
   Rule* rule = get_rule(op);
   Operand rhs = parse_precedence(rule->prec_for_infix + 1, expected);
 
-#if 0
-  if (tok_is_cmp()) {
-  } else
-#endif
-  if (op == TOK_MINUS || op == TOK_SLASH) {
-    if (type_is_arithmetic(left.type) && type_is_arithmetic(rhs.type)) {
-      return resolve_binary_arithmetic_op(op, left, rhs, op_offset);
-    } else {
-      // TODO: special case str + here
-
-      errorf_offset(op_offset, "TODO: %s %s.", type_as_str(left.type), type_as_str(rhs.type));
-    }
-  } else {
-    ASSERT(false && "todo");
-    return operand_null;
-  }
-
-#if 0
-  typedef struct IrOpPair {
-    ir_op sign;
-    ir_op unsign;
-  } IrOpPair;
-  static IrOpPair tok_to_cmp_op[NUM_TOKEN_KINDS] = {
-      [TOK_EQEQ] = {IR_EQ, IR_EQ},
-      [TOK_BANGEQ] = {IR_NE, IR_NE},
-      [TOK_LEQ] = {IR_LE, IR_ULE},
-      [TOK_LT] = {IR_LT, IR_ULT},
-      [TOK_GEQ] = {IR_GE, IR_UGE},
-      [TOK_GT] = {IR_GT, IR_UGT},
+  typedef struct OpPair {
+    BinOpCmpFunc sign;
+    BinOpCmpFunc unsign;
+  } OpPair;
+  static OpPair tok_to_cmp_op[NUM_TOKEN_KINDS] = {
+      [TOK_EQEQ] = {sq_i_ceqw, sq_i_ceqw},
+      [TOK_BANGEQ] = {sq_i_cnew, sq_i_cnew},
+      [TOK_LEQ] = {sq_i_cslew, sq_i_culew},
+      [TOK_LT] = {sq_i_csltw, sq_i_cultw},
+      [TOK_GEQ] = {sq_i_csgew, sq_i_cugew},
+      [TOK_GT] = {sq_i_csgtw, sq_i_cugtw},
   };
+#if 0
   typedef struct IrOpAndErr {
     ir_op op;
     const char* err_msg;
@@ -1868,6 +1852,7 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
       [TOK_LSHIFT] = {IR_SHL, "TODO %s %s"},
       // TOK_RSHIFT handled below to do SHR vs SAR
   };
+#endif
   if (tok_to_cmp_op[op].sign /*anything nonzero in slot*/) {
     if (type_is_arithmetic(left.type) && type_is_arithmetic(rhs.type)) {
       if (!type_signs_match(left.type, rhs.type)) {
@@ -1875,16 +1860,15 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
                       type_as_str(left.type), type_as_str(rhs.type));
       } else {
         bool is_signed = type_is_signed(left.type);
-        return resolve_binary_cmp_op(is_signed ? tok_to_cmp_op[op].sign : tok_to_cmp_op[op].unsign,
+        return resolve_binary_cmp_op(op,
+                                     is_signed ? tok_to_cmp_op[op].sign : tok_to_cmp_op[op].unsign,
                                      left, rhs, op_offset);
       }
     } else {
       errorf_offset(op_offset, "Cannot compare %s and %s.", type_as_str(left.type),
                     type_as_str(rhs.type));
     }
-    ir_op irop = type_is_unsigned(left.type) ? tok_to_cmp_op[op].unsign : tok_to_cmp_op[op].sign;
-    ir_ref cmp = ir_CMP_OP(irop, operand_to_irref_imm(&left), operand_to_irref_imm(&rhs));
-    return operand_rvalue_imm(type_bool, cmp);
+#if 0
   } else if (tok_to_bin_op[op].err_msg /* anything nonzero in slot*/) {
     if (type_is_arithmetic(left.type) && type_is_arithmetic(rhs.type)) {
       return resolve_binary_arithmetic_op(tok_to_bin_op[op].op, left, rhs, op_offset);
@@ -1899,11 +1883,11 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
     ir_ref result = ir_BINARY_OP(irop, type_to_ir_type(left.type), operand_to_irref_imm(&left),
                                  operand_to_irref_imm(&rhs));
     return operand_rvalue_imm(left.type, result);
+#endif
   } else {
     ASSERT(false && "todo");
     return operand_null;
   }
-#endif
 }
 
 static Operand parse_bool_literal(bool can_assign, Type* expected) {
@@ -3559,11 +3543,11 @@ static void print_statement(void) {
   } else {
     if (type_eq(val.type, type_str)) {
       print_str(&val);
+    } else if (type_eq(val.type, type_bool)) {
+      print_bool(&val);
 #if 0
     } else if (type_eq(val.type, type_range)) {
       print_range(&val);
-    } else if (type_eq(val.type, type_bool)) {
-      print_bool(&val);
     } else if (type_eq(val.type, type_float)) {
       print_float(&val);
     } else if (type_eq(val.type, type_double)) {
