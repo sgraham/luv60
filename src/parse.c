@@ -53,13 +53,8 @@ typedef struct Sym {
   Type type;
   union {
     SqRef ref;
-#if 0
-    struct {
-      // (kind == SYM_FUNC) or (kind == SYM_VAR and scope_decl == GLOBAL)
-      void* addr;
-      ir_ref ref2;  // upvals for SYM_FUNC
-    };
-#endif
+    // (kind == SYM_FUNC) or (kind == SYM_VAR and scope_decl == GLOBAL)
+    SqSymbol global;
   };
   SymScopeDecl scope_decl;
 } Sym;
@@ -401,15 +396,15 @@ static Operand operand_rvalue_global_addr_bound(Type type, ir_ref ref, ir_ref re
   return (Operand){
       .kind = OPK_REF_RVAL_GLOBAL_ADDR_BOUND_FUNC, .type = type, .ref = ref, .ref2 = ref2};
 }
+#endif
 
-static Operand operand_lvalue_global_addr(Type type, ir_ref ref) {
+static Operand operand_lvalue_global_addr(Type type, SqRef ref) {
   return (Operand){.kind = OPK_REF_LVAL_GLOBAL_ADDR, .type = type, .ref = ref};
 }
 
-static Operand operand_rvalue_imm(Type type, ir_ref ref) {
+static Operand operand_rvalue_imm(Type type, SqRef ref) {
   return (Operand){.kind = OPK_REF_RVAL, .type = type, .ref = ref};
 }
-#endif
 
 static Operand operand_const(Type type, Val val) {
   return (Operand){.kind = OPK_CONST, .type = type, .val = val};
@@ -876,7 +871,7 @@ static void leave_function(void) {
     sq_i_ret(sq_i_load(type_to_sqtype(ret_type), parser.cur_scope->return_slot->ref));
   }
 
-  sq_func_end();
+  parser.cur_scope->func_sym->global = sq_func_end();
   parser.cur_scope->func_item_ctx = (SqItemCtx){0};
 
   bool is_nested = parser.num_scopes > 2;  // Module, parent function, current function.
@@ -2063,15 +2058,16 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
   if (type_kind(left.type) != TYPE_FUNC) {
     errorf("Expected function type, but type is %s.", type_as_str(left.type));
   }
-  return operand_null;
-#if 0
-  ir_ref arg_values[MAX_FUNC_PARAMS];
+  SqCallArg arg_values[MAX_FUNC_PARAMS];
   uint32_t num_args = 0;
 
   if (type_func_flags(left.type) & (TFF_NESTED | TFF_MEMFN)) {
+    ASSERT(false && "todo; upvals i think");
+#if 0
     ASSERT(op_has_ref2(left));
     arg_values[0] = left.ref2;
     ++num_args;
+#endif
   }
 
   if (!check(TOK_RPAREN)) {
@@ -2087,7 +2083,8 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
         errorf_offset(arg_offset, "Call argument %d is type %s, but function expects type %s.",
                       num_args + 1, type_as_str(arg.type), type_as_str(param_type));
       }
-      arg_values[num_args] = operand_to_irref_imm(&arg);
+      arg_values[num_args].type = type_to_sqtype(arg.type);
+      arg_values[num_args].value = operand_to_sqref_imm(&arg);
       ++num_args;
       if (!match(TOK_COMMA)) {
         break;
@@ -2100,8 +2097,9 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
   }
 
   consume(TOK_RPAREN, "Expect ')' after arguments.");
-  return lower_structs_and_call(&left, num_args, arg_values);
-#endif
+  Type ret_type = type_func_return_type(left.type);
+  return operand_rvalue_imm(ret_type,
+                            sq_i_calla(type_to_sqtype(ret_type), left.ref, num_args, arg_values));
 }
 
 static Operand parse_compound_literal(bool can_assign, Type* expected) {
@@ -3128,10 +3126,11 @@ static Operand find_or_create_upval(Scope* scope, Str name, Sym* sym) {
 #endif
 
 static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
-  return operand_null;
-#if 0
   switch (scope_result) {
     case SCOPE_RESULT_LOCAL:
+      ASSERT(false && "todo");
+      return operand_null;
+#if 0
       if (type_kind(sym->type) == TYPE_FUNC) {
         if (type_func_is_nested(sym->type)) {
           return operand_bound_local_function(sym->type, ir_CONST_ADDR(sym->addr), sym->ref2);
@@ -3145,28 +3144,32 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
           return operand_lvalue_local(sym->type, sym->ref);
         }
       }
+#endif
     case SCOPE_RESULT_PARAMETER: {
       return operand_rvalue_imm(sym->type, sym->ref);
     }
     case SCOPE_RESULT_GLOBAL: {
       if (type_kind(sym->type) == TYPE_FUNC) {
         // Doesn't make sense in our use for GLOBAL to be bound I don't think.
-        return operand_rvalue_global_addr(sym->type, ir_CONST_ADDR(sym->addr));
+        return operand_rvalue_global_addr(sym->type, sq_ref_for_symbol(sym->global));
       } else {
-        return operand_lvalue_global_addr(sym->type, ir_CONST_ADDR(sym->addr));
+        return operand_lvalue_global_addr(sym->type, sq_ref_for_symbol(sym->global));
       }
     }
     case SCOPE_RESULT_UPVALUE: {
+      ASSERT(false && "todo");
+      return operand_null;
+#if 0
       // We already did a scope_lookup() so we know the in the current function,
       // we need to reference this value through $up.
       Operand value = find_or_create_upval(parser.cur_scope, var_name, sym);
       return value;
+#endif
     }
     case SCOPE_RESULT_UNDEFINED: {
       errorf("Undefined reference to '%s'.", cstr_copy(parser.arena, var_name));
     }
   }
-#endif
 }
 
 static Operand parse_variable(bool can_assign, Type* expected) {

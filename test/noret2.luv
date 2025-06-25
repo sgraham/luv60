@@ -1,4 +1,3 @@
-# RUN: {self} --main-rc
 # RET: 22
 def stuff():
     return
