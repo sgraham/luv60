@@ -95,7 +95,10 @@ def main():
 
     # TODO
     clang_cmd = cmds["clangrun"].split(" ")
-    clang_cmd[0] = "C:\\Program Files\\LLVM\\bin\\clang.exe"
+    if sys.platform == 'win32':
+        clang_cmd[0] = "C:\\Program Files\\LLVM\\bin\\clang.exe"
+    else:
+        clang_cmd[0] = "clang"
     subprocess.run(clang_cmd, check=True)
 
     if cmds["out"]:
