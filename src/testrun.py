@@ -35,6 +35,12 @@ class hexdump:
         return "\n".join(self)
 
 
+def late_expansion(input_str, variables):
+    for name, val in variables.items():
+        input_str = input_str.replace(name, val)
+    return input_str
+
+
 def main():
     out_dir = os.getcwd()
 
@@ -65,9 +71,14 @@ def main():
     ):
         return 0
 
+    late_vars = {
+        "LUVC_BIN": ccbin,
+        "OUT_DIR": out_dir.replace("\\", "/"),
+    }
+
     if cmds["cerr"]:
         res = subprocess.run(
-            cmds["crun"].replace("LUVC_BIN", ccbin).split(" "),
+            late_expansion(cmds["crun"], late_vars).split(" "),
             cwd=root,
             capture_output=True,
             universal_newlines=True,
@@ -84,7 +95,7 @@ def main():
             return 1
     else:
         res = subprocess.run(
-            cmds["crun"].replace("LUVC_BIN", ccbin).split(" "), cwd=root, env=env
+            late_expansion(cmds["crun"], late_vars).split(" "), cwd=root, env=env
         )
 
     if res.returncode != cmds["cret"]:
@@ -94,8 +105,8 @@ def main():
         return 2
 
     # TODO
-    clang_cmd = cmds["clangrun"].split(" ")
-    if sys.platform == 'win32':
+    clang_cmd = late_expansion(cmds["clangrun"], late_vars).split(" ")
+    if sys.platform == "win32":
         clang_cmd[0] = "C:\\Program Files\\LLVM\\bin\\clang.exe"
     else:
         clang_cmd[0] = "clang"
@@ -103,7 +114,7 @@ def main():
 
     if cmds["out"]:
         res = subprocess.run(
-            cmds["run"].split(" "),
+            late_expansion(cmds["run"], late_vars).split(" "),
             cwd=root,
             capture_output=True,
             universal_newlines=True,
@@ -119,7 +130,9 @@ def main():
             print(hexdump(cmds["out"].encode("utf-8")))
             return 1
     else:
-        res = subprocess.run(cmds["run"].split(" "), cwd=root, env=env)
+        res = subprocess.run(
+            late_expansion(cmds["run"], late_vars).split(" "), cwd=root, env=env
+        )
 
     if res.returncode != cmds["ret"]:
         print("got return code %d, but expected %d" % (res.returncode, cmds["ret"]))

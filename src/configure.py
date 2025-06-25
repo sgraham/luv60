@@ -102,11 +102,11 @@ def get_tests():
     )
     for test in files:
         test = test.replace("\\", "/")
-        crun = "LUVC_BIN {self} -o {self}.s"
+        crun = "LUVC_BIN {self} -o OUT_DIR/{self}.s"
         cret = "0"
         cerr = ""
-        clangrun = "CLANG_BIN -g {self}.s -o {self}.exe"
-        run = "{self}.exe"
+        clangrun = "CLANG_BIN -g OUT_DIR/{self}.s -o OUT_DIR/{self}.exe"
+        run = "OUT_DIR/{self}.exe"
         ret = "0"
         out = ""
         disabled = []
