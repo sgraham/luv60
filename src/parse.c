@@ -119,6 +119,7 @@ typedef struct Scope {
   // FuncData
   Sym* func_sym;
   Sym* return_slot;
+  SqItemCtx func_item_ctx;
   PendingCond pending_conds[MAX_PENDING_CONDS];
   int num_pending_conds;
 #if 0
@@ -182,6 +183,7 @@ typedef struct Parser {
   Str static_str_up;
 
   SqSymbol i32_print_fmt;
+  SqSymbol str_print_fmt;
 } Parser;
 
 static Parser parser;
@@ -388,11 +390,13 @@ static Operand operand_bound_local_function(Type type, ir_ref ref, ir_ref ref2) 
   return (Operand){
       .kind = OPK_REF_RVAL_LOCAL_ADDR_BOUND_FUNC, .type = type, .ref = ref, .ref2 = ref2};
 }
+#endif
 
-static Operand operand_rvalue_global_addr(Type type, ir_ref ref) {
+static Operand operand_rvalue_global_addr(Type type, SqRef ref) {
   return (Operand){.kind = OPK_REF_RVAL_GLOBAL_ADDR, .type = type, .ref = ref};
 }
 
+#if 0
 static Operand operand_rvalue_global_addr_bound(Type type, ir_ref ref, ir_ref ref2) {
   return (Operand){
       .kind = OPK_REF_RVAL_GLOBAL_ADDR_BOUND_FUNC, .type = type, .ref = ref, .ref2 = ref2};
@@ -524,7 +528,6 @@ static SqRef operand_to_sqref_imm(Operand* op) {
           error("internal error: unexpected const type.");
       }
     }
-#if 0
     case OPK_REF_RVAL:
       return op->ref;
     case OPK_REF_RVAL_LOCAL_ADDR_BOUND_FUNC:  // assume something else will load ref2
@@ -534,15 +537,18 @@ static SqRef operand_to_sqref_imm(Operand* op) {
         // TODO: This seems questionable.
         return op->ref;
       }
-      return ir_VLOAD(type_to_ir_type(op->type), op->ref);
+      ASSERT(false && "todo");
+      error("opkind1");
+      //return ir_VLOAD(type_to_ir_type(op->type), op->ref);
     case OPK_REF_RVAL_GLOBAL_ADDR:
     case OPK_REF_LVAL_GLOBAL_ADDR:
       if (type_is_aggregate(op->type)) {
         // TODO: This seems questionable. see test/print.luv
         return op->ref;
       }
-      return ir_LOAD(type_to_ir_type(op->type), op->ref);
-#endif
+      //return ir_LOAD(type_to_ir_type(op->type), op->ref);
+      ASSERT(false && "todo");
+      error("opkind2");
     default:
       error("internal error: unhandled OpKind");
   }
@@ -629,6 +635,17 @@ static void print_i32(Operand* op) {
              (SqCallArg){sq_type_word, val});
 }
 
+static void print_str(Operand* op) {
+  SqRef obj = operand_to_sqref_imm(op);
+  SqRef print_func = sq_ref_extern("printf");
+  SqRef fmt_str = sq_ref_for_symbol(parser.str_print_fmt);
+  SqRef ptr = sq_i_load(sq_type_long, obj);
+  SqRef len = sq_i_load(sq_type_word, sq_i_add(sq_type_long, obj, sq_const_int(8)));
+  sq_i_call4(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str}, sq_varargs_begin,
+             (SqCallArg){sq_type_word, len}, (SqCallArg){sq_type_long, ptr});
+}
+
+
 #if 0
 static void print_bool_impl(uint8_t val) {
   printf("%s\n", val ? "true" : "false");
@@ -655,24 +672,6 @@ static void print_double_impl(double val) {
 static void print_double(Operand* op) {
   ir_ref addr = ir_CONST_ADDR(print_double_impl);
   ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
-}
-
-static void print_str_impl(RuntimeStr str) {
-  printf("%.*s\n", (int)str.length, str.data);
-}
-
-static void print_str(Operand* op) {
-  // This is really !(AARCH64 || SYSV): 16 byte argument passed as pointer
-  // rather than two words.
-#if OS_WINDOWS
-  ir_ref addr = ir_CONST_ADDR(print_str_impl);
-  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
-#else
-  ir_ref addr = ir_CONST_ADDR(print_str_impl);
-  ir_ref data = ir_LOAD(IR_ADDR, op->ref);
-  ir_ref size = ir_LOAD(IR_I64, ir_ADD_OFFSET(op->ref, 8));
-  ir_CALL_2(IR_VOID, addr, data, size);
-#endif
 }
 
 static void print_range_impl(RuntimeRange range) {
@@ -843,7 +842,8 @@ static void enter_function(Sym* sym,
 
   Type ret_type = type_func_return_type(sym->type);
 
-  sq_func_start(linkage, type_to_sqtype(ret_type), cstr_copy(parser.arena, sym->name));
+  parser.cur_scope->func_item_ctx =
+      sq_func_start(linkage, type_to_sqtype(ret_type), cstr_copy(parser.arena, sym->name));
 
   uint32_t num_params = type_func_num_params(sym->type);
   Sym* param_syms[MAX_FUNC_PARAMS];
@@ -877,6 +877,7 @@ static void leave_function(void) {
   }
 
   sq_func_end();
+  parser.cur_scope->func_item_ctx = (SqItemCtx){0};
 
   bool is_nested = parser.num_scopes > 2;  // Module, parent function, current function.
   if (is_nested) {
@@ -2752,27 +2753,28 @@ static Operand parse_sizeof(bool can_assign, Type* expected) {
   return operand_null;
 }
 
-#if 0
-static ir_ref emit_string_obj(StrView str) {
-  // TODO: I think IR doesn't do much with data? So the str bytes can go into
-  // the intern table, and then the Str object probably needs a data segment
-  // that lives with the code segment that we shove all these into.
-  RuntimeStr* p = arena_push(parser.arena, sizeof(RuntimeStr) + str.size + 1, _Alignof(RuntimeStr));
-  uint8_t* strp = (uint8_t*)(((RuntimeStr*)p) + 1);
-  p->data = strp;
-  memcpy(strp, str.data, str.size);
-  p->length = str.size;
-  return ir_CONST_ADDR(p);
+static SqRef emit_string_obj(StrView str) {
+  sq_data_start(sq_linkage_default, "string_data");
+  for (uint32_t i = 0; i < str.size; ++i) {
+    sq_data_byte(str.data[i]);
+  }
+  sq_data_byte(0);
+  SqSymbol string_data = sq_data_end();
+
+  sq_data_start(sq_linkage_default, "string_obj");
+  sq_data_ref(string_data, 0);
+  sq_data_long(str.size);
+  SqSymbol string_obj = sq_data_end();
+
+  sq_itemctx_activate(parser.cur_scope->func_item_ctx);
+  return sq_ref_for_symbol(string_obj);
 }
-#endif
 
 static Operand parse_string(bool can_assign, Type* expected) {
-  return operand_null;
-#if 0
   StrView strview = get_strview_for_offsets(prev_offset(), cur_offset());
   StrView inside_quotes = {strview.data + 1, strview.size - 2};
   if (memchr(strview.data, '\\', strview.size) != NULL) {  // worthwhile?
-    // Mutates sourcse buffer!
+    // Mutates source buffer!
     uint32_t new_len = str_process_escapes((char*)inside_quotes.data, inside_quotes.size);
     if (new_len == 0) {
       error("Invalid string escape.");
@@ -2782,7 +2784,6 @@ static Operand parse_string(bool can_assign, Type* expected) {
   } else {
     return operand_rvalue_global_addr(type_str, emit_string_obj(inside_quotes));
   }
-#endif
 }
 
 static Operand parse_string_interpolate(bool can_assign, Type* expected) {
@@ -3546,15 +3547,16 @@ static void print_statement(void) {
   // If __repr__ exists for the type, call it, and then use print_str.
   Sym* sym = lookup_memfn(val.type, parser.static_str_repr);
   if (sym) {
+    ASSERT(false && "todo");
 #if 0
     ir_ref str = ir_CALL_1(IR_I32, ir_CONST_ADDR(sym->addr), addr_for_operand(&val));
     ir_ref addr = ir_CONST_ADDR(print_i32_impl);
     ir_CALL_1(IR_VOID, addr, str);
 #endif
   } else {
-#if 0
     if (type_eq(val.type, type_str)) {
       print_str(&val);
+#if 0
     } else if (type_eq(val.type, type_range)) {
       print_range(&val);
     } else if (type_eq(val.type, type_bool)) {
@@ -3563,9 +3565,8 @@ static void print_statement(void) {
       print_float(&val);
     } else if (type_eq(val.type, type_double)) {
       print_double(&val);
-    } else
 #endif
-    if (convert_operand(&val, type_i32)) {
+    } else if (convert_operand(&val, type_i32)) {
       print_i32(&val);
     } else {
       errorf("TODO: don't know how to print type %s.", type_as_str(val.type));
@@ -3999,9 +4000,13 @@ static void parse_impl(Arena* main_arena,
   }
   sq_init(&config);
 
-  sq_data_start(sq_linkage_default, "i32_fmt");
+  sq_data_start(sq_linkage_default, "i32_print_fmt");
   sq_data_string("%d\n\0");
   parser.i32_print_fmt = sq_data_end();
+
+  sq_data_start(sq_linkage_default, "str_print_fmt");
+  sq_data_string("%.*s\n\0");
+  parser.str_print_fmt = sq_data_end();
 
   enter_scope(/*is_module=*/true, /*is_function=*/false, NULL);
 
