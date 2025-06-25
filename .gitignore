@@ -11,3 +11,6 @@ tags
 third_party/tracy
 x.*
 z.bat
+test/*.s
+test/*.exe.dSYM/
+test/*.luv.exe
