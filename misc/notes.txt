@@ -346,7 +346,7 @@ given address, and from that, dynamically get a field
 when setting:
 - if field type changed: print warning, do nothing
 - if field removed: print warning, do nothing
-- if field 
+- if field
 
 ---
 
@@ -381,7 +381,7 @@ create additional links between ast nodes
 listener thoughts again, rambling from phone
 
 Send chunk of compiled x64 to linker/listener it deals with relinking, just
-keeping old version of everything at first and relink from scratch 
+keeping old version of everything at first and relink from scratch
 
 Still need to define what happens to old data. The Asan external tagging seems
 plausible
@@ -393,7 +393,7 @@ had to indirect through that. Basically smalltalk, but vtable is outside
 Alternatively, maybe a fully managed thing just with managed data changes is
 more sensible. Every root can be upgraded or downgraded. Size of obj is max of
 all fields that have been in it this session (so data doesn't get lost). This
-downgrades to release build better where you just drop the management 
+downgrades to release build better where you just drop the management
 
 Or could it all be integrated into the saved inputs so that when the struct
 changes the game gets replayed as if it was like that before?
@@ -403,7 +403,7 @@ changes the game gets replayed as if it was like that before?
 Various asset types, textures audio, code whatever
 
 Fields in struct could change what happens in Sim so there has to be some way to
-deal with that changing as it goes 
+deal with that changing as it goes
 
 If everything was a hash lookup, then failing would still need a zero or
 exceptions or something because you don't want to fail field lookups
@@ -440,7 +440,7 @@ though, hmm
 
 Functions tricky too? Trivially a large table of name to address to indirect
 through. But runtime linker can just keep a dict and then detours or add jmp
-sled at start of all functions in debug 
+sled at start of all functions in debug
 
 Might want a GC for unused functions? Or maybe who cares, just leak them during
 dev
@@ -517,5 +517,13 @@ implicit func scope looks wrong though:
   }
 
   somehow seem more reasonable that x is still in scope in python version
+
+--------------
+
+to make qbe into a plugged in back end:
+- luv60 => text .ssa and get all tests working on x64/aarch64 with regular asm/link
+- hack qbe to dybe and jit+run rather than emitting .s (still text .ssa input)
+- write object model, to replace dybe parse, then can jit directly
+
 
 # vim: set tw=80 fo=roqnjt:
