@@ -934,7 +934,8 @@ static void leave_function(void) {
   if (type_eq(ret_type, type_void)) {
     sq_i_ret_void();
   } else {
-    sq_i_ret(sq_i_load(type_to_sqtype(ret_type), parser.cur_scope->return_slot->ref));
+    LoadFunc func = load_by_type(ret_type);
+    sq_i_ret(func(sq_type_word, parser.cur_scope->return_slot->ref));
   }
 
   parser.cur_scope->func_sym->global = sq_func_end();
@@ -3941,7 +3942,8 @@ static LastStatementType return_statement(void) {
       errorf("Cannot convert type %s to expected return type %s.", type_as_str(op.type),
              type_as_str(func_ret));
     }
-    sq_i_storew(operand_to_sqref_imm(&op), parser.cur_scope->return_slot->ref);
+    StoreFunc func = store_by_type(op.type);
+    func(operand_to_sqref_imm(&op), parser.cur_scope->return_slot->ref);
     return LST_RETURN_VALUE;
   } else {
     consume(TOK_NEWLINE, "Expected newline after return in function with no return type.");
