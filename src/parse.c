@@ -1625,10 +1625,12 @@ static Operand parse_and(Operand left, bool can_assign, Type* expected) {
   SqBlock block_true = sq_block_declare();
   SqBlock block_done = sq_block_declare();
 
-  SqRef result = sq_const_int(0);
+  SqRef result = sq_i_alloc8(sq_const_int(type_size(type_bool)));
+  sq_i_storeb(sq_const_int(0), result);
 
   sq_i_jnz(operand_to_sqref_imm(&left), block_rval, block_done);
 
+  sq_block_start(block_rval);
   Operand right = parse_precedence(PREC_OR, &type_bool);
   if (!type_is_condition(right.type)) {
     errorf("Right-hand side of or cannot be type %s.", type_as_str(right.type));
@@ -1636,10 +1638,11 @@ static Operand parse_and(Operand left, bool can_assign, Type* expected) {
   sq_i_jnz(operand_to_sqref_imm(&right), block_true, block_done);
 
   sq_block_start(block_true);
-  sq_i_copy_into(result, sq_type_word, sq_const_int(1));
+  sq_i_storeb(sq_const_int(1), result);
 
   sq_block_start(block_done);
-  return operand_rvalue_imm(type_bool, result);
+
+  return operand_rvalue_imm(type_bool, sq_i_loadub(sq_type_word, result));
 }
 
 static void promote_small_integers(Operand* operand) {
