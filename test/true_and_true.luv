@@ -1,4 +1,3 @@
-# DISABLED
 # OUT: hi
 # OUT: after
 def int main():

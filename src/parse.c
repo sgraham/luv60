@@ -1620,25 +1620,26 @@ static Operand parse_and(Operand left, bool can_assign, Type* expected) {
   if (!type_is_condition(left.type)) {
     errorf("Left-hand side of or cannot be type %s.", type_as_str(left.type));
   }
-#if 0
-  ir_ref lcond = ir_IF(operand_to_irref_imm(&left));
-  ir_IF_FALSE(lcond);
-  ir_ref if_false = ir_END();
-  ir_IF_TRUE(lcond);
-#endif
+
+  SqBlock block_rval = sq_block_declare();
+  SqBlock block_true = sq_block_declare();
+  SqBlock block_done = sq_block_declare();
+
+  SqRef result = sq_const_int(0);
+
+  sq_i_jnz(operand_to_sqref_imm(&left), block_rval, block_done);
 
   Operand right = parse_precedence(PREC_OR, &type_bool);
   if (!type_is_condition(right.type)) {
     errorf("Right-hand side of or cannot be type %s.", type_as_str(right.type));
   }
-#if 0
-  ir_ref if_true = ir_END();
-  ir_ref rcond = operand_to_irref_imm(&right);
-  ir_MERGE_2(if_false, if_true);
-  ir_ref result = ir_PHI_2(IR_BOOL, ir_CONST_BOOL(false), rcond);
+  sq_i_jnz(operand_to_sqref_imm(&right), block_true, block_done);
+
+  sq_block_start(block_true);
+  sq_i_copy_into(result, sq_type_word, sq_const_int(1));
+
+  sq_block_start(block_done);
   return operand_rvalue_imm(type_bool, result);
-#endif
-  return operand_null;
 }
 
 static void promote_small_integers(Operand* operand) {
