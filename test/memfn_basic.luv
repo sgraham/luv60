@@ -1,4 +1,3 @@
-# RUN: {self} --main-rc
 # RET: 10
 struct Stuff:
     int a

@@ -1,4 +1,3 @@
-# RUN: {self} --main-rc
 # RET: 123
 def i64 func64():
     return 123i32

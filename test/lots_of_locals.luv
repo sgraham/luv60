@@ -1,4 +1,3 @@
-# RUN: {self} --main-rc
 # RET: 120
 def int stuff():
     int a = 1

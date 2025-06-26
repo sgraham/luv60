@@ -1,4 +1,3 @@
-# RUN: {self} --main-rc
 # RET: 22
 def int wee(int a, int b, int c, int d):
     int u = 1
