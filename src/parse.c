@@ -498,6 +498,57 @@ static SqType sqbasetype_from_type(Type type) {
   return sq_type_word;
 }
 
+typedef void (*StoreFunc)(SqRef, SqRef);
+
+static StoreFunc store_by_type(Type type) {
+  switch (type_size(type)) {
+    case 8:
+      return sq_i_storel;
+    case 4:
+      return sq_i_storew;
+    case 2:
+      return sq_i_storeh;
+    case 1:
+      return sq_i_storeb;
+    default:
+      errorf("invalid store size %zu", type_size(type));
+  }
+}
+
+typedef SqRef (*LoadFunc)(SqType, SqRef);
+
+static LoadFunc load_by_type(Type type) {
+  if (type_kind(type) == TYPE_BOOL) {
+    return sq_i_loadub;
+  } else if (type_is_unsigned(type)) {
+    switch (type_size(type)) {
+      case 8:
+        return sq_i_load;
+      case 4:
+        return sq_i_loaduw;
+      case 2:
+        return sq_i_loaduh;
+      case 1:
+        return sq_i_loadub;
+      default:
+        errorf("invalid unsigned load size %zu", type_size(type));
+    }
+  } else {
+    switch (type_size(type)) {
+      case 8:
+        return sq_i_load;
+      case 4:
+        return sq_i_loadsw;
+      case 2:
+        return sq_i_loadsh;
+      case 1:
+        return sq_i_loadsb;
+      default:
+        errorf("invalid signed load size %zu", type_size(type));
+    }
+  }
+}
+
 static SqRef operand_to_sqref_imm(Operand* op) {
   switch (op->kind) {
     case OPK_CONST: {
@@ -536,12 +587,14 @@ static SqRef operand_to_sqref_imm(Operand* op) {
       return op->ref;
     case OPK_REF_RVAL_LOCAL_ADDR_BOUND_FUNC:  // assume something else will load ref2
     case OPK_REF_LVAL_LOCAL_ADDR:
-    case OPK_REF_RVAL_LOCAL_ADDR:
+    case OPK_REF_RVAL_LOCAL_ADDR: {
       if (type_is_aggregate(op->type)) {
         // TODO: This seems questionable.
         return op->ref;
       }
-      return sq_i_load(sqbasetype_from_type(op->type), op->ref);
+      LoadFunc func = load_by_type(op->type);
+      return func(sqbasetype_from_type(op->type), op->ref);
+    }
     case OPK_REF_RVAL_GLOBAL_ADDR:
     case OPK_REF_LVAL_GLOBAL_ADDR:
       if (type_is_aggregate(op->type)) {
@@ -718,23 +771,6 @@ static void initialize_aggregate(ir_ref base_addr, Type type) {
 }
 #endif
 
-typedef void (*StoreFunc)(SqRef, SqRef);
-
-static StoreFunc store_by_size(size_t size) {
-  switch (size) {
-    case 8:
-      return sq_i_storel;
-    case 4:
-      return sq_i_storew;
-    case 2:
-      return sq_i_storeh;
-    case 1:
-      return sq_i_storeb;
-    default:
-      errorf("invalid store size %zu", size);
-  }
-}
-
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* initial_value) {
   Sym* new = sym_new(kind, name, type);
   // TODO: figure out str/range
@@ -757,7 +793,7 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
     }
   } else {
     new->ref = sq_i_alloc8(sq_const_int(type_size(type)));
-    StoreFunc store_func = store_by_size(type_size(type));
+    StoreFunc store_func = store_by_type(type);
     if (initial_value) {
       store_func(operand_to_sqref_imm(initial_value), new->ref);
     } else {
@@ -1882,6 +1918,7 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
       [TOK_STAR] = {sq_i_mul, "TODO %s %s"},
       [TOK_SLASH] = {sq_i_div, "TODO %s %s"},
       [TOK_PERCENT] = {sq_i_rem, "TODO %s %s"},
+      // XXX wouldn't this be in unary?
       //[TOK_TILDE] = {IR_NOT,  // TODO
       [TOK_PIPE] = {sq_i_or, "TODO %s %s"},
       [TOK_AMPERSAND] = {sq_i_and, "TODO %s %s"},
@@ -1925,11 +1962,8 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
 }
 
 static Operand parse_bool_literal(bool can_assign, Type* expected) {
-#if 0
   ASSERT(parser.cursor.prev_kind == TOK_FALSE || parser.cursor.prev_kind == TOK_TRUE);
   return operand_const(type_bool, (Val){.b = parser.cursor.prev_kind == TOK_FALSE ? 0 : 1});
-#endif
-  return operand_null;
 }
 
 #if 0
@@ -2932,11 +2966,13 @@ static Operand parse_unary(bool can_assign, Type* expected) {
   Operand expr = parse_precedence(PREC_UNARY, expected);
   if (op_kind == TOK_MINUS) {
     if (op_is_const(expr)) {
+      ASSERT(false && "todo");
       return operand_null;
 #if 0
       return operand_const(expr.type, eval_unary_op(op_kind, expr.type, expr.val));
 #endif
     } else {
+      ASSERT(false && "todo");
       return operand_null;
 #if 0
       return operand_rvalue_imm(expr.type,
@@ -2946,15 +2982,13 @@ static Operand parse_unary(bool can_assign, Type* expected) {
   } else if (op_kind == TOK_NOT) {
     // TODO: const eval
     if (type_is_condition(expr.type)) {
-      return operand_null;
-#if 0
-      return operand_rvalue_imm(
-          expr.type, ir_NOT(type_to_ir_type(expr.type), operand_to_irref_imm(&expr)));
-#endif
+      return operand_rvalue_imm(expr.type, sq_i_ceqw(sqbasetype_from_type(expr.type),
+                                                     operand_to_sqref_imm(&expr), sq_const_int(0)));
     } else {
       errorf("Type %s cannot be used in a boolean not.", type_as_str(expr.type));
     }
   } else if (op_kind == TOK_AMPERSAND) {
+    ASSERT(false && "todo");
     return operand_null;
 #if 0
     return operand_rvalue_imm(type_ptr(expr.type), ir_VADDR(expr.ref));
@@ -3449,7 +3483,6 @@ static void expect_end_of_statement(const char* after_what) {
   }
 }
 
-#if 0
 static Operand if_statement_cond_helper(void) {
   Operand cond = parse_expression(NULL);
   if (!type_is_condition(cond.type)) {
@@ -3460,16 +3493,29 @@ static Operand if_statement_cond_helper(void) {
   consume(TOK_INDENT, "Expect indent to start if/elif.");
   return cond;
 }
-#endif
 
 static void if_statement(void) {
-#if 0
   do {
     Operand opcond = if_statement_cond_helper();
     ASSERT(type_kind(opcond.type) == TYPE_BOOL && "todo, other types");
-    ir_ref cond = ir_IF(operand_to_irref_imm(&opcond));
-    ir_IF_TRUE(cond);
+
+    SqBlock true_block = sq_block_declare();
+    SqBlock false_block = sq_block_declare();
+    SqBlock after_block = sq_block_declare();
+
+    sq_i_jnz(operand_to_sqref_imm(&opcond), true_block, false_block);
+
+    sq_block_start(true_block);
     LastStatementType lst = parse_block();
+    (void)lst;
+    sq_i_jmp(after_block);
+
+    sq_block_start(false_block);
+
+    sq_block_start(after_block);
+
+#if 0
+    ir_IF_TRUE(cond);
     ir_ref iftrue = ir_END();
     if (lst == LST_RETURN_VALUE || lst == LST_RETURN_VOID) {
       ir_IF_FALSE(cond);
@@ -3498,8 +3544,8 @@ static void if_statement(void) {
         break;
       }
     }
-  } while (match(TOK_ELIF));
 #endif
+  } while (match(TOK_ELIF));
 }
 
 static void for_statement(void) {
