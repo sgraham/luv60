@@ -174,6 +174,8 @@ typedef struct Parser {
 
   SqSymbol i32_print_fmt;
   SqSymbol str_print_fmt;
+  SqSymbol range2_print_fmt;
+  SqSymbol range3_print_fmt;
   SqSymbol str_true;
   SqSymbol str_false;
 
@@ -720,6 +722,9 @@ static void print_str(Operand* op) {
              (SqCallArg){sq_type_word, len}, (SqCallArg){sq_type_long, ptr});
 }
 
+static void print_range(Operand* op) {
+  abort();
+}
 
 #if 0
 static void print_float_impl(float val) {
@@ -748,10 +753,6 @@ static void print_range_impl(RuntimeRange range) {
   }
 }
 
-static void print_range(Operand* op) {
-  ir_ref addr = ir_CONST_ADDR(print_range_impl);
-  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
-}
 #endif
 
 #if 0
@@ -3260,7 +3261,6 @@ static Operand parse_variable(bool can_assign, Type* expected) {
         if (parser.cur_scope->is_function) {
           ASSERT(!parser.cur_scope->is_module);
 
-          //ASSERT(false && "assign to global from func");
 #if 0
           // Assigning to a global from a function.
           ASSERT(sym);
@@ -3636,9 +3636,9 @@ static void print_statement(void) {
       print_str(&val);
     } else if (type_eq(val.type, type_bool)) {
       print_bool(&val);
-#if 0
     } else if (type_eq(val.type, type_range)) {
       print_range(&val);
+#if 0
     } else if (type_eq(val.type, type_float)) {
       print_float(&val);
     } else if (type_eq(val.type, type_double)) {
@@ -4097,6 +4097,14 @@ static void parse_impl(Arena* main_arena,
   sq_data_start(sq_linkage_default, "str_print_fmt");
   sq_data_string("%.*s\n\0");
   parser.str_print_fmt = sq_data_end();
+
+  sq_data_start(sq_linkage_default, "range2_print_fmt");
+  sq_data_string("range(%lld, %lld)\n\0");
+  parser.range2_print_fmt = sq_data_end();
+
+  sq_data_start(sq_linkage_default, "range3_print_fmt");
+  sq_data_string("range(%lld, %lld, %lld)\n\0");
+  parser.range3_print_fmt = sq_data_end();
 
   sq_data_start(sq_linkage_default, "str_true");
   sq_data_string("true\0");
