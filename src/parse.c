@@ -386,12 +386,12 @@ static Operand operand_sym(Type type, LqSymbol lqsym) {
 static Operand operand_lvalue_local(Type type, SqRef ref) {
   return (Operand){.kind = OPK_REF_LVAL_LOCAL_ADDR, .type = type, .ref = ref};
 }
-#if 0
 
-static Operand operand_rvalue_local_addr(Type type, ir_ref ref) {
+static Operand operand_rvalue_local_addr(Type type, SqRef ref) {
   return (Operand){.kind = OPK_REF_RVAL_LOCAL_ADDR, .type = type, .ref = ref};
 }
 
+#if 0
 static Operand operand_bound_local_function(Type type, ir_ref ref, ir_ref ref2) {
   return (Operand){
       .kind = OPK_REF_RVAL_LOCAL_ADDR_BOUND_FUNC, .type = type, .ref = ref, .ref2 = ref2};
@@ -583,16 +583,13 @@ static SqRef operand_to_sqref_imm(Operand* op) {
           return ir_CONST_U16(op->val.u16);
         case TYPE_I16:
           return ir_CONST_I16(op->val.i16);
-        case TYPE_U32:
-          return ir_CONST_U32(op->val.u32);
 #endif
         case TYPE_I32:
+        case TYPE_U32:
+        case TYPE_I64:
+        case TYPE_U64:
           return sq_const_int(op->val.i32);
 #if 0
-        case TYPE_U64:
-          return ir_CONST_U64(op->val.u64);
-        case TYPE_I64:
-          return ir_CONST_I64(op->val.i64);
         case TYPE_FLOAT:
           return ir_CONST_FLOAT(op->val.f);
         case TYPE_DOUBLE:
@@ -743,7 +740,32 @@ static void print_str(Operand* op) {
 }
 
 static void print_range(Operand* op) {
-  abort();
+  SqRef obj = operand_to_sqref_imm(op);
+  SqRef print_func = sq_ref_extern("printf");
+
+  SqBlock block_2 = sq_block_declare();
+  SqBlock block_3 = sq_block_declare();
+  SqBlock block_after = sq_block_declare();
+
+  SqRef start = sq_i_load(sq_type_long, obj);
+  SqRef stop = sq_i_load(sq_type_long, sq_i_add(sq_type_long, obj, sq_const_int(8)));
+  SqRef step = sq_i_load(sq_type_long, sq_i_add(sq_type_long, obj, sq_const_int(16)));
+  SqRef cmp = sq_i_ceql(sq_type_long, step, sq_const_int(1));
+  sq_i_jnz(cmp, block_2, block_3);
+
+  sq_block_start(block_2);
+  SqRef fmt_str_2 = sq_ref_for_symbol(parser.range2_print_fmt);
+  sq_i_call4(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str_2}, sq_varargs_begin,
+             (SqCallArg){sq_type_long, start}, (SqCallArg){sq_type_long, stop});
+  sq_i_jmp(block_after);
+
+  sq_block_start(block_3);
+  SqRef fmt_str_3 = sq_ref_for_symbol(parser.range3_print_fmt);
+  sq_i_call5(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str_3}, sq_varargs_begin,
+             (SqCallArg){sq_type_long, start}, (SqCallArg){sq_type_long, stop},
+             (SqCallArg){sq_type_long, step});
+
+  sq_block_start(block_after);
 }
 
 #if 0
@@ -2815,29 +2837,26 @@ static Operand parse_range(bool can_assign, Type* expected) {
   }
   consume(TOK_RPAREN, "Expect ')' after range.");
 
-  return operand_null;
-#if 0
-  ir_ref range = ir_ALLOCA(ir_CONST_U32(sizeof(RuntimeRange)));
-  ir_ref astart = range;
-  ir_ref astop = ir_ADD_A(range, ir_CONST_ADDR(sizeof(int64_t)));
-  ir_ref astep = ir_ADD_A(range, ir_CONST_ADDR(2 * sizeof(int64_t)));
+  SqRef range = sq_i_alloc8(sq_const_int(24));
+  SqRef astart = range;
+  SqRef astop = sq_i_add(sq_type_long, range, sq_const_int(8));
+  SqRef astep = sq_i_add(sq_type_long, range, sq_const_int(16));
   if (type_is_none(second.type)) {
     // range(0, first, 1)
-    ir_STORE(astart, ir_CONST_I64(0));
-    ir_STORE(astop, operand_to_irref_imm(&first));
-    ir_STORE(astep, ir_CONST_I64(1));
+    sq_i_storel(sq_const_int(0), astart);
+    sq_i_storel(operand_to_sqref_imm(&first), astop);
+    sq_i_storel(sq_const_int(1), astep);
   } else {
     // range(first, second, third || 1)
-    ir_STORE(astart, operand_to_irref_imm(&first));
-    ir_STORE(astop, operand_to_irref_imm(&second));
+    sq_i_storel(operand_to_sqref_imm(&first), astart);
+    sq_i_storel(operand_to_sqref_imm(&second), astop);
     if (type_is_none(third.type)) {
-      ir_STORE(astep, ir_CONST_I64(1));
+      sq_i_storel(sq_const_int(1), astep);
     } else {
-      ir_STORE(astep, operand_to_irref_imm(&third));
+      sq_i_storel(operand_to_sqref_imm(&third), astep);
     }
   }
   return operand_rvalue_local_addr(type_range, range);
-#endif
 }
 
 static Operand parse_sizeof(bool can_assign, Type* expected) {
@@ -4130,27 +4149,33 @@ static void parse_impl(Arena* main_arena,
   sq_init(&config);
 
   sq_data_start(sq_linkage_default, "i32_print_fmt");
-  sq_data_string("%d\n\0");
+  sq_data_string("%d\n");
+  sq_data_byte(0);
   parser.i32_print_fmt = sq_data_end();
 
   sq_data_start(sq_linkage_default, "str_print_fmt");
-  sq_data_string("%.*s\n\0");
+  sq_data_string("%.*s\n");
+  sq_data_byte(0);
   parser.str_print_fmt = sq_data_end();
 
   sq_data_start(sq_linkage_default, "range2_print_fmt");
-  sq_data_string("range(%lld, %lld)\n\0");
+  sq_data_string("range(%lld, %lld)\n");
+  sq_data_byte(0);
   parser.range2_print_fmt = sq_data_end();
 
   sq_data_start(sq_linkage_default, "range3_print_fmt");
-  sq_data_string("range(%lld, %lld, %lld)\n\0");
+  sq_data_string("range(%lld, %lld, %lld)\n");
+  sq_data_byte(0);
   parser.range3_print_fmt = sq_data_end();
 
   sq_data_start(sq_linkage_default, "str_true");
-  sq_data_string("true\0");
+  sq_data_string("true");
+  sq_data_byte(0);
   parser.str_true = sq_data_end();
 
   sq_data_start(sq_linkage_default, "str_false");
-  sq_data_string("false\0");
+  sq_data_string("false");
+  sq_data_byte(0);
   parser.str_false = sq_data_end();
 
   sq_type_struct_start("str", 8);

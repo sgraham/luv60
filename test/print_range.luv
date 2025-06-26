@@ -1,4 +1,3 @@
-# DISABLED
 # OUT: range(0, 5)
 # OUT: range(5, 10)
 # OUT: range(5, 10, 2)
