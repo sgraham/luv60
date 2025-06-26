@@ -165,13 +165,7 @@ typedef struct Parser {
   int num_scopes;
   Scope* cur_scope;
 
-  void* main_func_entry;
   int verbose;
-  bool ir_only;
-  int opt_level;
-#if 0
-  ir_code_buffer code_buffer;
-#endif
 
   Str static_str_main;
   Str static_str_repr;
@@ -4074,7 +4068,6 @@ static void parse_impl(Arena* main_arena,
   parser.indent_levels[0] = 0;
   parser.num_indents = 1;
   parser.num_buffered_tokens = 0;
-  parser.main_func_entry = NULL;
   parser.verbose = verbose;
   parser.static_str_main = str_intern_len("main", 4);
   parser.static_str_repr = str_intern_len("__repr__", 8);
@@ -4120,12 +4113,6 @@ static void parse_impl(Arena* main_arena,
   }
 
   leave_scope();
-
-#if ENABLE_CODE_GEN
-#if 0
-  ir_mem_protect(parser.code_buffer.start, code_buffer_size);
-#endif
-#endif
 
   sq_shutdown();
 }
