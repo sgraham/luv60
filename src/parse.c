@@ -62,16 +62,8 @@ typedef struct Sym {
 #define MAX_SCOPES 32
 #define MAX_FUNC_PARAMS 32
 #define MAX_STRUCT_FIELDS 64
-#define MAX_PENDING_CONDS 32
 #define MAX_UPVALS 32
 #define MAX_PACKAGE_DEPTH 16
-
-typedef struct PendingCond {
-#if 0
-  ir_ref iftrue;
-#endif
-  int xxx;
-} PendingCond;
 
 typedef enum ScopeResult {
   SCOPE_RESULT_GLOBAL,
@@ -116,8 +108,6 @@ typedef struct Scope {
   Sym* return_slot;
   SqBlock return_block;
   SqItemCtx func_item_ctx;
-  PendingCond pending_conds[MAX_PENDING_CONDS];
-  int num_pending_conds;
 #if 0
   ir_ctx ctx;
 #endif
@@ -3578,40 +3568,20 @@ static void if_statement(void) {
     }
 
     sq_block_start(false_block);
-
-    sq_block_start(after_block);
-
-#if 0
-    ir_IF_TRUE(cond);
-    ir_ref iftrue = ir_END();
-    if (lst == LST_RETURN_VALUE || lst == LST_RETURN_VOID) {
-      ir_IF_FALSE(cond);
-      // Push that we're in the FALSE block, with END of iftrue
-      // When we get to the end of the outer block, END this false
-      // and the MERGE iftrue, iffalse
-      ASSERT(parser.cur_scope->num_pending_conds < COUNTOFI(parser.cur_scope->pending_conds));
-      parser.cur_scope->pending_conds[parser.cur_scope->num_pending_conds++] =
-          (PendingCond){iftrue};
+    if (match(TOK_ELSE)) {
+      consume(TOK_COLON, "Expect ':' to start else.");
+      consume(TOK_NEWLINE, "Expect newline after ':' to start else.");
+      consume(TOK_INDENT, "Expect indent to start else.");
+      LastStatementType lst = parse_block();
+      if (lst != LST_NON_RETURN) {
+        sq_i_jmp(parser.cur_scope->return_block);
+      }
+      sq_block_start(after_block);
+      break;  // No more elifs.
     } else {
-      bool no_more = false;
-      ir_IF_FALSE(cond);
-      if (match(TOK_ELSE)) {
-        consume(TOK_COLON, "Expect ':' to start else.");
-        consume(TOK_NEWLINE, "Expect newline after ':' to start else.");
-        consume(TOK_INDENT, "Expect indent to start else.");
-        LastStatementType lst = parse_block();
-        if (lst == LST_RETURN_VALUE || lst == LST_RETURN_VOID) {
-          ASSERT(false && "todo: return in else");
-        }
-        no_more = true;
-      }
-      ir_ref otherwise = ir_END();
-      ir_MERGE_2(iftrue, otherwise);
-      if (no_more) {
-        break;
-      }
+      sq_block_start(after_block);
     }
-#endif
+
   } while (match(TOK_ELIF));
 }
 
@@ -3716,14 +3686,6 @@ static LastStatementType parse_block(void) {
   while (!check(TOK_DEDENT)) {
     lst = parse_statement(/*toplevel=*/false);
     skip_newlines();
-  }
-
-  if (parser.cur_scope->num_pending_conds) {
-#if 0
-    PendingCond cond = parser.cur_scope->pending_conds[--parser.cur_scope->num_pending_conds];
-    ir_ref other = ir_END();
-    ir_MERGE_2(cond.iftrue, other);
-#endif
   }
 
   consume(TOK_DEDENT, "Expect end of block.");
