@@ -182,6 +182,8 @@ typedef struct Parser {
   SqSymbol str_print_fmt;
   SqSymbol str_true;
   SqSymbol str_false;
+
+  int str_counter;
 } Parser;
 
 static Parser parser;
@@ -2805,14 +2807,18 @@ static Operand parse_sizeof(bool can_assign, Type* expected) {
 }
 
 static SqRef emit_string_obj(StrView str) {
-  sq_data_start(sq_linkage_default, NULL);
+  ++parser.str_counter;
+
+  sq_data_start(sq_linkage_default,
+                cstr_copy(parser.arena, str_internf("strdat_%d", parser.str_counter)));
   for (uint32_t i = 0; i < str.size; ++i) {
     sq_data_byte(str.data[i]);
   }
   sq_data_byte(0);
   SqSymbol string_data = sq_data_end();
 
-  sq_data_start(sq_linkage_default, NULL);
+  sq_data_start(sq_linkage_default,
+                cstr_copy(parser.arena, str_internf("strobj_%d", parser.str_counter)));
   sq_data_ref(string_data, 0);
   sq_data_long(str.size);
   SqSymbol string_obj = sq_data_end();
@@ -4074,6 +4080,7 @@ static void parse_impl(Arena* main_arena,
   parser.static_str_repr = str_intern_len("__repr__", 8);
   parser.static_str_ret = str_intern_len("$ret", 4);
   parser.static_str_up = str_intern_len("$up", 3);
+  parser.str_counter = 0;
 
   SqConfiguration config = SQ_CONFIGURATION_DEFAULT;
   config.output = out_file;
