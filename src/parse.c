@@ -179,6 +179,9 @@ typedef struct Parser {
   SqSymbol str_true;
   SqSymbol str_false;
 
+  SqType sq_type_str;
+  SqType sq_type_range;
+
   int str_counter;
 } Parser;
 
@@ -327,8 +330,15 @@ static Operand parse_expression(Type* expected);
 static LastStatementType parse_block(void);
 
 static SqType type_to_sqtype(Type type) {
+  if (type_kind(type) == TYPE_STR) {
+    return parser.sq_type_str;
+  }
+  if (type_kind(type) == TYPE_RANGE) {
+    return parser.sq_type_range;
+  }
   if (type_is_aggregate(type)) {
-    return sq_type_long;
+    ASSERT(false && "todo; aggregate");
+    return sq_type_void;
   }
   switch (type_kind(type)) {
     case TYPE_VOID:
@@ -499,7 +509,17 @@ static SqType sqbasetype_from_type(Type type) {
 
 typedef void (*StoreFunc)(SqRef, SqRef);
 
+static void do_memcpy(SqRef from, SqRef into) {
+  SqRef memcpy_func = sq_ref_extern("memcpy");
+  // TODO 16 for str hardcoded!!!
+  sq_i_call3(sq_type_void, memcpy_func, (SqCallArg){sq_type_long, into},
+             (SqCallArg){sq_type_long, from}, (SqCallArg){sq_type_long, sq_const_int(16)});
+}
+
 static StoreFunc store_by_type(Type type) {
+  if (type_is_aggregate(type)) {
+    return do_memcpy;
+  }
   switch (type_size(type)) {
     case 8:
       return sq_i_storel;
@@ -771,8 +791,17 @@ static void initialize_aggregate(ir_ref base_addr, Type type) {
 
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* initial_value) {
   Sym* new = sym_new(kind, name, type);
-  // TODO: figure out str/range
-  if (type_is_aggregate(type) && type_kind(type) != TYPE_STR && type_kind(type) != TYPE_RANGE) {
+  if (type_kind(type) == TYPE_STR) {
+    new->ref = sq_i_alloc8(sq_const_int(type_size(type)));
+    if (initial_value) {
+      ASSERT(false && "initial value for alloc str");
+    } else {
+      sq_i_storel(sq_const_int(0), new->ref);
+      sq_i_storel(sq_const_int(0), sq_i_add(sq_type_long, new->ref, sq_const_int(8)));
+    }
+  } else if (type_kind(type) == TYPE_RANGE) {
+    ASSERT(false && "local alloc range");
+  } else if (type_is_aggregate(type)) {
     if (initial_value) {
       if (!type_eq(initial_value->type, type)) {
         errorf("Cannot initialize aggregate type %s with type %s.",
@@ -786,7 +815,7 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
     } else {
       uint32_t size = type_size(type);
       new->ref = sq_i_alloc8(sq_const_int(size));
-      ASSERT(false && "todo");
+      ASSERT(false && "todo initialize aggregate");
       //initialize_aggregate(new->ref, type);
     }
   } else {
@@ -935,8 +964,12 @@ static void leave_function(void) {
   if (type_eq(ret_type, type_void)) {
     sq_i_ret_void();
   } else {
-    LoadFunc func = load_by_type(ret_type);
-    sq_i_ret(func(sq_type_word, parser.cur_scope->return_slot->ref));
+    if (type_is_aggregate(ret_type)) {
+      sq_i_ret(parser.cur_scope->return_slot->ref);
+    } else {
+      LoadFunc func = load_by_type(ret_type);
+      sq_i_ret(func(sq_type_word, parser.cur_scope->return_slot->ref));
+    }
   }
 
   parser.cur_scope->func_sym->global = sq_func_end();
@@ -1188,7 +1221,7 @@ static bool is_convertible(Operand* operand, Type dest) {
     return true;
   } else if (type_kind(dest) == TYPE_VOID) {
     return true;
-  } else if (type_is_arithmetic(dest) && type_is_arithmetic(src)){
+  } else if (type_is_arithmetic(dest) && type_is_arithmetic(src)) {
     // TODO: This would make sense, but have to have small things work
     // automatically somehow, e.g.
     //   u64 u = 123
@@ -4119,6 +4152,17 @@ static void parse_impl(Arena* main_arena,
   sq_data_start(sq_linkage_default, "str_false");
   sq_data_string("false\0");
   parser.str_false = sq_data_end();
+
+  sq_type_struct_start("str", 8);
+  sq_type_add_field(sq_type_long); // data
+  sq_type_add_field(sq_type_long); // len
+  parser.sq_type_str = sq_type_struct_end();
+
+  sq_type_struct_start("range", 8);
+  sq_type_add_field(sq_type_long); // start
+  sq_type_add_field(sq_type_long); // stop
+  sq_type_add_field(sq_type_long); // step
+  parser.sq_type_range = sq_type_struct_end();
 
   enter_scope(/*is_module=*/true, /*is_function=*/false, NULL);
 
