@@ -607,10 +607,8 @@ static SqRef operand_to_sqref_imm(Operand* op) {
         // TODO: This seems questionable. see test/print.luv
         return op->ref;
       }
-      // TODO: size
-      //return ir_LOAD(type_to_ir_type(op->type), op->ref);
-      ASSERT(false && "todo");
-      error("opkind2");
+      LoadFunc func = load_by_type(op->type);
+      return func(sqbasetype_from_type(op->type), op->ref);
     default:
       error("internal error: unhandled OpKind");
   }
@@ -843,48 +841,49 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
   return new;
 }
 
-#if 0
 static Sym* make_global(SymKind kind, Str name, Type type, Val initial_value) {
   Sym* new = sym_new(kind, name, type);
-  void* addr = arena_push(parser.arena, type_size(type), type_align(type));
+  sq_data_start(sq_linkage_default, cstr_copy(parser.arena, name));
   switch (type_kind(type)) {
     case TYPE_BOOL:
-      *(bool*)addr = initial_value.b;
+      sq_data_byte((uint8_t)initial_value.b);
       break;
     case TYPE_U8:
-      *(uint8_t*)addr = initial_value.u8;
+      sq_data_byte(initial_value.u8);
       break;
     case TYPE_I8:
-      *(int8_t*)addr = initial_value.i8;
+      sq_data_byte((uint8_t)initial_value.i8);
       break;
     case TYPE_U16:
-      *(uint16_t*)addr = initial_value.u16;
+      sq_data_half(initial_value.u16);
       break;
     case TYPE_I16:
-      *(int16_t*)addr = initial_value.i16;
+      sq_data_half((uint16_t)initial_value.i16);
       break;
     case TYPE_U32:
-      *(uint32_t*)addr = initial_value.u32;
+      sq_data_word(initial_value.u32);
       break;
     case TYPE_I32:
-      *(int32_t*)addr = initial_value.i32;
+      sq_data_word((uint32_t)initial_value.i32);
       break;
     case TYPE_U64:
-      *(uint64_t*)addr = initial_value.u64;
+      sq_data_long(initial_value.u64);
       break;
     case TYPE_I64:
-      *(int64_t*)addr = initial_value.i64;
+      sq_data_long((uint64_t)initial_value.i64);
       break;
     default:
       error("internal error: unexpected global const init.");
   }
-#if 0
-  new->addr = addr;
-#endif
+  new->global = sq_data_end();
   new->scope_decl = SSD_DECLARED_GLOBAL;
+
+  if (parser.cur_scope->is_function) {
+    sq_itemctx_activate(parser.cur_scope->func_item_ctx);
+  }
+
   return new;
 }
-#endif
 
 static Sym* make_param(Str name, Type type, int index) {
   Sym* new = sym_new(SYM_VAR, name, type);
@@ -3341,18 +3340,17 @@ static Operand parse_variable(bool can_assign, Type* expected) {
           ASSERT(!parser.cur_scope->is_function);
           ASSERT(eq_kind == TOK_EQ);
           if (scope_result == SCOPE_RESULT_UNDEFINED) {
-            // Global variable declaration without a type. TODO: need to be more
-            // careful about const eval vs in-function eval as this can easily
-            // crash if it starts to emit ir_INSTRs on the RHS.
+            // Global variable declaration without a type.
             Operand op = const_expression();
             if (!op_is_const(op)) {
               error("Global initializers must be constants.");
             }
-            ASSERT(false && "todo");
-#if 0
             make_global(SYM_VAR, target, op.type, op.val);
-#endif
             return operand_null;
+#if 0
+            Sym* new_global = make_global(SYM_VAR, target, op.type, op.val);
+            return operand_lvalue_global_addr(op.type, sq_ref_for_symbol(new_global->global));
+#endif
           } else {
             ASSERT(scope_result == SCOPE_RESULT_GLOBAL);
             error("Cannot re-initialize an existing global.");
