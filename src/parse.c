@@ -4084,6 +4084,7 @@ static void parse_impl(Arena* main_arena,
   config.output_function = sqbe_callback_output_function;
   if (verbose) {
     config.debug_flags = "P";
+    // config.debug_flags = "PMNCFAILSRT";
   }
   sq_init(&config);
 
