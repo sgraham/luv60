@@ -3988,6 +3988,15 @@ static LastStatementType parse_statement(bool toplevel) {
   return lst;
 }
 
+static int sqbe_callback_output_function(const char* fmt, va_list ap) {
+  const char* prefix = "SQBE INTERNAL ERROR: ";
+  size_t n = 1 + vsnprintf(NULL, 0, fmt, ap) + strlen(prefix);
+  char* str = malloc(n);  // just a simple malloc because we're going to base_exit() momentarily.
+  strcpy(str, prefix);
+  vsnprintf(str + strlen(prefix), n, fmt, ap);
+  error(str);
+}
+
 static void parse_impl(Arena* main_arena,
                        Arena* temp_arena,
                        const char* filename,
@@ -4018,6 +4027,7 @@ static void parse_impl(Arena* main_arena,
 
   SqConfiguration config = SQ_CONFIGURATION_DEFAULT;
   config.output = out_file;
+  config.output_function = sqbe_callback_output_function;
   if (verbose) {
     config.debug_flags = "P";
   }
