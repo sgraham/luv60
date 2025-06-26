@@ -491,6 +491,13 @@ NORETURN static void errorf_offset(uint32_t offset, const char* fmt, ...) {
   error_offset(offset, str);
 }
 
+static SqType sqbasetype_from_type(Type type) {
+  if (type_size(type) == 8) {
+    return sq_type_long;
+  }
+  return sq_type_word;
+}
+
 static SqRef operand_to_sqref_imm(Operand* op) {
   switch (op->kind) {
     case OPK_CONST: {
@@ -534,13 +541,14 @@ static SqRef operand_to_sqref_imm(Operand* op) {
         // TODO: This seems questionable.
         return op->ref;
       }
-      return sq_i_load(sq_type_word, op->ref); // TODO: SIZE!
+      return sq_i_load(sqbasetype_from_type(op->type), op->ref);
     case OPK_REF_RVAL_GLOBAL_ADDR:
     case OPK_REF_LVAL_GLOBAL_ADDR:
       if (type_is_aggregate(op->type)) {
         // TODO: This seems questionable. see test/print.luv
         return op->ref;
       }
+      // TODO: size
       //return ir_LOAD(type_to_ir_type(op->type), op->ref);
       ASSERT(false && "todo");
       error("opkind2");
@@ -710,6 +718,23 @@ static void initialize_aggregate(ir_ref base_addr, Type type) {
 }
 #endif
 
+typedef void (*StoreFunc)(SqRef, SqRef);
+
+static StoreFunc store_by_size(size_t size) {
+  switch (size) {
+    case 8:
+      return sq_i_storel;
+    case 4:
+      return sq_i_storew;
+    case 2:
+      return sq_i_storeh;
+    case 1:
+      return sq_i_storeb;
+    default:
+      errorf("invalid store size %zu", size);
+  }
+}
+
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* initial_value) {
   Sym* new = sym_new(kind, name, type);
   // TODO: figure out str/range
@@ -732,12 +757,11 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
     }
   } else {
     new->ref = sq_i_alloc8(sq_const_int(type_size(type)));
+    StoreFunc store_func = store_by_size(type_size(type));
     if (initial_value) {
-      // TODO: size
-      sq_i_storew(operand_to_sqref_imm(initial_value), new->ref);
+      store_func(operand_to_sqref_imm(initial_value), new->ref);
     } else {
-      // TODO: size
-      sq_i_storew(sq_const_int(0), new->ref);
+      store_func(sq_const_int(0), new->ref);
     }
   }
   new->scope_decl = SSD_DECLARED_LOCAL;
@@ -1774,8 +1798,13 @@ static Val eval_binary_op(TokenKind op, Type type, Val left, Val right) {
   }
 }
 
-#if 0
-static Operand resolve_binary_op(TokenKind op, Operand left, Operand right, uint32_t loc) {
+typedef SqRef (*BinOpFunc)(SqType, SqRef, SqRef);
+
+static Operand resolve_binary_op(TokenKind op,
+                                 BinOpFunc func,
+                                 Operand left,
+                                 Operand right,
+                                 uint32_t loc) {
   ASSERT(type_eq(left.type, right.type));
   // It didn't really seem worth doing constant eval, but it's needed for array
   // sizes in particular, so we do some constant propagation through is_const
@@ -1783,22 +1812,14 @@ static Operand resolve_binary_op(TokenKind op, Operand left, Operand right, uint
   if (op_is_const(left) && op_is_const(right)) {
     return operand_const(left.type, eval_binary_op(op, left.type, left.val, right.val));
   } else {
-    ASSERT(false && "sq_something");
-#if 0
-    ir_type irt = type_to_ir_type(left.type);
-    ir_ref result =
-        ir_BINARY_OP(op, irt, operand_to_irref_imm(&left), operand_to_irref_imm(&right));
+    SqRef result = func(sqbasetype_from_type(left.type), operand_to_sqref_imm(&left),
+                        operand_to_sqref_imm(&right));
     return operand_rvalue_imm(left.type, result);
-#endif
-    return operand_null;
   }
 }
-#endif
-
-typedef SqRef (*BinOpCmpFunc)(SqType, SqRef, SqRef);
 
 static Operand resolve_cmp_op(TokenKind op,
-                              BinOpCmpFunc func,
+                              BinOpFunc func,
                               Operand left,
                               Operand right,
                               uint32_t loc) {
@@ -1806,23 +1827,26 @@ static Operand resolve_cmp_op(TokenKind op,
   if (op_is_const(left) && op_is_const(right)) {
     return operand_const(type_bool, eval_binary_op(op, left.type, left.val, right.val));
   } else  {
-    // TODO: size_class is wrong
-    SqRef result = func(sq_type_word, operand_to_sqref_imm(&left), operand_to_sqref_imm(&right));
+    SqRef result = func(sqbasetype_from_type(left.type), operand_to_sqref_imm(&left),
+                        operand_to_sqref_imm(&right));
     return operand_rvalue_imm(type_bool, result);
   }
 }
 
-#if 0
 static Operand resolve_binary_arithmetic_op(TokenKind op,
+                                            BinOpFunc func,
                                             Operand left,
                                             Operand right,
                                             uint32_t loc) {
   unify_arithmetic_operands(&left, &right);
-  return resolve_binary_op(op, left, right, loc);
+  return resolve_binary_op(op, func, left, right, loc);
 }
-#endif
 
-static Operand resolve_binary_cmp_op(TokenKind op, BinOpCmpFunc func, Operand left, Operand right, uint32_t loc) {
+static Operand resolve_binary_cmp_op(TokenKind op,
+                                     BinOpFunc func,
+                                     Operand left,
+                                     Operand right,
+                                     uint32_t loc) {
   unify_arithmetic_operands(&left, &right);
   return resolve_cmp_op(op, func, left, right, loc);
 }
@@ -1837,8 +1861,8 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
   Operand rhs = parse_precedence(rule->prec_for_infix + 1, expected);
 
   typedef struct OpPair {
-    BinOpCmpFunc sign;
-    BinOpCmpFunc unsign;
+    BinOpFunc sign;
+    BinOpFunc unsign;
   } OpPair;
   static OpPair tok_to_cmp_op[NUM_TOKEN_KINDS] = {
       [TOK_EQEQ] = {sq_i_ceqw, sq_i_ceqw},
@@ -1848,25 +1872,23 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
       [TOK_GEQ] = {sq_i_csgew, sq_i_cugew},
       [TOK_GT] = {sq_i_csgtw, sq_i_cugtw},
   };
-#if 0
   typedef struct IrOpAndErr {
-    ir_op op;
+    BinOpFunc func;
     const char* err_msg;
   } IrOpAndErr;
   static IrOpAndErr tok_to_bin_op[NUM_TOKEN_KINDS] = {
-      [TOK_PLUS] = {IR_ADD, "Cannot add %s to %s"},
-      [TOK_MINUS] = {IR_SUB, "TODO %s %s"},
-      [TOK_STAR] = {IR_MUL, "TODO %s %s"},
-      [TOK_SLASH] = {IR_DIV, "TODO %s %s"},
-      [TOK_PERCENT] = {IR_MOD, "TODO %s %s"},
+      [TOK_PLUS] = {sq_i_add, "Cannot add %s to %s"},
+      [TOK_MINUS] = {sq_i_sub, "TODO %s %s"},
+      [TOK_STAR] = {sq_i_mul, "TODO %s %s"},
+      [TOK_SLASH] = {sq_i_div, "TODO %s %s"},
+      [TOK_PERCENT] = {sq_i_rem, "TODO %s %s"},
       //[TOK_TILDE] = {IR_NOT,  // TODO
-      [TOK_PIPE] = {IR_OR, "TODO %s %s"},
-      [TOK_AMPERSAND] = {IR_AND, "TODO %s %s"},
-      [TOK_CARET] = {IR_XOR, "TODO %s %s"},
-      [TOK_LSHIFT] = {IR_SHL, "TODO %s %s"},
+      [TOK_PIPE] = {sq_i_or, "TODO %s %s"},
+      [TOK_AMPERSAND] = {sq_i_and, "TODO %s %s"},
+      [TOK_CARET] = {sq_i_xor, "TODO %s %s"},
+      [TOK_LSHIFT] = {sq_i_shl, "TODO %s %s"},
       // TOK_RSHIFT handled below to do SHR vs SAR
   };
-#endif
   if (tok_to_cmp_op[op].sign /*anything nonzero in slot*/) {
     if (type_is_arithmetic(left.type) && type_is_arithmetic(rhs.type)) {
       if (!type_signs_match(left.type, rhs.type)) {
@@ -1882,10 +1904,9 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
       errorf_offset(op_offset, "Cannot compare %s and %s.", type_as_str(left.type),
                     type_as_str(rhs.type));
     }
-#if 0
   } else if (tok_to_bin_op[op].err_msg /* anything nonzero in slot*/) {
     if (type_is_arithmetic(left.type) && type_is_arithmetic(rhs.type)) {
-      return resolve_binary_arithmetic_op(tok_to_bin_op[op].op, left, rhs, op_offset);
+      return resolve_binary_arithmetic_op(op, tok_to_bin_op[op].func, left, rhs, op_offset);
     } else {
       // TODO: special case str here
 
@@ -1893,11 +1914,10 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
                     type_as_str(rhs.type));
     }
   } else if (op == TOK_RSHIFT) {
-    ir_op irop = type_is_unsigned(left.type) ? IR_SHR : IR_SAR;
-    ir_ref result = ir_BINARY_OP(irop, type_to_ir_type(left.type), operand_to_irref_imm(&left),
-                                 operand_to_irref_imm(&rhs));
+    BinOpFunc func = type_is_unsigned(left.type) ? sq_i_shr : sq_i_sar;
+    SqRef result = func(sqbasetype_from_type(left.type), operand_to_sqref_imm(&left),
+                        operand_to_sqref_imm(&rhs));
     return operand_rvalue_imm(left.type, result);
-#endif
   } else {
     ASSERT(false && "todo");
     return operand_null;
