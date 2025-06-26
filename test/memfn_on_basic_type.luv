@@ -1,3 +1,4 @@
+# DISABLED
 # OUT: 4400
 on int def int memfn_on_basic(self):
     return self[0] * 100

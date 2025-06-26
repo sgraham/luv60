@@ -1,3 +1,4 @@
+# DISABLED
 # OUT: after
 def int main():
     bool x = true

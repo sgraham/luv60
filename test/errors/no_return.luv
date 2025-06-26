@@ -1,6 +1,6 @@
-# RET: 1
-# ERR: {self}:4:9:def int stuff(int x):
-# ERR: {ssss}             ^ error: Function returns i32, but there is no return at the end of the body.
+# CRET: 1
+# CERR: {self}:4:9:def int stuff(int x):
+# CERR: {ssss}             ^ error: Function returns i32, but there is no return at the end of the body.
 def int stuff(int x):
     print 4
 def int main():

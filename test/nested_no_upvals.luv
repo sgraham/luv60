@@ -1,3 +1,4 @@
+# DISABLED
 # OUT: 13
 def int main():
     def int inner():

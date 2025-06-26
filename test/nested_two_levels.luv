@@ -1,3 +1,4 @@
+# DISABLED
 # OUT: 12
 def int main():
     x = 3

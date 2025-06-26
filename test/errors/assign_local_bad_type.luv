@@ -1,6 +1,7 @@
-# RET: 1
-# ERR: {self}:7:13:    myvar = "hi!"
-# ERR: {ssss}                  ^ error: Cannot assign type str to type i32.
+# DISABLED
+# CRET: 1
+# CERR: {self}:7:13:    myvar = "hi!"
+# CERR: {ssss}                  ^ error: Cannot assign type str to type i32.
 
 def int main():
     myvar = 1

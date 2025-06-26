@@ -103,6 +103,8 @@ def main():
             "got luvc return code %d, but expected %d" % (res.returncode, cmds["cret"])
         )
         return 2
+    elif cmds["cret"] != 0:
+        return 0
 
     # TODO
     clang_cmd = late_expansion(cmds["clangrun"], late_vars).split(" ")

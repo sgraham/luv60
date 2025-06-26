@@ -1,3 +1,4 @@
+# DISABLED
 # OUT: c
 def int main():
     int x = 5

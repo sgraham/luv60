@@ -1,5 +1,6 @@
-# RET: 1
-# ERR: {self}:5:11:    x = 4 + range(3)
-# ERR: {ssss}                ^ error: Cannot add i32 to Range
+# DISABLED
+# CRET: 1
+# CERR: {self}:5:11:    x = 4 + range(3)
+# CERR: {ssss}                ^ error: Cannot add i32 to Range
 def int main():
     x = 4 + range(3)

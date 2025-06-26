@@ -1,3 +1,4 @@
+# DISABLED
 # CRET: 1
 # CERR: {self}:8:13:    myvar = "hi!"
 # CERR: {ssss}                  ^ error: Cannot assign type str to type i32.

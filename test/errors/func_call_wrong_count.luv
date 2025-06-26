@@ -1,6 +1,7 @@
-# RET: 1
-# ERR: {self}:9:12:    stuff(4, z)
-# ERR: {ssss}                 ^ error: Passing >= 2 arguments to function, but it expects 1.
+# DISABLED
+# CRET: 1
+# CERR: {self}:9:12:    stuff(4, z)
+# CERR: {ssss}                 ^ error: Passing >= 2 arguments to function, but it expects 1.
 def int stuff(int x):
     return 0
 

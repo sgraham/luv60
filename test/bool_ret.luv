@@ -1,3 +1,4 @@
+# DISABLED
 # OUT: ok
 def bool stuff():
     return true

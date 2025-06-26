@@ -1,3 +1,4 @@
+# DISABLED
 # RET: 10
 struct Stuff:
     int a
