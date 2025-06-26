@@ -849,15 +849,13 @@ static Sym* make_global(SymKind kind, Str name, Type type, Val initial_value) {
 
 static Sym* make_param(Str name, Type type, int index) {
   Sym* new = sym_new(SYM_VAR, name, type);
-#if 0
-  new->ref = ir_PARAM(type_to_ir_type(type),
+  new->ref = sq_func_param_named(type_to_sqtype(type),
 #if BUILD_DEBUG
-                      cstr_copy(parser.arena, name),
+                                 cstr_copy(parser.arena, name)
 #else
-                      "",
+                                 NULL
 #endif
-                      index + 1);
-#endif
+  );
   new->scope_decl = SSD_DECLARED_PARAMETER;
   return new;
 }
