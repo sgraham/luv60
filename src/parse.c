@@ -114,6 +114,7 @@ typedef struct Scope {
   // FuncData
   Sym* func_sym;
   Sym* return_slot;
+  SqBlock return_block;
   SqItemCtx func_item_ctx;
   PendingCond pending_conds[MAX_PENDING_CONDS];
   int num_pending_conds;
@@ -919,6 +920,7 @@ static void enter_function(Sym* sym,
     parser.cur_scope->return_slot =
         make_local_and_alloc(SYM_VAR, parser.static_str_ret, ret_type, NULL);
   }
+  parser.cur_scope->return_block = sq_block_declare();
 
   if (is_nested) {
     ASSERT(str_eq(param_syms[0]->name, parser.static_str_up));
@@ -932,6 +934,7 @@ static void enter_function(Sym* sym,
 
 static void leave_function(void) {
   Type ret_type = type_func_return_type(parser.cur_scope->func_sym->type);
+  sq_block_start(parser.cur_scope->return_block);
   if (type_eq(ret_type, type_void)) {
     sq_i_ret_void();
   } else {
@@ -3505,8 +3508,11 @@ static void if_statement(void) {
 
     sq_block_start(true_block);
     LastStatementType lst = parse_block();
-    (void)lst;
-    sq_i_jmp(after_block);
+    if (lst != LST_NON_RETURN) {
+      sq_i_jmp(parser.cur_scope->return_block);
+    } else {
+      sq_i_jmp(after_block);
+    }
 
     sq_block_start(false_block);
 
