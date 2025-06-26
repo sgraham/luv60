@@ -179,6 +179,8 @@ typedef struct Parser {
 
   SqSymbol i32_print_fmt;
   SqSymbol str_print_fmt;
+  SqSymbol str_true;
+  SqSymbol str_false;
 } Parser;
 
 static Parser parser;
@@ -372,10 +374,10 @@ static Operand operand_sym(Type type, LqSymbol lqsym) {
 }
 #endif
 
-#if 0
-static Operand operand_lvalue_local(Type type, ir_ref ref) {
+static Operand operand_lvalue_local(Type type, SqRef ref) {
   return (Operand){.kind = OPK_REF_LVAL_LOCAL_ADDR, .type = type, .ref = ref};
 }
+#if 0
 
 static Operand operand_rvalue_local_addr(Type type, ir_ref ref) {
   return (Operand){.kind = OPK_REF_RVAL_LOCAL_ADDR, .type = type, .ref = ref};
@@ -493,9 +495,9 @@ static SqRef operand_to_sqref_imm(Operand* op) {
   switch (op->kind) {
     case OPK_CONST: {
       switch (type_kind(op->type)) {
-#if 0
         case TYPE_BOOL:
-          return ir_CONST_BOOL(op->val.b);
+          return sq_const_int(op->val.b);
+#if 0
         case TYPE_U8:
           return ir_CONST_U8(op->val.u8);
         case TYPE_I8:
@@ -532,9 +534,7 @@ static SqRef operand_to_sqref_imm(Operand* op) {
         // TODO: This seems questionable.
         return op->ref;
       }
-      ASSERT(false && "todo");
-      error("opkind1");
-      //return ir_VLOAD(type_to_ir_type(op->type), op->ref);
+      return sq_i_load(sq_type_word, op->ref); // TODO: SIZE!
     case OPK_REF_RVAL_GLOBAL_ADDR:
     case OPK_REF_LVAL_GLOBAL_ADDR:
       if (type_is_aggregate(op->type)) {
@@ -631,7 +631,25 @@ static void print_i32(Operand* op) {
 }
 
 static void print_bool(Operand* op) {
-  ASSERT(false && "todo!");
+  SqRef val = operand_to_sqref_imm(op);
+  SqRef print_func = sq_ref_extern("puts");
+
+  SqBlock true_block = sq_block_declare();
+  SqBlock false_block = sq_block_declare();
+  SqBlock after_block = sq_block_declare();
+
+  sq_i_jnz(val, true_block, false_block);
+
+  sq_block_start(true_block);
+  sq_i_call1(sq_type_void, print_func,
+             (SqCallArg){sq_type_long, sq_ref_for_symbol(parser.str_true)});
+  sq_i_jmp(after_block);
+
+  sq_block_start(false_block);
+  sq_i_call1(sq_type_void, print_func,
+             (SqCallArg){sq_type_long, sq_ref_for_symbol(parser.str_false)});
+
+  sq_block_start(after_block);
 }
 
 static void print_str(Operand* op) {
@@ -715,15 +733,11 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
   } else {
     new->ref = sq_i_alloc8(sq_const_int(type_size(type)));
     if (initial_value) {
-#if 0
-      ir_VSTORE(new->ref, operand_to_irref_imm(initial_value));
-#endif
+      // TODO: size
+      sq_i_storew(operand_to_sqref_imm(initial_value), new->ref);
     } else {
-#if 0
-      ir_val irval;
-      irval.u64 = 0;
-      ir_VSTORE(new->ref, ir_const(_ir_CTX, irval, type_to_ir_type(type)));
-#endif
+      // TODO: size
+      sq_i_storew(sq_const_int(0), new->ref);
     }
   }
   new->scope_decl = SSD_DECLARED_LOCAL;
@@ -1790,7 +1804,7 @@ static Operand resolve_cmp_op(TokenKind op,
                               uint32_t loc) {
   ASSERT(type_eq(left.type, right.type));
   if (op_is_const(left) && op_is_const(right)) {
-    return operand_const(left.type, eval_binary_op(op, left.type, left.val, right.val));
+    return operand_const(type_bool, eval_binary_op(op, left.type, left.val, right.val));
   } else  {
     // TODO: size_class is wrong
     SqRef result = func(sq_type_word, operand_to_sqref_imm(&left), operand_to_sqref_imm(&right));
@@ -2736,14 +2750,14 @@ static Operand parse_sizeof(bool can_assign, Type* expected) {
 }
 
 static SqRef emit_string_obj(StrView str) {
-  sq_data_start(sq_linkage_default, "string_data");
+  sq_data_start(sq_linkage_default, NULL);
   for (uint32_t i = 0; i < str.size; ++i) {
     sq_data_byte(str.data[i]);
   }
   sq_data_byte(0);
   SqSymbol string_data = sq_data_end();
 
-  sq_data_start(sq_linkage_default, "string_obj");
+  sq_data_start(sq_linkage_default, NULL);
   sq_data_ref(string_data, 0);
   sq_data_long(str.size);
   SqSymbol string_obj = sq_data_end();
@@ -3112,23 +3126,23 @@ static Operand find_or_create_upval(Scope* scope, Str name, Sym* sym) {
 static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
   switch (scope_result) {
     case SCOPE_RESULT_LOCAL:
-      ASSERT(false && "todo");
-      return operand_null;
-#if 0
       if (type_kind(sym->type) == TYPE_FUNC) {
+        ASSERT(false && "todo");
+        error("todo");
+#if 0
         if (type_func_is_nested(sym->type)) {
           return operand_bound_local_function(sym->type, ir_CONST_ADDR(sym->addr), sym->ref2);
         } else {
           return operand_rvalue_global_addr(sym->type, ir_CONST_ADDR(sym->addr));
         }
+#endif
       } else {
         if (sym->scope_decl == SSD_DECLARED_GLOBAL) {
-          return operand_lvalue_global_addr(sym->type, ir_CONST_ADDR(sym->addr));
+          return operand_lvalue_global_addr(sym->type, sq_ref_for_symbol(sym->global));
         } else {
           return operand_lvalue_local(sym->type, sym->ref);
         }
       }
-#endif
     case SCOPE_RESULT_PARAMETER: {
       return operand_rvalue_imm(sym->type, sym->ref);
     }
@@ -3172,6 +3186,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
           errorf("Cannot assign type %s to type %s.", type_as_str(op.type), type_as_str(sym->type));
         }
         if (eq_kind == TOK_EQ) {
+          ASSERT(false && "local init");
 #if 0
           ir_VSTORE(sym->ref, operand_to_irref_imm(&op));
 #endif
@@ -3185,6 +3200,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
         if (parser.cur_scope->is_function) {
           ASSERT(!parser.cur_scope->is_module);
 
+          ASSERT(false && "assign to global from func");
 #if 0
           // Assigning to a global from a function.
           ASSERT(sym);
@@ -3994,6 +4010,14 @@ static void parse_impl(Arena* main_arena,
   sq_data_start(sq_linkage_default, "str_print_fmt");
   sq_data_string("%.*s\n\0");
   parser.str_print_fmt = sq_data_end();
+
+  sq_data_start(sq_linkage_default, "str_true");
+  sq_data_string("true\0");
+  parser.str_true = sq_data_end();
+
+  sq_data_start(sq_linkage_default, "str_false");
+  sq_data_string("false\0");
+  parser.str_false = sq_data_end();
 
   enter_scope(/*is_module=*/true, /*is_function=*/false, NULL);
 

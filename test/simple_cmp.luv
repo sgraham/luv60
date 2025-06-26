@@ -5,12 +5,27 @@
 # OUT: true
 # OUT: true
 # OUT: ---
-# OUT: true
+# OUT: false
 # OUT: true
 # OUT: true
 # OUT: false
 # OUT: true
 # OUT: false
+# OUT: ---
+# OUT: true
+# OUT: false
+# OUT: false
+# OUT: false
+# OUT: true
+# OUT: true
+# OUT: ---
+# OUT: false
+# OUT: true
+# OUT: true
+# OUT: false
+# OUT: true
+# OUT: false
+# OUT: ---
 def int main():
     print 10 == 10
     print 10 != 10
@@ -25,4 +40,21 @@ def int main():
     print 10 > 20
     print 10 <= 20
     print 10 >= 20
+    print "---"
+    int x = 10
+    int y = 20
+    print x == x
+    print x != x
+    print x < x
+    print x > x
+    print x <= x
+    print x >= x
+    print "---"
+    print x == y
+    print x != y
+    print x < y
+    print x > y
+    print x <= y
+    print x >= y
+    print "---"
     return 0

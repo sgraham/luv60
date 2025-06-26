@@ -14742,13 +14742,13 @@ void qbe_free(void* ptr) {
   (void)ptr;  // Nothing until arena_destroy.
 }
 
-static void _sq_gen_dbg_name(char* into, size_t len, const char* prefix) {
+static void _sq_gen_name(char* into, size_t len, const char* prefix) {
   snprintf(into, len, "%s_%d", prefix ? prefix : "", SQC(dbg_name_counter)++);
 }
 
 #define SQ_NAMED_IF_DEBUG(into, provided)        \
   if (global_context.main__dbg) {                \
-    _sq_gen_dbg_name(into, sizeof(into), provided); \
+    _sq_gen_name(into, sizeof(into), provided); \
   }
 
 #define SQ_COUNTOF(a) (sizeof(a) / sizeof(a[0]))
@@ -15147,6 +15147,8 @@ SqSymbol sq_func_end(void) {
 
   _sq_arena_pop_to(SQC(pfs.fn_arena), 0);
 
+  SQC(saved_per_func_state_in_use)[SQC(current_itemctx).u] = false;
+
   return ret;
 }
 
@@ -15459,7 +15461,14 @@ SqItemCtx sq_data_start(SqLinkage linkage, const char* name) {
 
   SQC(pfs.curd) = (Dat){0};
   SQC(pfs.curd).type = DStart;
-  SQC(pfs.curd).name = (char*)name;
+  SQ_ASSERT(name || linkage.u == sq_linkage_default.u);
+  char tmp[NString];
+  if (!name) {
+    _sq_gen_name(tmp, sizeof(tmp), NULL);
+    SQC(pfs.curd).name = tmp;
+  } else {
+    SQC(pfs.curd).name = (char*)name;
+  }
   SQC(pfs.curd).lnk = &SQC(pfs.curd_lnk);
   qbe_main_data(&SQC(pfs.curd));
   if (GC(in_error)) { return (SqItemCtx){0}; }
@@ -15609,6 +15618,7 @@ SqSymbol sq_data_end(void) {
   SqSymbol ret = {intern(SQC(pfs.curd).name)};
   SQC(pfs.curd) = (Dat){0};
   SQC(pfs.curd_lnk) = (Lnk){0};
+  SQC(saved_per_func_state_in_use)[SQC(current_itemctx).u] = false;
   return ret;
 }
 
@@ -15955,7 +15965,7 @@ DEALINGS IN THE SOFTWARE.
 ---
 
 All other sqbe code under the same license,
-Â© 2025 Scott Graham <scott.sqbe@h4ck3r.net>
+© 2025 Scott Graham <scott.sqbe@h4ck3r.net>
 
 */
 
