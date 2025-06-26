@@ -1,4 +1,3 @@
-# DISABLED
 # RET: 18
 def bool stuff():
     return true
