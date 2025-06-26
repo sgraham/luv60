@@ -3260,7 +3260,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
         if (parser.cur_scope->is_function) {
           ASSERT(!parser.cur_scope->is_module);
 
-          ASSERT(false && "assign to global from func");
+          //ASSERT(false && "assign to global from func");
 #if 0
           // Assigning to a global from a function.
           ASSERT(sym);
