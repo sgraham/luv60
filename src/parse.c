@@ -53,8 +53,11 @@ typedef struct Sym {
   Type type;
   union {
     SqRef ref;
-    // (kind == SYM_FUNC) or (kind == SYM_VAR and scope_decl == GLOBAL)
-    SqSymbol global;
+    struct {
+      // (kind == SYM_FUNC) or (kind == SYM_VAR and scope_decl == GLOBAL)
+      SqSymbol global;
+      SqRef ref2;  // Upvals for SYM_FUNC
+    };
   };
   SymScopeDecl scope_decl;
 } Sym;
@@ -78,12 +81,10 @@ typedef struct Upval {
   Type type;
   uint32_t offset;
   ScopeResult scope_result;
-#if 0
   // Only valid when SCOPE_RESULT_LOCAL or _PARAMETER, and only in the specific
   // scope it's meant for. GLOBAL/UNDEFINED are not valid, and UPVALUE means it
   // needs to be acquired through the functions $up, not this ref.
-  ir_ref ref;
-#endif
+  SqRef ref;
 } Upval;
 
 typedef struct UpvalMap {
@@ -113,9 +114,7 @@ typedef struct Scope {
 #endif
   uint64_t arena_saved_pos;
   UpvalMap upval_map;
-#if 0
-  ir_ref upval_base;
-#endif
+  SqRef upval_base;
 
   // VarScope
   union {
@@ -377,12 +376,10 @@ static Operand operand_rvalue_local_addr(Type type, SqRef ref) {
   return (Operand){.kind = OPK_REF_RVAL_LOCAL_ADDR, .type = type, .ref = ref};
 }
 
-#if 0
-static Operand operand_bound_local_function(Type type, ir_ref ref, ir_ref ref2) {
+static Operand operand_bound_local_function(Type type, SqRef ref, SqRef ref2) {
   return (Operand){
       .kind = OPK_REF_RVAL_LOCAL_ADDR_BOUND_FUNC, .type = type, .ref = ref, .ref2 = ref2};
 }
-#endif
 
 static Operand operand_rvalue_global_addr(Type type, SqRef ref) {
   return (Operand){.kind = OPK_REF_RVAL_GLOBAL_ADDR, .type = type, .ref = ref};
@@ -3175,7 +3172,6 @@ static ScopeResult scope_lookup_recursive(Str name, Sym** sym) {
   return SCOPE_RESULT_UNDEFINED;
 }
 
-#if 0
 static int create_upval(Scope* scope, Str name, Sym* sym) {
   UpvalMap* uvm = &scope->upval_map;
   if (uvm->num_upvals >= COUNTOFI(uvm->upvals)) {
@@ -3197,7 +3193,7 @@ static int create_upval(Scope* scope, Str name, Sym* sym) {
 
   ASSERT(scope >= &parser.scopes[1] && scope <= &parser.scopes[parser.num_scopes - 1]);
   Scope* parent_scope = scope - 1;
-  if (parent_scope->upval_base) {
+  if (parent_scope->upval_base.u) {
     Sym* parent_sym;
     ScopeResult parent_scope_result = scope_lookup_single(parent_scope, name, false, &parent_sym);
     switch (parent_scope_result) {
@@ -3241,9 +3237,7 @@ static int create_upval(Scope* scope, Str name, Sym* sym) {
 
   return upval_index;
 }
-#endif
 
-#if 0
 static Operand find_or_create_upval(Scope* scope, Str name, Sym* sym) {
   ASSERT(!str_is_none(name));
   UpvalMap* uvm = &scope->upval_map;
@@ -3260,25 +3254,22 @@ static Operand find_or_create_upval(Scope* scope, Str name, Sym* sym) {
   }
 
   Type type = sym->type;
-  return operand_rvalue_imm(
-      type, ir_LOAD(type_to_ir_type(type),
-                    ir_ADD_OFFSET(scope->upval_base, uvm->upvals[upval_index].offset)));
+  LoadFunc func = load_by_type(type);
+  SqRef val = func(
+      sqbasetype_from_type(type),
+      sq_i_add(sq_type_long, scope->upval_base, sq_const_int(uvm->upvals[upval_index].offset)));
+  return operand_rvalue_imm(type, val);
 }
-#endif
 
 static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
   switch (scope_result) {
     case SCOPE_RESULT_LOCAL:
       if (type_kind(sym->type) == TYPE_FUNC) {
-        ASSERT(false && "todo");
-        error("todo");
-#if 0
         if (type_func_is_nested(sym->type)) {
-          return operand_bound_local_function(sym->type, ir_CONST_ADDR(sym->addr), sym->ref2);
+          return operand_bound_local_function(sym->type, sq_ref_for_symbol(sym->global), sym->ref2);
         } else {
-          return operand_rvalue_global_addr(sym->type, ir_CONST_ADDR(sym->addr));
+          return operand_rvalue_global_addr(sym->type, sq_ref_for_symbol(sym->global));
         }
-#endif
       } else {
         if (sym->scope_decl == SSD_DECLARED_GLOBAL) {
           return operand_lvalue_global_addr(sym->type, sq_ref_for_symbol(sym->global));
@@ -3298,14 +3289,10 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
       }
     }
     case SCOPE_RESULT_UPVALUE: {
-      ASSERT(false && "todo");
-      return operand_null;
-#if 0
       // We already did a scope_lookup() so we know the in the current function,
       // we need to reference this value through $up.
       Operand value = find_or_create_upval(parser.cur_scope, var_name, sym);
       return value;
-#endif
     }
     case SCOPE_RESULT_UNDEFINED: {
       errorf("Undefined reference to '%s'.", cstr_copy(parser.arena, var_name));
