@@ -220,9 +220,7 @@ typedef struct Operand {
     Val val;
     SqRef ref;
   };
-#if 0
-  ir_ref ref2; // Extra ref, used for fat function pointers (addr & $up)
-#endif
+  SqRef ref2; // Used for fat function pointers and $up.
 } Operand;
 
 static inline FORCE_INLINE bool op_is_const(Operand op) {
@@ -390,12 +388,10 @@ static Operand operand_rvalue_global_addr(Type type, SqRef ref) {
   return (Operand){.kind = OPK_REF_RVAL_GLOBAL_ADDR, .type = type, .ref = ref};
 }
 
-#if 0
-static Operand operand_rvalue_global_addr_bound(Type type, ir_ref ref, ir_ref ref2) {
+static Operand operand_rvalue_global_addr_bound(Type type, SqRef ref, SqRef ref2) {
   return (Operand){
       .kind = OPK_REF_RVAL_GLOBAL_ADDR_BOUND_FUNC, .type = type, .ref = ref, .ref2 = ref2};
 }
-#endif
 
 static Operand operand_lvalue_global_addr(Type type, SqRef ref) {
   return (Operand){.kind = OPK_REF_LVAL_GLOBAL_ADDR, .type = type, .ref = ref};
@@ -2223,12 +2219,9 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
   uint32_t num_args = 0;
 
   if (type_func_flags(left.type) & (TFF_NESTED | TFF_MEMFN)) {
-    ASSERT(false && "todo; upvals i think");
-#if 0
     ASSERT(op_has_ref2(left));
-    arg_values[0] = left.ref2;
+    arg_values[0] = (SqCallArg){sq_type_long, left.ref2};
     ++num_args;
-#endif
   }
 
   if (!check(TOK_RPAREN)) {
@@ -2305,10 +2298,8 @@ static Operand parse_compound_literal(bool can_assign, Type* expected) {
   }
   consume(TOK_RPAREN, "Expect ')' after compound literal.");
 
-  return operand_null;
-#if 0
   size_t lit_size = type_size(lit_type);
-  ir_ref base_addr = ir_ALLOCA(ir_CONST_U64(lit_size));
+  SqRef base_addr = sq_i_alloc8(sq_const_int(lit_size));
   initialize_aggregate(base_addr, lit_type);
 
   uint32_t index = 0;
@@ -2325,11 +2316,12 @@ static Operand parse_compound_literal(bool can_assign, Type* expected) {
              type_as_str(field_values[i].type), type_as_str(field_type));
     }
     uint32_t field_offset = type_struct_field_offset(lit_type, index);
-    ir_STORE(ir_ADD_OFFSET(base_addr, field_offset), operand_to_irref_imm(&field_values[i]));
+    StoreFunc func = store_by_type(field_type);
+    func(operand_to_sqref_imm(&field_values[i]),
+         sq_i_add(sq_type_long, base_addr, sq_const_int(field_offset)));
   }
 
   return operand_rvalue_local_addr(lit_type, base_addr);
-#endif
 }
 
 static Operand parse_dict_literal(bool can_assign, Type* expected) {
@@ -2338,7 +2330,7 @@ static Operand parse_dict_literal(bool can_assign, Type* expected) {
 }
 
 static Str memfn_name_from_type_name(Str type_name, Str func_name) {
-  return str_internf("%.*s:%.*s", str_len(type_name), str_raw_ptr(type_name), str_len(func_name),
+  return str_internf("%.*s$%.*s", str_len(type_name), str_raw_ptr(type_name), str_len(func_name),
                      str_raw_ptr(func_name));
 }
 
@@ -2388,9 +2380,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       error("todo; assigning to unexpected thing");
     }
   } else {
-#if 0
     Type original_left_type = left.type;
-#endif
     while (type_kind(left.type) == TYPE_PTR) {
       left = operand_lvalue_local(type_ptr_subtype(left.type), sq_i_load(sq_type_long, left.ref));
     }
@@ -2442,22 +2432,24 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
     // The auto-deref would find Stuff for memfn lookup, and now left.type will
     // just be Stuff. The target memfn always just gets *Stuff, so we need to
     // build that from the left that we originally had.
-    return operand_null;
-#if 0
-    ir_ref self_ptr;
+    SqRef self_ptr;
     if (type_kind(original_left_type) == TYPE_STRUCT || type_is_basic(original_left_type)) {
+      SqRef addr = sq_i_alloc8(sq_const_int(8));
+      sq_i_storel(operand_to_sqref_imm(&left), addr);
+      self_ptr = addr;
+#if 0
       ir_ref addr = ir_VAR(IR_ADDR, "self*");
       ir_VSTORE(addr, operand_to_irref_imm(&left));
       self_ptr = ir_VADDR(addr);
+#endif
     } else if (type_kind(original_left_type) == TYPE_PTR &&
                type_kind(type_ptr_subtype(original_left_type)) == TYPE_STRUCT) {
       self_ptr = left.ref;
     } else {
       error("TODO: self ptr");
     }
-    return operand_rvalue_global_addr_bound(func_sym->type, ir_CONST_ADDR(func_sym->addr),
+    return operand_rvalue_global_addr_bound(func_sym->type, sq_ref_for_symbol(func_sym->global),
                                             self_ptr);
-#endif
   }
 
   ASSERT(false && "todo");
