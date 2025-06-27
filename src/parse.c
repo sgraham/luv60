@@ -2890,19 +2890,16 @@ static Operand parse_string_interpolate(bool can_assign, Type* expected) {
 }
 
 static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
-  ASSERT(false && "todo");
-  return operand_null;
-#if 0
-  ir_ref target_addr;
+  SqRef target_addr;
   Type subtype;
 
   if (match(TOK_COLON)) {
     if (check(TOK_RSQUARE)) {  // [:]
       // slice(left, NULL, NULL);
-        error("TODO: [:]");
+      error("TODO: [:]");
     } else {  // [:x]
       // slice(left, NULL, parse_expression())
-        error("TODO: [:x]");
+      error("TODO: [:x]");
     }
   } else {
     Operand subscript = parse_expression(NULL);
@@ -2928,13 +2925,15 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
           if (left_type_kind == TYPE_ARRAY) {
             ASSERT(op_is_local_addr(left));
             subtype = type_array_subtype(left.type);
-            target_addr = ir_ADD_A(left.ref, ir_MUL_U64(ir_CONST_U64(type_size(subtype)),
-                                                        operand_to_irref_imm(&subscript)));
+            target_addr = sq_i_add(sq_type_long, left.ref,
+                                   sq_i_mul(sq_type_long, sq_const_int(type_size(subtype)),
+                                            operand_to_sqref_imm(&subscript)));
           } else if (left_type_kind == TYPE_PTR) {
             subtype = type_ptr_subtype(left.type);
-            target_addr = ir_ADD_A(
-                op_is_local_addr(left) ? ir_VLOAD(IR_ADDR, left.ref) : left.ref,
-                ir_MUL_U64(ir_CONST_U64(type_size(subtype)), operand_to_irref_imm(&subscript)));
+            target_addr = sq_i_add(
+                sq_type_long, op_is_local_addr(left) ? sq_i_load(sq_type_long, left.ref) : left.ref,
+                sq_i_mul(sq_type_long, sq_const_int(type_size(subtype)),
+                         operand_to_sqref_imm(&subscript)));
           } else {
             error("TODO: subscript impl");
           }
@@ -2947,19 +2946,18 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
   }
   consume(TOK_RSQUARE, "Expect ']' to complete subscript.");
 
-  ASSERT(target_addr);
   ASSERT(!type_is_none(subtype));
   if (can_assign && match_assignment()) {
     Operand rhs = parse_expression(NULL); // TODO: do type here
     if (!convert_operand(&rhs, subtype)) {
       errorf("Cannot store type %s into %s.", type_as_str(rhs.type), type_as_str(left.type));
     }
-    ir_STORE(target_addr, operand_to_irref_imm(&rhs));
+    StoreFunc func = store_by_type(rhs.type);
+    func(operand_to_sqref_imm(&rhs), target_addr);
     return operand_null;
   } else {
-    return operand_rvalue_imm(subtype, ir_LOAD(type_to_ir_type(subtype), target_addr));
+    return operand_rvalue_imm(subtype, sq_i_load(sqbasetype_from_type(subtype), target_addr));
   }
-#endif
 }
 
 static Operand parse_typeid(bool can_assign, Type* expected) {
