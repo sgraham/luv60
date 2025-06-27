@@ -4035,10 +4035,7 @@ static void global_statement(void) {
   }
   Sym* new = sym_new(SYM_VAR, name, sym->type);
   new->scope_decl = SSD_DECLARED_GLOBAL;
-  ASSERT(false && "todo");
-#if 0
-  new->addr = sym->addr;
-#endif
+  new->global = sym->global;
 }
 
 static LastStatementType parse_statement(bool toplevel) {

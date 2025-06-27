@@ -1,4 +1,3 @@
-# DISABLED
 # CRET: 1
 # CERR: {self}:5:12:    global weewaa
 # CERR: {ssss}                 ^ error: Undefined global 'weewaa'.
