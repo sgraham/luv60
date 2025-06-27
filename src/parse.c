@@ -495,6 +495,52 @@ static SqType sqbasetype_from_type(Type type) {
   return sq_type_word;
 }
 
+typedef SqRef (*ExtFunc)(SqType, SqRef);
+
+static SqRef _sextsw(SqType size_class, SqRef arg0) {
+  ASSERT(size_class.u == sq_type_long.u);
+  return sq_i_extuw(arg0);
+}
+
+static ExtFunc sext_by_type(Type type) {
+  ASSERT(type_is_integer(type));
+  ASSERT(type_is_signed(type));
+  switch (type_kind(type)) {
+    case TYPE_I8:
+      return sq_i_extsb;
+    case TYPE_I16:
+      return sq_i_extsh;
+    case TYPE_I32:
+      return _sextsw;
+    case TYPE_I64:
+      error("shouldn't be sext'ing i64");
+    default:
+      error("unhandled sext");
+  }
+}
+
+static SqRef _zextuw(SqType size_class, SqRef arg0) {
+  ASSERT(size_class.u == sq_type_long.u);
+  return sq_i_extuw(arg0);
+}
+
+static ExtFunc zext_by_type(Type type) {
+  ASSERT(type_is_integer(type));
+  ASSERT(!type_is_signed(type));
+  switch (type_kind(type)) {
+    case TYPE_U8:
+      return sq_i_extub;
+    case TYPE_U16:
+      return sq_i_extuh;
+    case TYPE_U32:
+      return _zextuw;
+    case TYPE_U64:
+      error("shouldn't be zext'ing u64");
+    default:
+      error("unhandled zext");
+  }
+}
+
 typedef void (*StoreFunc)(SqRef, SqRef);
 
 static void do_memcpy(SqRef from, SqRef into) {
@@ -1374,14 +1420,29 @@ static bool cast_operand(Operand* operand, Type type) {
         //operand->ref = ir_TRUNC(type_to_ir_type(type), ref_to_adjust);
         operand->ref = ref_to_adjust;
       } else if (type_size(operand->type) < type_size(type)) {
-        ASSERT(false && "todo zext/sext");
-#if 0
-        if (type_is_signed(type)) {
-          operand->ref = ir_SEXT(type_to_ir_type(type), ref_to_adjust);
+        // Source is strictly smaller than the target.
+        if (type_is_signed(type) && type_is_signed(operand->type)) {
+          // Both signed, sext.
+          ExtFunc func = sext_by_type(operand->type);
+          operand->ref = func(sqbasetype_from_type(type), ref_to_adjust);
+        } else if (!type_is_signed(type) && !type_is_signed(operand->type)) {
+          // Both unsigned, zext.
+          ExtFunc func = zext_by_type(operand->type);
+          operand->ref = func(sqbasetype_from_type(type), ref_to_adjust);
+        } else if (type_is_signed(type) && !type_is_signed(operand->type)) {
+          // unsigned extending into signed, zext.
+          ExtFunc func = zext_by_type(operand->type);
+          operand->ref = func(sqbasetype_from_type(type), ref_to_adjust);
         } else {
-          operand->ref = ir_ZEXT(type_to_ir_type(type), ref_to_adjust);
+          ASSERT(!type_is_signed(type) && type_is_signed(operand->type));
+          // signed extending into unsigned, error (?)
+          error("can't extend signed into larger unsigned");
         }
-#endif
+        if (type_is_signed(type)) {
+        } else {
+          ExtFunc func = zext_by_type(type);
+          operand->ref = func(sqbasetype_from_type(type), ref_to_adjust);
+        }
       } else {
         // This is int-to-int, probably not necessary? Not sure.
         operand->ref = ref_to_adjust; // ir_BITCAST(type_to_ir_type(type), ref_to_adjust);
