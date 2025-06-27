@@ -1,4 +1,3 @@
-# DISABLED
 # CRET: 1
 # CERR: {self}:5:17:    x = 12345 % 0
 # CERR: {ssss}                      ^ error: Divide by zero.

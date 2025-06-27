@@ -1,4 +1,3 @@
-# DISABLED
 # CRET: 1
 # CERR: {self}:5:37:    x = 0x4000_0000_0000_0000i64 << 2
 # CERR: {ssss}                                          ^ error: 4611686018427387904 shifted left by 2 requires 65 bits.

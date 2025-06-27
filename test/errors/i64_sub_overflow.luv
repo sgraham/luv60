@@ -1,4 +1,3 @@
-# DISABLED
 # CRET: 1
 # CERR: {self}:5:35:    x = -9223372036854775807i64 - 2
 # CERR: {ssss}                                        ^ error: 2 subtracted from -9223372036854775807 overflows.

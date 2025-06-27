@@ -1,4 +1,3 @@
-# DISABLED
 # CRET: 1
 # CERR: {self}:5:33:    x = 0x7fff_ffff_ffff_ffff + 1
 # CERR: {ssss}                                      ^ error: 1 added to 9223372036854775807 overflows.
