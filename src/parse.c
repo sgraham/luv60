@@ -109,9 +109,6 @@ typedef struct Scope {
   Sym* return_slot;
   SqBlock return_block;
   SqItemCtx func_item_ctx;
-#if 0
-  ir_ctx ctx;
-#endif
   uint64_t arena_saved_pos;
   UpvalMap upval_map;
   SqRef upval_base;
@@ -1037,17 +1034,15 @@ static void leave_function(void) {
 
   if (is_nested) {
     // This is pointing to the nested one, but we have to set cur_scope to the
-    // parent one, so that codegen goes to it (via _ir_CTX).
-#if 0
+    // parent one, so that codegen goes to it.
     UpvalMap* inner_uvm = &parser.cur_scope->upval_map;
     Sym* child_func = parser.cur_scope->func_sym;
     parser.cur_scope = &parser.scopes[parser.num_scopes - 2];
     UpvalMap* parent_uvm = &parser.cur_scope->upval_map;
     (void)parent_uvm;
-#endif
+    ASSERT(false && "todo; i think itemctx activate here");
 
-#if 0
-    ir_ref upval_data = ir_ALLOCA(ir_CONST_U64(inner_uvm->alloc_size));
+    SqRef upval_data = sq_i_alloc8(sq_const_int(inner_uvm->alloc_size));
     child_func->ref2 = upval_data;
 
     for (int i = 0; i < inner_uvm->num_upvals; ++i) {
@@ -1056,13 +1051,18 @@ static void leave_function(void) {
         case SCOPE_RESULT_GLOBAL:
         case SCOPE_RESULT_UNDEFINED:
           error("internal error, unexpected scope_result in upval capture");
-        case SCOPE_RESULT_LOCAL:
-          ir_STORE(ir_ADD_OFFSET(upval_data, uv->offset),
-                   ir_VLOAD(type_to_ir_type(uv->type), uv->ref));
+        case SCOPE_RESULT_LOCAL:{
+          LoadFunc load_func = load_by_type(uv->type);
+          SqRef val = load_func(sqbasetype_from_type(uv->type), uv->ref);
+          StoreFunc func = store_by_type(uv->type);
+          func(val, sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
           break;
-        case SCOPE_RESULT_PARAMETER:
-          ir_STORE(ir_ADD_OFFSET(upval_data, uv->offset), uv->ref);
+        }
+        case SCOPE_RESULT_PARAMETER: {
+          StoreFunc func = store_by_type(uv->type);
+          func(uv->ref, sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
           break;
+        }
         case SCOPE_RESULT_UPVALUE: {
           // This case is that the upval we're trying to capture is itself an
           // upval in the current function.
@@ -1077,10 +1077,13 @@ static void leave_function(void) {
                                  cstr_copy(parser.arena, uv->name),
                                  cstr_copy(parser.arena, child_func->name));
                                  */
-              ASSERT(parser.cur_scope->upval_base);
+              ASSERT(parser.cur_scope->upval_base.u);
+              ASSERT(false && "todo");
+#if 0
               ir_STORE(ir_ADD_OFFSET(upval_data, uv->offset),
                        ir_LOAD(type_to_ir_type(uv->type),
                                ir_ADD_OFFSET(parser.cur_scope->upval_base, parent_uv->offset)));
+#endif
               break;
             }
           }
@@ -1088,7 +1091,6 @@ static void leave_function(void) {
         }
       }
     }
-#endif
   }
 
   leave_scope();
