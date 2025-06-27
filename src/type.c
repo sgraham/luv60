@@ -124,7 +124,8 @@ size_t type_size(Type type) {
       return 8;
     case TYPE_ARRAY:
       return type_td(type)->ARRAY.size;
-      abort();
+    case TYPE_LIST:
+      return type_td(type)->LIST.size;
     case TYPE_DICT:
       ASSERT(false && "todo");
       abort();
@@ -143,7 +144,8 @@ size_t type_align(Type type) {
       return 8;
     case TYPE_ARRAY:
       return type_td(type)->ARRAY.align;
-      abort();
+    case TYPE_LIST:
+      return type_td(type)->LIST.align;
     case TYPE_DICT:
       ASSERT(false && "todo");
       abort();

@@ -282,7 +282,6 @@ static void opv_ensure_capacity(OpVec* vec, int64_t size) {
   vec->capacity = size;
 }
 
-#if 0
 static Operand opv_at(OpVec* vec, int64_t i) {
   ASSERT(i < vec->size);
   if (vec->capacity <= COUNTOFI(vec->short_data)) {
@@ -290,7 +289,6 @@ static Operand opv_at(OpVec* vec, int64_t i) {
   }
   return vec->data[i];
 }
-#endif
 
 static void opv_set(OpVec* vec, int64_t i, Operand op) {
   ASSERT(i < vec->size);
@@ -785,19 +783,22 @@ static void print_range_impl(RuntimeRange range) {
 
 #endif
 
-#if 0
-static void initialize_aggregate(ir_ref base_addr, Type type) {
+static void initialize_aggregate(SqRef base_addr, Type type) {
   size_t size = type_size(type);
   if (type_kind(type) == TYPE_STRUCT && type_struct_has_initializer(type)) {
+    ASSERT(false && "todo");
+#if 0
     ir_ref memcpy_addr = ir_CONST_ADDR(memcpy);
     ir_ref default_blob = ir_CONST_ADDR(type_struct_initializer_blob(type));
     ir_CALL_3(IR_VOID, memcpy_addr, base_addr, default_blob, ir_CONST_U64(size));
+#endif
   } else {
-    ir_ref memset_addr = ir_CONST_ADDR(memset);
-    ir_CALL_3(IR_VOID, memset_addr, base_addr, ir_CONST_U8(0), ir_CONST_U64(size));
+    SqRef memset_func = sq_ref_extern("memset");
+    sq_i_call3(sq_type_void, memset_func, (SqCallArg){sq_type_long, base_addr},
+               (SqCallArg){sq_type_word, sq_const_int(0)},
+               (SqCallArg){sq_type_long, sq_const_int(size)});
   }
 }
-#endif
 
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* initial_value) {
   Sym* new = sym_new(kind, name, type);
@@ -825,8 +826,7 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
     } else {
       uint32_t size = type_size(type);
       new->ref = sq_i_alloc8(sq_const_int(size));
-      ASSERT(false && "todo initialize aggregate");
-      //initialize_aggregate(new->ref, type);
+      initialize_aggregate(new->ref, type);
     }
   } else {
     new->ref = sq_i_alloc8(sq_const_int(type_size(type)));
@@ -1413,14 +1413,12 @@ static Type parse_type(void) {
   if (match(TOK_LSQUARE)) {
     size_t count = 0;
     if (!check(TOK_RSQUARE)) {
-#if 0
       Operand count_op = const_expression();
       cast_operand(&count_op, type_i64);
       count = count_op.val.i64;
       if (count < 0) {
         error("Negative array size.");
       }
-#endif
     }
     consume(TOK_RSQUARE, "Expect ']' to close array type.");
     Type elem = parse_type();
@@ -2416,12 +2414,11 @@ static Operand parse_len(bool can_assign, Type* expected) {
   Operand len_of = parse_precedence(PREC_OR, NULL);
   consume(TOK_RPAREN, "Expect ')' after len.");
   switch (type_kind(len_of.type)) {
-#if 0
     case TYPE_ARRAY:
       return operand_const(type_u64, (Val){.u64 = type_array_count(len_of.type)});
     case TYPE_LIST:
-      return operand_rvalue_imm(type_u64, ir_LOAD_U64(ir_ADD_OFFSET(len_of.ref, 8)));
-#endif
+      return operand_rvalue_imm(
+          type_u64, sq_i_load(sq_type_long, sq_i_add(sq_type_long, len_of.ref, sq_const_int(8))));
     case TYPE_DICT:
     case TYPE_STR:
       error("TODO: len impl");
@@ -2600,22 +2597,19 @@ static Operand parse_list_literal(Type* expected) {
     // required if that would make it work, so that:
     // [1, 2, 0xffff_ffff_ffff_ffff] would pass without doing
     // [1u64, 2, 0xffff_ffff_ffff_ffff] instead.
-#if 0
     Operand first_item = opv_at(&elems, 0);
-    ir_ref arr_base = ir_ALLOCA(ir_CONST_U64(type_size(first_item.type) * elems.size));
-    ir_STORE(arr_base, operand_to_irref_imm(&first_item));
+    SqRef arr_base = sq_i_alloc8(sq_const_int(type_size(first_item.type) * elems.size));
+    sq_i_storel(operand_to_sqref_imm(&first_item), arr_base);
     for (int i = 1; i < elems.size; ++i) {
       Operand next_item = opv_at(&elems, i);
       if (!convert_operand(&next_item, first_item.type)) {
         errorf("List item %d is of type %s which does not match type %s of first element.", i + 1,
                type_as_str(next_item.type), type_as_str(first_item.type));
       }
-      ir_STORE(ir_ADD_OFFSET(arr_base, type_size(first_item.type) * i),
-               operand_to_irref_imm(&next_item));
+      sq_i_storel(operand_to_sqref_imm(&next_item),
+                  sq_i_add(sq_type_long, arr_base, sq_const_int(type_size(first_item.type) * i)));
     }
     return operand_rvalue_imm(type_array(first_item.type, elems.size), arr_base);
-#endif
-    return operand_null;
   }
 }
 
