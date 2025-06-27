@@ -2973,7 +2973,6 @@ static Operand parse_typeid(bool can_assign, Type* expected) {
   return operand_null;
 }
 
-#if 0
 static long long eval_unary_op_ll(TokenKind op, long long val) {
   switch (op) {
     case TOK_PLUS:
@@ -2994,9 +2993,7 @@ static long long eval_unary_op_ll(TokenKind op, long long val) {
 static unsigned long long eval_unary_op_ull(TokenKind op, unsigned long long val) {
   error("TODO: ull unary const eval");
 }
-#endif
 
-#if 0
 static Val eval_unary_op(TokenKind op, Type type, Val val) {
   if (type_is_integer(type)) {
     Operand operand = operand_const(type, val);
@@ -3013,18 +3010,13 @@ static Val eval_unary_op(TokenKind op, Type type, Val val) {
     errorf("Unexpected type %s in eval_unary_op.", type_as_str(type));
   }
 }
-#endif
 
 static Operand parse_unary(bool can_assign, Type* expected) {
   TokenKind op_kind = parser.cursor.prev_kind;
   Operand expr = parse_precedence(PREC_UNARY, expected);
   if (op_kind == TOK_MINUS) {
     if (op_is_const(expr)) {
-      ASSERT(false && "todo");
-      return operand_null;
-#if 0
       return operand_const(expr.type, eval_unary_op(op_kind, expr.type, expr.val));
-#endif
     } else {
       ASSERT(false && "todo");
       return operand_null;
@@ -3596,35 +3588,45 @@ static void for_statement(void) {
     // Nothing, case 1:
   } else {  // if (check(TOK_IDENT_VAR) && peek(2, TOK_IN)) {
     // Case 3.
-#if 0
     Str it_name = parse_name("Expect iterator name.");
-#endif
     consume(TOK_IN, "Expect 'in'.");
     Operand expr = parse_expression(NULL);
     if (type_eq(expr.type, type_range)) {
-#if 0
       ASSERT(op_is_local_addr(expr));
-      ir_ref astart = expr.ref;
-      ir_ref astop = ir_ADD_A(expr.ref, ir_CONST_ADDR(sizeof(int64_t)));
-      ir_ref astep = ir_ADD_A(expr.ref, ir_CONST_ADDR(2 * sizeof(int64_t)));
+      SqRef astart = expr.ref;
+      SqRef astop = sq_i_add(sq_type_long, expr.ref, sq_const_int(8));
+      SqRef astep = sq_i_add(sq_type_long, expr.ref, sq_const_int(16));
 
-      ir_ref start = ir_LOAD_I64(astart);
-      ir_ref stop = ir_LOAD_I64(astop);
-      ir_ref step = ir_LOAD_I64(astep);
+      SqRef start = sq_i_load(sq_type_long, astart);
+      SqRef stop = sq_i_load(sq_type_long, astop);
+      SqRef step = sq_i_load(sq_type_long, astep);
 
-      ir_ref is_neg = ir_LT(step, ir_CONST_I64(0));
+      SqRef is_neg = sq_i_csltl(sq_type_long, step, sq_const_int(0));
 
       // TODO: This probably needs work if the Range isn't trivial, start
       // should be using the Operand expr or something maybe
       Sym* it = make_local_and_alloc(SYM_VAR, it_name, type_i64, NULL);
-      ir_VSTORE(it->ref, start);
+      sq_i_storel(start, it->ref);
 
-      ir_ref loop = ir_LOOP_BEGIN(ir_END());
+      SqBlock loop = sq_block_declare_and_start();
 
-      ir_ref cur = ir_VLOAD(IR_I64, it->ref);
+      SqRef cur = sq_i_load(sq_type_long, it->ref);
+
+      SqBlock block_neg_step = sq_block_declare();
+      SqBlock block_pos_step = sq_block_declare();
+      SqBlock block_cont = sq_block_declare();
+      SqBlock block_after = sq_block_declare();
+
       // (is_neg ? cur > stop : cur < stop)
-      ir_ref cond = ir_IF(ir_COND(IR_BOOL, is_neg, ir_GT(cur, stop), ir_LT(cur, stop)));
-      ir_IF_TRUE(cond);
+      sq_i_jnz(is_neg, block_neg_step, block_pos_step);
+
+      sq_block_start(block_neg_step);
+      sq_i_jnz(sq_i_csgtl(sq_type_long, cur, stop), block_cont, block_after);
+
+      sq_block_start(block_pos_step);
+      sq_i_jnz(sq_i_csltl(sq_type_long, cur, stop), block_cont, block_after);
+
+      sq_block_start(block_cont);
 
       consume(TOK_COLON, "Expect ':' to start for.");
       consume(TOK_NEWLINE, "Expect newline after ':' to start for.");
@@ -3632,13 +3634,13 @@ static void for_statement(void) {
       LastStatementType lst = parse_block();
       ASSERT(lst == LST_NON_RETURN && "todo; return from loop");
 
-      ir_ref itval = ir_VLOAD(IR_I64, it->ref);
-      ir_ref inc = ir_ADD_I64(itval, step);
-      ir_VSTORE(it->ref, inc);
+      SqRef it_val = sq_i_load(sq_type_long, it->ref);
+      SqRef inc = sq_i_add(sq_type_long, it_val, step);
+      sq_i_storel(inc, it->ref);
 
-      ir_MERGE_SET_OP(loop, 2, ir_LOOP_END());
-      ir_IF_FALSE(cond);
-#endif
+      sq_i_jmp(loop);
+
+      sq_block_start(block_after);
     } else {
       errorf("Unhandled for/in over type %s.", type_as_str(expr.type));
     }
