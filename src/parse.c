@@ -2367,6 +2367,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
 #endif
 
   if (can_assign && match_assignment()) {
+    ASSERT(false && "field write");
 #if 0
     while (type_kind(left.type) == TYPE_PTR) {
       left = operand_lvalue_local(type_ptr_subtype(left.type), ir_LOAD(IR_ADDR, left.ref));
@@ -2392,21 +2393,22 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
   } else {
 #if 0
     Type original_left_type = left.type;
+#endif
     while (type_kind(left.type) == TYPE_PTR) {
-      left = operand_lvalue_local(type_ptr_subtype(left.type), ir_LOAD(IR_ADDR, left.ref));
+      left = operand_lvalue_local(type_ptr_subtype(left.type), sq_i_load(sq_type_long, left.ref));
     }
     if (type_kind(left.type) == TYPE_STRUCT) {
       uint32_t field_offset;
       Type field_type;
       if (type_struct_find_field_by_name(left.type, name, &field_type, &field_offset)) {
-        ir_ref ref = ir_LOAD(type_to_ir_type(field_type),
-                             ir_ADD_OFFSET(operand_to_irref_imm(&left), field_offset));
+        SqRef ref = sq_i_load(
+            type_to_sqtype(field_type),
+            sq_i_add(sq_type_long, operand_to_sqref_imm(&left), sq_const_int(field_offset)));
         return operand_rvalue_imm(field_type, ref);
       }
 
       // Not an error yet; could be a memfn below.
     }
-#endif
 
     Sym* func_sym = {0};
     switch (type_kind(left.type)) {
