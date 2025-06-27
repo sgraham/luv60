@@ -852,7 +852,9 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
   if (type_kind(type) == TYPE_STR) {
     new->ref = sq_i_alloc8(sq_const_int(type_size(type)));
     if (initial_value) {
-      ASSERT(false && "initial value for alloc str");
+      SqRef init = operand_to_sqref_imm(initial_value);
+      sq_i_storel(sq_i_load(sq_type_long, init), new->ref);
+      sq_i_storel(sq_i_load(sq_type_long, sq_i_add(sq_type_long, init, sq_const_int(8))), new->ref);
     } else {
       sq_i_storel(sq_const_int(0), new->ref);
       sq_i_storel(sq_const_int(0), sq_i_add(sq_type_long, new->ref, sq_const_int(8)));

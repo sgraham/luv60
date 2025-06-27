@@ -1,4 +1,3 @@
-# DISABLED
 # CRET: 1
 # CERR: {self}:6:10:    if x > 0:
 # CERR: {ssss}               ^ error: Cannot compare str and i32.

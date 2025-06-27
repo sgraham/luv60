@@ -1,4 +1,3 @@
-# DISABLED
 # CRET: 1
 # CERR: {self}:9:12:    stuff(4, z)
 # CERR: {ssss}                 ^ error: Passing >= 2 arguments to function, but it expects 1.
