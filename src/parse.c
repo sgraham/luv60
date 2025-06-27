@@ -2811,12 +2811,8 @@ static Operand parse_offsetof(bool can_assign, Type* expected) {
   consume(TOK_RPAREN, "Expect ')' after offsetof.");
   for (uint32_t i = 0; i < type_struct_num_fields(type); ++i) {
     if (str_eq(type_struct_field_name(type, i), field)) {
-      ASSERT(false && "todo");
-      return operand_null;
-#if 0
       uint32_t offset = type_struct_field_offset(type, i);
       return operand_const(type_i32, (Val){.i32 = offset});
-#endif
     }
   }
   errorf_offset(name_offset, "'%s' is not a field of type %s.", cstr_copy(parser.arena, field),
