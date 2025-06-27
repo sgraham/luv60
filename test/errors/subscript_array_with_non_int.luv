@@ -1,4 +1,3 @@
-# DISABLED
 # CRET: 1
 # CERR: {self}:6:13:    print x["stuff"]
 # CERR: {ssss}                  ^ error: Cannot subscript using type str.

@@ -1,4 +1,3 @@
-# DISABLED
 # CRET: 1
 # CERR: {self}:7:13:    if sign < unsign:
 # CERR: {ssss}                  ^ error: Comparison with different signs: i64 and u64.

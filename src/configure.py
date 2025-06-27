@@ -153,7 +153,7 @@ def get_tests():
                 spaces = len(test) * " "
                 return t.replace("{ssss}", spaces)
 
-            if not disabled and not cret_set and not ret_set and not out and not err:
+            if not disabled and not cret_set and not ret_set and not out and not cerr:
                 print("Nothing being tested in %s?" % test)
                 sys.exit(1)
             tests[test] = {

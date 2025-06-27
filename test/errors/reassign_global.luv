@@ -1,4 +1,3 @@
-# DISABLED
 # CRET: 1
 # CERR: {self}:5:7:myvar = 2
 # CERR: {ssss}           ^ error: Cannot re-initialize an existing global.
