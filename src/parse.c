@@ -3078,11 +3078,10 @@ static Operand parse_unary(bool can_assign, Type* expected) {
       errorf("Type %s cannot be used in a boolean not.", type_as_str(expr.type));
     }
   } else if (op_kind == TOK_AMPERSAND) {
-    ASSERT(false && "todo");
-    return operand_null;
 #if 0
     return operand_rvalue_imm(type_ptr(expr.type), ir_VADDR(expr.ref));
 #endif
+    return operand_rvalue_imm(type_ptr(expr.type), expr.ref);
   } else {
     error("unary operator not implemented");
   }
