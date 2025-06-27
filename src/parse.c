@@ -562,21 +562,22 @@ static SqRef operand_to_sqref_imm(Operand* op) {
       switch (type_kind(op->type)) {
         case TYPE_BOOL:
           return sq_const_int(op->val.b);
-#if 0
-        case TYPE_U8:
-          return ir_CONST_U8(op->val.u8);
         case TYPE_I8:
-          return ir_CONST_I8(op->val.i8);
-        case TYPE_U16:
-          return ir_CONST_U16(op->val.u16);
+          return sq_const_int(op->val.i8);
+        case TYPE_U8:
+          return sq_const_int((int64_t)op->val.u8);
         case TYPE_I16:
-          return ir_CONST_I16(op->val.i16);
-#endif
+          return sq_const_int(op->val.i16);
+        case TYPE_U16:
+          return sq_const_int((int64_t)op->val.u16);
         case TYPE_I32:
-        case TYPE_U32:
-        case TYPE_I64:
-        case TYPE_U64:
           return sq_const_int(op->val.i32);
+        case TYPE_U32:
+          return sq_const_int((int64_t)op->val.u32);
+        case TYPE_I64:
+          return sq_const_int(op->val.i64);
+        case TYPE_U64:
+          return sq_const_int((int64_t)op->val.u64);
 #if 0
         case TYPE_FLOAT:
           return ir_CONST_FLOAT(op->val.f);
@@ -1337,7 +1338,6 @@ static bool cast_operand(Operand* operand, Type type) {
       return false;
     }
     if (op_is_const(*operand)) {
-#if 0
       // TODO: enums
       TypeKind from_type_kind = type_kind(operand->type);
       TypeKind to_type_kind = type_kind(type);
@@ -1361,30 +1361,31 @@ static bool cast_operand(Operand* operand, Type type) {
             error("internal error in const cast");
         }
       }
-#endif
     } else {
-#if 0
-      ir_ref ref_to_adjust;
+      SqRef ref_to_adjust;
       if (op_is_local_addr(*operand)) {
-        ref_to_adjust = operand_to_irref_imm(operand);
+        ref_to_adjust = operand_to_sqref_imm(operand);
         operand->kind = OPK_REF_RVAL;
       } else {
         ref_to_adjust = operand->ref;
       }
 
       if (type_size(operand->type) > type_size(type)) {
-        operand->ref = ir_TRUNC(type_to_ir_type(type), ref_to_adjust);
+        //operand->ref = ir_TRUNC(type_to_ir_type(type), ref_to_adjust);
+        operand->ref = ref_to_adjust;
       } else if (type_size(operand->type) < type_size(type)) {
+        ASSERT(false && "todo zext/sext");
+#if 0
         if (type_is_signed(type)) {
           operand->ref = ir_SEXT(type_to_ir_type(type), ref_to_adjust);
         } else {
           operand->ref = ir_ZEXT(type_to_ir_type(type), ref_to_adjust);
         }
+#endif
       } else {
         // This is int-to-int, probably not necessary? Not sure.
-        operand->ref = ir_BITCAST(type_to_ir_type(type), ref_to_adjust);
+        operand->ref = ref_to_adjust; // ir_BITCAST(type_to_ir_type(type), ref_to_adjust);
       }
-#endif
     }
   }
 
@@ -3278,10 +3279,8 @@ static Operand parse_variable(bool can_assign, Type* expected) {
           errorf("Cannot assign type %s to type %s.", type_as_str(op.type), type_as_str(sym->type));
         }
         if (eq_kind == TOK_EQ) {
-          ASSERT(false && "local init");
-#if 0
-          ir_VSTORE(sym->ref, operand_to_irref_imm(&op));
-#endif
+          StoreFunc func = store_by_type(op.type);
+          func(operand_to_sqref_imm(&op), sym->ref);
           return operand_null;
         } else {
           error_offset(eq_offset, "Unhandled assignment type.");
