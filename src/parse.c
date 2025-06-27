@@ -1028,7 +1028,7 @@ static void leave_function(void) {
       sq_i_ret(parser.cur_scope->return_slot->ref);
     } else {
       LoadFunc func = load_by_type(ret_type);
-      sq_i_ret(func(sq_type_word, parser.cur_scope->return_slot->ref));
+      sq_i_ret(func(sqbasetype_from_type(ret_type), parser.cur_scope->return_slot->ref));
     }
   }
 
