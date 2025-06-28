@@ -1,4 +1,3 @@
-# DISABLED
 # OUT: 118
 def int main():
     z = 8
