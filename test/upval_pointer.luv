@@ -1,4 +1,3 @@
-# DISABLED
 # OUT: 1
 # OUT: 99
 def int main():

@@ -562,6 +562,8 @@ static SqRef load_by_type_from(Type type, SqRef from) {
   ASSERT(resultsize.u == sq_type_long.u || resultsize.u == sq_type_word.u);
   if (type_kind(type) == TYPE_BOOL) {
     return sq_i_loadub(resultsize, from);
+  } else if (type_kind(type) == TYPE_PTR) {
+    return sq_i_load(resultsize, from);
   } else if (type_is_unsigned(type)) {
     switch (type_size(type)) {
       case 8:
