@@ -1002,9 +1002,7 @@ static void enter_function(Sym* sym,
     ASSERT(str_eq(param_syms[0]->name, parser.static_str_up));
     ASSERT(type_kind(param_syms[0]->type) == TYPE_PTR);
     ASSERT(type_eq(type_ptr_subtype(param_syms[0]->type), type_void));
-#if 0
     parser.cur_scope->upval_base = param_syms[0]->ref;
-#endif
   }
 }
 
