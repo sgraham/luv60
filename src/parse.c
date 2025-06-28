@@ -1075,12 +1075,12 @@ static void leave_function(void) {
                                  cstr_copy(parser.arena, child_func->name));
                                  */
               ASSERT(parser.cur_scope->upval_base.u);
-              ASSERT(false && "todo");
-#if 0
-              ir_STORE(ir_ADD_OFFSET(upval_data, uv->offset),
-                       ir_LOAD(type_to_ir_type(uv->type),
-                               ir_ADD_OFFSET(parser.cur_scope->upval_base, parent_uv->offset)));
-#endif
+              LoadFunc load_func = load_by_type(uv->type);
+              SqRef val = load_func(sqbasetype_from_type(uv->type),
+                                    sq_i_add(sq_type_long, parser.cur_scope->upval_base,
+                                             sq_const_int(parent_uv->offset)));
+              StoreFunc store_func = store_by_type(uv->type);
+              store_func(val, sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
               break;
             }
           }
