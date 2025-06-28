@@ -2429,15 +2429,15 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
     // just be Stuff. The target memfn always just gets *Stuff, so we need to
     // build that from the left that we originally had.
     SqRef self_ptr;
-    if (type_kind(original_left_type) == TYPE_STRUCT || type_is_basic(original_left_type)) {
+    if (type_kind(original_left_type) == TYPE_STRUCT) {
       SqRef addr = sq_i_alloc8(sq_const_int(8));
       sq_i_storel(operand_to_sqref_imm(&left), addr);
       self_ptr = addr;
-      // TODO: i think struct happens to work since it'll be an alloca
-      // (memfn_basic), but in memfn_on_basic_type it doesn't since self will
-      // be an int that needs a pointer to it, rather than just the temporary.
-      // probably other places that are similar too, hrm.
-      ASSERT(false && "addr");
+    } else if (type_is_basic(original_left_type)) {
+      SqRef addr = sq_i_alloc8(sq_const_int(8));
+      StoreFunc func = store_by_type(original_left_type);
+      func(operand_to_sqref_imm(&left), addr);
+      self_ptr = addr;
 #if 0
       ir_ref addr = ir_VAR(IR_ADDR, "self*");
       ir_VSTORE(addr, operand_to_irref_imm(&left));
