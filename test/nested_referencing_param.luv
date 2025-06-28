@@ -1,4 +1,3 @@
-# DISABLED
 # OUT: 59
 def int something(int z):
     def int inner():
