@@ -531,30 +531,29 @@ static ExtFunc zext_by_type(Type type) {
   }
 }
 
-typedef void (*StoreFunc)(SqRef, SqRef);
-
-static void do_memcpy(SqRef from, SqRef into) {
-  SqRef memcpy_func = sq_ref_extern("memcpy");
-  // TODO 16 for str hardcoded!!!
-  sq_i_call3(sq_type_void, memcpy_func, (SqCallArg){sq_type_long, into},
-             (SqCallArg){sq_type_long, from}, (SqCallArg){sq_type_long, sq_const_int(16)});
-}
-
-static StoreFunc store_by_type(Type type) {
+static void store_by_type_val_into(Type type, SqRef val, SqRef into) {
   if (type_is_aggregate(type)) {
-    return do_memcpy;
-  }
-  switch (type_size(type)) {
-    case 8:
-      return sq_i_storel;
-    case 4:
-      return sq_i_storew;
-    case 2:
-      return sq_i_storeh;
-    case 1:
-      return sq_i_storeb;
-    default:
-      errorf("invalid store size %zu", type_size(type));
+    SqRef memcpy_func = sq_ref_extern("memcpy");
+    sq_i_call3(sq_type_void, memcpy_func, (SqCallArg){sq_type_long, into},
+               (SqCallArg){sq_type_long, val},
+               (SqCallArg){sq_type_long, sq_const_int(type_size(type))});
+  } else {
+    switch (type_size(type)) {
+      case 8:
+        sq_i_storel(val, into);
+        break;
+      case 4:
+        sq_i_storew(val, into);
+        break;
+      case 2:
+        sq_i_storeh(val, into);
+        break;
+      case 1:
+        sq_i_storeb(val, into);
+        break;
+      default:
+        errorf("invalid store size %zu", type_size(type));
+    }
   }
 }
 
@@ -869,11 +868,10 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
     }
   } else {
     new->ref = sq_i_alloc8(sq_const_int(type_size(type)));
-    StoreFunc store_func = store_by_type(type);
     if (initial_value) {
-      store_func(operand_to_sqref_imm(initial_value), new->ref);
+      store_by_type_val_into(type, operand_to_sqref_imm(initial_value), new->ref);
     } else {
-      store_func(sq_const_int(0), new->ref);
+      store_by_type_val_into(type, sq_const_int(0), new->ref);
     }
   }
   new->scope_decl = SSD_DECLARED_LOCAL;
@@ -1051,13 +1049,13 @@ static void leave_function(void) {
         case SCOPE_RESULT_LOCAL:{
           LoadFunc load_func = load_by_type(uv->type);
           SqRef val = load_func(sqbasetype_from_type(uv->type), uv->ref);
-          StoreFunc func = store_by_type(uv->type);
-          func(val, sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
+          store_by_type_val_into(uv->type, val,
+                                 sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
           break;
         }
         case SCOPE_RESULT_PARAMETER: {
-          StoreFunc func = store_by_type(uv->type);
-          func(uv->ref, sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
+          store_by_type_val_into(uv->type, uv->ref,
+                                 sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
           break;
         }
         case SCOPE_RESULT_UPVALUE: {
@@ -1079,8 +1077,8 @@ static void leave_function(void) {
               SqRef val = load_func(sqbasetype_from_type(uv->type),
                                     sq_i_add(sq_type_long, parser.cur_scope->upval_base,
                                              sq_const_int(parent_uv->offset)));
-              StoreFunc store_func = store_by_type(uv->type);
-              store_func(val, sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
+              store_by_type_val_into(uv->type, val,
+                                     sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
               break;
             }
           }
@@ -2312,9 +2310,8 @@ static Operand parse_compound_literal(bool can_assign, Type* expected) {
              type_as_str(field_values[i].type), type_as_str(field_type));
     }
     uint32_t field_offset = type_struct_field_offset(lit_type, index);
-    StoreFunc func = store_by_type(field_type);
-    func(operand_to_sqref_imm(&field_values[i]),
-         sq_i_add(sq_type_long, base_addr, sq_const_int(field_offset)));
+    store_by_type_val_into(field_type, operand_to_sqref_imm(&field_values[i]),
+                           sq_i_add(sq_type_long, base_addr, sq_const_int(field_offset)));
   }
 
   return operand_rvalue_local_addr(lit_type, base_addr);
@@ -2363,9 +2360,9 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       if (type_struct_find_field_by_name(left.type, name, &field_type, &field_offset)) {
         Operand rhs_value = parse_expression(expected);
 
-        StoreFunc func = store_by_type(field_type);
-        func(operand_to_sqref_imm(&rhs_value),
-             sq_i_add(sq_type_long, operand_to_sqref_imm(&left), sq_const_int(field_offset)));
+        store_by_type_val_into(
+            field_type, operand_to_sqref_imm(&rhs_value),
+            sq_i_add(sq_type_long, operand_to_sqref_imm(&left), sq_const_int(field_offset)));
         return operand_null;
       } else {
         errorf_offset(name_offset, "'%s' is not a field of type %s.",
@@ -2435,14 +2432,8 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       self_ptr = addr;
     } else if (type_is_basic(original_left_type)) {
       SqRef addr = sq_i_alloc8(sq_const_int(8));
-      StoreFunc func = store_by_type(original_left_type);
-      func(operand_to_sqref_imm(&left), addr);
+      store_by_type_val_into(original_left_type, operand_to_sqref_imm(&left), addr);
       self_ptr = addr;
-#if 0
-      ir_ref addr = ir_VAR(IR_ADDR, "self*");
-      ir_VSTORE(addr, operand_to_irref_imm(&left));
-      self_ptr = ir_VADDR(addr);
-#endif
     } else if (type_kind(original_left_type) == TYPE_PTR &&
                type_kind(type_ptr_subtype(original_left_type)) == TYPE_STRUCT) {
       self_ptr = left.ref;
@@ -3005,8 +2996,7 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
     if (!convert_operand(&rhs, subtype)) {
       errorf("Cannot store type %s into %s.", type_as_str(rhs.type), type_as_str(left.type));
     }
-    StoreFunc func = store_by_type(rhs.type);
-    func(operand_to_sqref_imm(&rhs), target_addr);
+    store_by_type_val_into(rhs.type, operand_to_sqref_imm(&rhs), target_addr);
     return operand_null;
   } else {
     return operand_rvalue_imm(subtype, sq_i_load(sqbasetype_from_type(subtype), target_addr));
@@ -3320,8 +3310,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
           errorf("Cannot assign type %s to type %s.", type_as_str(op.type), type_as_str(sym->type));
         }
         if (eq_kind == TOK_EQ) {
-          StoreFunc func = store_by_type(op.type);
-          func(operand_to_sqref_imm(&op), sym->ref);
+          store_by_type_val_into(op.type, operand_to_sqref_imm(&op), sym->ref);
           return operand_null;
         } else {
           error_offset(eq_offset, "Unhandled assignment type.");
@@ -3995,8 +3984,7 @@ static LastStatementType return_statement(void) {
       errorf("Cannot convert type %s to expected return type %s.", type_as_str(op.type),
              type_as_str(func_ret));
     }
-    StoreFunc func = store_by_type(op.type);
-    func(operand_to_sqref_imm(&op), parser.cur_scope->return_slot->ref);
+    store_by_type_val_into(op.type, operand_to_sqref_imm(&op), parser.cur_scope->return_slot->ref);
     return LST_RETURN_VALUE;
   } else {
     consume(TOK_NEWLINE, "Expected newline after return in function with no return type.");
