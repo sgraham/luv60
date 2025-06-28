@@ -121,6 +121,7 @@ def get_tests():
         disabled_mac_prefix = "# DISABLED_MAC"
         disabled_prefix = "# DISABLED"
         imported_prefix = "# IMPORTED"
+        clangrun_prefix = "# CLANGRUN: "
         ret_set = False
         cret_set = False
         with open(test, "r", encoding="utf-8") as f:
@@ -139,6 +140,8 @@ def get_tests():
                     cerr += l[len(cerr_prefix) :].rstrip() + "\n"
                 elif l.startswith(out_prefix):
                     out += l[len(out_prefix) :].rstrip() + "\n"
+                elif l.startswith(clangrun_prefix):
+                    clangrun = l[len(clangrun_prefix) :].rstrip()
                 elif l.startswith(disabled_linux_prefix):
                     disabled.append('linux')
                 elif l.startswith(disabled_win_prefix):
