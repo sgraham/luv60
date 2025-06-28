@@ -1039,8 +1039,7 @@ static void leave_function(void) {
     Sym* child_func = parser.cur_scope->func_sym;
     parser.cur_scope = &parser.scopes[parser.num_scopes - 2];
     UpvalMap* parent_uvm = &parser.cur_scope->upval_map;
-    (void)parent_uvm;
-    ASSERT(false && "todo; i think itemctx activate here");
+    sq_itemctx_activate(parser.cur_scope->func_item_ctx);
 
     SqRef upval_data = sq_i_alloc8(sq_const_int(inner_uvm->alloc_size));
     child_func->ref2 = upval_data;
