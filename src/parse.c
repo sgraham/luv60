@@ -557,34 +557,34 @@ static void store_by_type_val_into(Type type, SqRef val, SqRef into) {
   }
 }
 
-typedef SqRef (*LoadFunc)(SqType, SqRef);
-
-static LoadFunc load_by_type(Type type) {
+static SqRef load_by_type_from(Type type, SqRef from) {
+  SqType resultsize = sqbasetype_from_type(type);
+  ASSERT(resultsize.u == sq_type_long.u || resultsize.u == sq_type_word.u);
   if (type_kind(type) == TYPE_BOOL) {
-    return sq_i_loadub;
+    return sq_i_loadub(resultsize, from);
   } else if (type_is_unsigned(type)) {
     switch (type_size(type)) {
       case 8:
-        return sq_i_load;
+        return sq_i_load(resultsize, from);
       case 4:
-        return sq_i_loaduw;
+        return sq_i_loaduw(resultsize, from);
       case 2:
-        return sq_i_loaduh;
+        return sq_i_loaduh(resultsize, from);
       case 1:
-        return sq_i_loadub;
+        return sq_i_loadub(resultsize, from);
       default:
         errorf("invalid unsigned load size %zu", type_size(type));
     }
   } else {
     switch (type_size(type)) {
       case 8:
-        return sq_i_load;
+        return sq_i_load(resultsize, from);
       case 4:
-        return sq_i_loadsw;
+        return sq_i_loadsw(resultsize, from);
       case 2:
-        return sq_i_loadsh;
+        return sq_i_loadsh(resultsize, from);
       case 1:
-        return sq_i_loadsb;
+        return sq_i_loadsb(resultsize, from);
       default:
         errorf("invalid signed load size %zu", type_size(type));
     }
@@ -632,8 +632,7 @@ static SqRef operand_to_sqref_imm(Operand* op) {
         // TODO: This seems questionable.
         return op->ref;
       }
-      LoadFunc func = load_by_type(op->type);
-      return func(sqbasetype_from_type(op->type), op->ref);
+      return load_by_type_from(op->type, op->ref);
     }
     case OPK_REF_RVAL_GLOBAL_ADDR:
     case OPK_REF_LVAL_GLOBAL_ADDR:
@@ -641,8 +640,7 @@ static SqRef operand_to_sqref_imm(Operand* op) {
         // TODO: This seems questionable. see test/print.luv
         return op->ref;
       }
-      LoadFunc func = load_by_type(op->type);
-      return func(sqbasetype_from_type(op->type), op->ref);
+      return load_by_type_from(op->type, op->ref);
     default:
       error("internal error: unhandled OpKind");
   }
@@ -1013,8 +1011,7 @@ static void leave_function(void) {
     if (type_is_aggregate(ret_type)) {
       sq_i_ret(parser.cur_scope->return_slot->ref);
     } else {
-      LoadFunc func = load_by_type(ret_type);
-      sq_i_ret(func(sqbasetype_from_type(ret_type), parser.cur_scope->return_slot->ref));
+      sq_i_ret(load_by_type_from(ret_type, parser.cur_scope->return_slot->ref));
     }
   }
 
@@ -1046,9 +1043,8 @@ static void leave_function(void) {
         case SCOPE_RESULT_GLOBAL:
         case SCOPE_RESULT_UNDEFINED:
           error("internal error, unexpected scope_result in upval capture");
-        case SCOPE_RESULT_LOCAL:{
-          LoadFunc load_func = load_by_type(uv->type);
-          SqRef val = load_func(sqbasetype_from_type(uv->type), uv->ref);
+        case SCOPE_RESULT_LOCAL: {
+          SqRef val = load_by_type_from(uv->type, uv->ref);
           store_by_type_val_into(uv->type, val,
                                  sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
           break;
@@ -1073,10 +1069,9 @@ static void leave_function(void) {
                                  cstr_copy(parser.arena, child_func->name));
                                  */
               ASSERT(parser.cur_scope->upval_base.u);
-              LoadFunc load_func = load_by_type(uv->type);
-              SqRef val = load_func(sqbasetype_from_type(uv->type),
-                                    sq_i_add(sq_type_long, parser.cur_scope->upval_base,
-                                             sq_const_int(parent_uv->offset)));
+              SqRef val =
+                  load_by_type_from(uv->type, sq_i_add(sq_type_long, parser.cur_scope->upval_base,
+                                                       sq_const_int(parent_uv->offset)));
               store_by_type_val_into(uv->type, val,
                                      sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
               break;
@@ -2381,10 +2376,9 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       uint32_t field_offset;
       Type field_type;
       if (type_struct_find_field_by_name(left.type, name, &field_type, &field_offset)) {
-        LoadFunc func = load_by_type(field_type);
-        SqRef ref =
-            func(sqbasetype_from_type(field_type),
-                 sq_i_add(sq_type_long, operand_to_sqref_imm(&left), sq_const_int(field_offset)));
+        SqRef ref = load_by_type_from(
+            field_type,
+            sq_i_add(sq_type_long, operand_to_sqref_imm(&left), sq_const_int(field_offset)));
         return operand_rvalue_imm(field_type, ref);
       }
 
@@ -3248,10 +3242,8 @@ static Operand find_or_create_upval(Scope* scope, Str name, Sym* sym) {
   }
 
   Type type = sym->type;
-  LoadFunc func = load_by_type(type);
-  SqRef val = func(
-      sqbasetype_from_type(type),
-      sq_i_add(sq_type_long, scope->upval_base, sq_const_int(uvm->upvals[upval_index].offset)));
+  SqRef val = load_by_type_from(type, sq_i_add(sq_type_long, scope->upval_base,
+                                               sq_const_int(uvm->upvals[upval_index].offset)));
   return operand_rvalue_imm(type, val);
 }
 
