@@ -3910,6 +3910,7 @@ static void struct_statement() {
 
   Type strukt = type_new_struct(name, num_fields, field_names, field_types, have_initializers);
   if (have_initializers) {
+    ASSERT(false && "need to make a data to copy");
     uint8_t* blob = arena_push(parser.arena, type_size(strukt), type_align(strukt));
     memset(blob, 0, type_size(strukt));
     for (uint32_t i = 0; i < num_fields; ++i) {
