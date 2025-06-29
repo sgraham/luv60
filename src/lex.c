@@ -39,7 +39,7 @@ typedef struct Simd64 {
 typedef struct Classes {
   uint64_t space;
   uint64_t punct;
-  uint64_t digit;
+  //uint64_t digit;
 } Classes;
 
 #  define EQ_CHAR(name, ch)                                                                        \
@@ -62,7 +62,6 @@ EQ_CHAR(less_than, '<')
 EQ_CHAR(greater_than, '>')
 EQ_CHAR(equal, '=')
 EQ_CHAR(bang, '!')
-EQ_CHAR(dot, '.')
 
 #  define HAS_BIT(n)                                                               \
     static FORCE_INLINE uint64_t has_bit_##n(const Simd64* __restrict in) {        \
@@ -78,7 +77,7 @@ EQ_CHAR(dot, '.')
     }
 
 HAS_BIT(1)
-HAS_BIT(3)
+//HAS_BIT(3)
 
 // "cumulative bitwise xor," flipping bits each time a 1 is encountered.
 //
@@ -163,7 +162,7 @@ static FORCE_INLINE Classes classify(const Simd64* __restrict in) {
   const Simd64 mask = {_mm256_and_si256(low_mask.chunks[0], high_mask.chunks[0]),
                        _mm256_and_si256(low_mask.chunks[1], high_mask.chunks[1])};
 
-  return (Classes){.space = has_bit_1(&mask), .punct = eq_zero(&mask), .digit = has_bit_3(&mask)};
+  return (Classes){.space = has_bit_1(&mask), .punct = eq_zero(&mask)};
 }
 
 static const uint64_t ODD_BITS = 0xAAAAAAAAAAAAAAAAull;
@@ -323,7 +322,6 @@ uint32_t lex_indexer_simd(const uint8_t* buf,
   uint64_t state_first_is_gt_escaped = 0;
   uint64_t state_first_is_eq_escaped = 0;
   uint64_t state_first_is_bang_escaped = 0;
-  uint64_t state_first_is_digit_escaped = 0;
   uint32_t* to = token_offsets;
 
   for (uint32_t offset = 0; offset < byte_count_rounded_up; offset += 64) {
@@ -372,14 +370,12 @@ uint32_t lex_indexer_simd(const uint8_t* buf,
     const uint64_t gt = eq_greater_than(&data);
     const uint64_t eq = eq_equal(&data);
     const uint64_t bang = eq_bang(&data);
-    const uint64_t dot = eq_dot(&data);
     const uint64_t ltesc = escapes_next_block(lt, &state_first_is_lt_escaped);
     const uint64_t gtesc = escapes_next_block(gt, &state_first_is_gt_escaped);
     const uint64_t eqesc = escapes_next_block(eq, &state_first_is_eq_escaped);
     const uint64_t bangesc = escapes_next_block(bang, &state_first_is_bang_escaped);
-    const uint64_t digitesc = escapes_next_block(classes.digit, &state_first_is_digit_escaped);
     const uint64_t double_mask = (ltesc & (lt | eq)) | (gtesc & (gt | eq)) | (eqesc & eq) |
-                                 (bangesc & eq) | (digitesc & dot);
+                                 (bangesc & eq);
 #  if DO_PRINTS
     print_with_coloured_bits("digit", classes.digit, "");
     print_with_coloured_bits("digitesc", digitesc, "");
@@ -390,6 +386,8 @@ uint32_t lex_indexer_simd(const uint8_t* buf,
     // only be an index on the '1'. The current attempt means with digits
     // escaping '.' almost works, but then "a2.a" fails because that dot gets
     // escaped. It seems hard to do given the current approach.
+    // ... So, just let it ride, and split it into '1', '.', and '00', and
+    // force the parser to deal with it. :/
 
     uint64_t S = classes.punct & ~(quotes_mask | comments_mask);
 #  if DO_PRINTS
@@ -398,7 +396,7 @@ uint32_t lex_indexer_simd(const uint8_t* buf,
 
     S = S | quotes;
 
-    uint64_t P = (S | classes.space) & ~(digitesc & dot);
+    uint64_t P = S | classes.space;
 #  if DO_PRINTS
     print_with_coloured_bits("P", P, "");
 #  endif
