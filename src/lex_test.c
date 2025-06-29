@@ -439,13 +439,20 @@ TEST(Lex, ChunkCrossDoubleTokensSomethingElseAfter) {
   EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
 }
 
+// These "float" lexings are dumb because of the simd lexer problem of
+// distinguishing dot in the a.b context from the 1.0 context. "Lexing" floats
+// is deferred to the parser as a result, so it has to handle things like:
+// [1 . 0] or [345 . 67f], while rejecting [1i32 .], etc. See parse_number().
+
 TEST(Lex, FloatAndFieldDots) {
   KindAndOffset expected[] = {
-      {TOK_IDENT_VAR, 0},      //
-      {TOK_DOT, 1},            //
-      {TOK_IDENT_VAR, 2},      //
-      {TOK_FLOAT_LITERAL, 4},  //
-      {TOK_EOF, 9},            //
+      {TOK_IDENT_VAR, 0},    //
+      {TOK_DOT, 1},          //
+      {TOK_IDENT_VAR, 2},    //
+      {TOK_INT_LITERAL, 4},  //
+      {TOK_DOT, 5},          //
+      {TOK_INT_LITERAL, 6},  //
+      {TOK_EOF, 9},          //
   };
   const char input[] = "a.b 1.000";
   EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
@@ -453,8 +460,10 @@ TEST(Lex, FloatAndFieldDots) {
 
 TEST(Lex, ChunkCrossFloat) {
   KindAndOffset expected[] = {
-      {TOK_FLOAT_LITERAL, 63},  //
-      {TOK_EOF, 69},            //
+      {TOK_INT_LITERAL, 63},  //
+      {TOK_DOT, 64},          //
+      {TOK_INT_LITERAL, 65},  //
+      {TOK_EOF, 69},          //
   };
   const char input[] =
       "                                                               1"
@@ -466,8 +475,12 @@ TEST(Lex, IntegerSuffix) {
   KindAndOffset expected[] = {
       {TOK_INT_LITERAL, 0},     //
       {TOK_I32, 7},             //
-      {TOK_FLOAT_LITERAL, 11},  //
-      {TOK_FLOAT_LITERAL, 16},  //
+      {TOK_INT_LITERAL, 11},  //
+      {TOK_DOT, 12},  //
+      {TOK_INT_LITERAL, 13},  //
+      {TOK_INT_LITERAL, 16},  //
+      {TOK_DOT, 17},  //
+      {TOK_INT_LITERAL, 18},  //
       {TOK_EOF, 20},            //
   };
   const char input[] = "123i32 i32 2.0f 3.1d";

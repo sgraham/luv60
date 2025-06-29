@@ -159,6 +159,7 @@ typedef struct Parser {
   Str static_str_up;
 
   SqSymbol i32_print_fmt;
+  SqSymbol float_print_fmt;
   SqSymbol str_print_fmt;
   SqSymbol range2_print_fmt;
   SqSymbol range3_print_fmt;
@@ -537,6 +538,10 @@ static void store_by_type_val_into(Type type, SqRef val, SqRef into) {
     sq_i_call3(sq_type_void, memcpy_func, (SqCallArg){sq_type_long, into},
                (SqCallArg){sq_type_long, val},
                (SqCallArg){sq_type_long, sq_const_int(type_size(type))});
+  } else if (type_kind(type) == TYPE_DOUBLE) {
+    sq_i_stored(val, into);
+  } else if (type_kind(type) == TYPE_FLOAT) {
+    sq_i_stores(val, into);
   } else {
     switch (type_size(type)) {
       case 8:
@@ -564,6 +569,10 @@ static SqRef load_by_type_from(Type type, SqRef from) {
     return sq_i_loadub(resultsize, from);
   } else if (type_kind(type) == TYPE_PTR) {
     return sq_i_load(resultsize, from);
+  } else if (type_kind(type) == TYPE_DOUBLE) {
+    return sq_i_load(sq_type_double, from);
+  } else if (type_kind(type) == TYPE_FLOAT) {
+    return sq_i_load(sq_type_single, from);
   } else if (type_is_unsigned(type)) {
     switch (type_size(type)) {
       case 8:
@@ -615,12 +624,10 @@ static SqRef operand_to_sqref_imm(Operand* op) {
           return sq_const_int(op->val.i64);
         case TYPE_U64:
           return sq_const_int((int64_t)op->val.u64);
-#if 0
         case TYPE_FLOAT:
-          return ir_CONST_FLOAT(op->val.f);
+          return sq_const_single(op->val.f);
         case TYPE_DOUBLE:
-          return ir_CONST_DOUBLE(op->val.d);
-#endif
+          return sq_const_double(op->val.d);
         default:
           error("internal error: unexpected const type.");
       }
@@ -798,34 +805,22 @@ static void print_range(Operand* op) {
   sq_block_start(block_after);
 }
 
-#if 0
-static void print_float_impl(float val) {
-  printf("%f\n", val);
-}
-
 static void print_float(Operand* op) {
-  ir_ref addr = ir_CONST_ADDR(print_float_impl);
-  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
-}
-
-static void print_double_impl(double val) {
-  printf("%f\n", val);
+  SqRef val = operand_to_sqref_imm(op);
+  SqRef vald = sq_i_exts(val);
+  SqRef print_func = sq_ref_extern("printf");
+  SqRef fmt_str = sq_ref_for_symbol(parser.float_print_fmt);
+  sq_i_call3(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str}, sq_varargs_begin,
+             (SqCallArg){sq_type_double, vald});
 }
 
 static void print_double(Operand* op) {
-  ir_ref addr = ir_CONST_ADDR(print_double_impl);
-  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
+  SqRef val = operand_to_sqref_imm(op);
+  SqRef print_func = sq_ref_extern("printf");
+  SqRef fmt_str = sq_ref_for_symbol(parser.float_print_fmt);
+  sq_i_call3(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str}, sq_varargs_begin,
+             (SqCallArg){sq_type_double, val});
 }
-
-static void print_range_impl(RuntimeRange range) {
-  if (range.step == 1) {
-    printf("range(%" PRIi64 ", %" PRIi64 ")\n", range.start, range.stop);
-  } else {
-    printf("range(%" PRIi64 ", %" PRIi64 ", %" PRIi64 ")\n", range.start, range.stop, range.step);
-  }
-}
-
-#endif
 
 static void initialize_aggregate(SqRef base_addr, Type type) {
   size_t size = type_size(type);
@@ -1579,7 +1574,7 @@ static bool is_floating_type(Type type) {
 // - allows arbitrary _ as separators
 // - uses StrView rather than nul termination
 // - extracts and returns u8, i16, etc. suffixes
-static uint64_t scan_int(StrView num, Type* suffix) {
+static uint64_t scan_int(StrView num, bool allow_suffix, Type* suffix) {
   static uint8_t char_to_digit[256] = {
       ['0'] = 0,               //
       ['1'] = 1,               //
@@ -2548,41 +2543,14 @@ static Operand parse_null_literal(bool can_assign, Type* expected) {
   return operand_null;
 }
 
-// Should probably write one that doesn't require nul termination instead.
-// We also don't support 'e' in the lexer, but this does, and probably other
-// minor variations. But this is OK for simple 1.0 type things for now.
-#if 0
-static double scan_double(StrView num) {
-  char* copy = arena_push(parser.arena, num.size + 1, 1);
-  memcpy(copy, num.data, num.size);
-  copy[num.size] = 0;
-  char* end;
-  *(char*)memchr(copy, '`', num.size) = '.';
-  return strtod(copy, &end);
-}
-#endif
-
-static Operand parse_float_literal(bool can_assign, Type* expected) {
-#if 0
-  StrView view = get_strview_for_offsets(prev_offset(), cur_offset());
-  while (view.data[view.size - 1] == ' ') {
-    --view.size;
-  }
-  double val = scan_double(view);
-  return operand_const(type_double, (Val){.d = val});
-#endif
-  ASSERT(false && "todo");
-  return operand_null;
-}
-
-static Operand parse_int_literal(bool can_assign, Type* expected) {
+static Operand parse_int_literal(bool allow_suffix) {
   Type suffix = {0};
   StrView view = get_strview_for_offsets(prev_offset(), cur_offset());
   ASSERT(view.size > 0);
   while (view.data[view.size - 1] == ' ') {
     --view.size;
   }
-  uint64_t val = scan_int(view, &suffix);
+  uint64_t val = scan_int(view, allow_suffix, &suffix);
   Operand operand = operand_const(type_u64, (Val){.u64 = val});
   Type type = type_u64;
   bool overflow = false;
@@ -2652,6 +2620,54 @@ static Operand parse_int_literal(bool can_assign, Type* expected) {
 
   cast_operand(&operand, type);
   return operand;
+}
+
+static double scan_fractional_part_of_double(StrView num) {
+  char* copy = arena_push(parser.arena, num.size + 2, 1);
+  copy[0] = '.';
+  memcpy(copy + 1, num.data, num.size);
+  copy[num.size] = 0;
+  char* end;
+  return strtod(copy, &end);
+}
+
+// The simd lexer can't handle contextually distinguishing between '.' in the
+// context of separating field or package access vs. being the decimal point in
+// a floating point number. A previous version used '`' as the decimal separator
+// to avoid this problem, but it just felt too ugly to use in practice. Using
+// comma for a decimal separator also would have problems because of separating
+// function call arguments. A single quote would also be confusing (looks like
+// digit grouping). Semi-colon is maybe plausible as a separator (sort of a
+// combination of North American and European styles?) but still feels a bit
+// hokey to have to separate that way (in particular for us aged C-like-rs).
+//
+// So! Failing a way to properly lex floats, we defer the problem to the parser
+// and turn a sequence like [int dot int] into a double const instead of a u64.
+//
+// This is currently somewhat too flexible, and will allow things like
+// "0xabcu64.34" to be a float, but maybe something like that is useful (?)
+// especially if we we want a direct writing down of floats by writing IEEE-754
+// formatted hex value.
+//
+// This also sucks in that it'll accept "1 . 4". Hrm.
+static Operand parse_number(bool can_assign, Type* expected) {
+  Operand integer_part = parse_int_literal(true);
+  if (!check(TOK_DOT)) {
+    return integer_part;
+  }
+
+  // Some form of floating point number now.
+
+  advance();
+
+  double final = (double)integer_part.val.i64;
+  if (check(TOK_INT_LITERAL)) {
+    final += scan_fractional_part_of_double(get_strview_for_offsets(prev_offset(), cur_offset()));
+    advance();
+  } else {
+    // Just "1.", nothing to add fractionally.
+  }
+  return operand_const(type_double, (Val){.d = final});
 }
 
 static Operand parse_offsetof(bool can_assign, Type* expected) {
@@ -3293,7 +3309,7 @@ static Rule rules[NUM_TOKEN_KINDS] = {
     {NULL, parse_binary, PREC_EQUALITY},                        // TOK_EQEQ
     {NULL, NULL, PREC_NONE},                                    // TOK_ERROR
     {parse_bool_literal, NULL, PREC_NONE},                      // TOK_FALSE
-    {parse_float_literal, NULL, PREC_NONE},                     // TOK_FLOAT_LITERAL
+    {NULL, NULL, PREC_NONE},                                    // TOK_FLOAT_LITERAL
     {NULL, NULL, PREC_NONE},                                    // TOK_FOR
     {NULL, NULL, PREC_NONE},                                    // TOK_FOREIGN
     {NULL, parse_binary, PREC_COMPARISON},                      // TOK_GEQ
@@ -3306,7 +3322,7 @@ static Rule rules[NUM_TOKEN_KINDS] = {
     {NULL, NULL, PREC_NONE},                                    // TOK_IF
     {NULL, NULL, PREC_NONE},                                    // TOK_IMPORT
     {NULL, parse_in_or_not_in, PREC_COMPARISON},                // TOK_IN
-    {parse_int_literal, NULL, PREC_NONE},                       // TOK_INT_LITERAL
+    {parse_number, NULL, PREC_NONE},                            // TOK_INT_LITERAL
     {parse_dict_literal, NULL, PREC_NONE},                      // TOK_LBRACE
     {parse_len, NULL, PREC_NONE},                               // TOK_LEN
     {NULL, parse_binary, PREC_COMPARISON},                      // TOK_LEQ
@@ -3551,12 +3567,10 @@ static void print_statement(void) {
       print_bool(&val);
     } else if (type_eq(val.type, type_range)) {
       print_range(&val);
-#if 0
     } else if (type_eq(val.type, type_float)) {
       print_float(&val);
     } else if (type_eq(val.type, type_double)) {
       print_double(&val);
-#endif
     } else if (convert_operand(&val, type_i32)) {
       print_i32(&val);
     } else {
@@ -3991,6 +4005,11 @@ static void parse_impl(Arena* main_arena,
   sq_data_string("%d\n");
   sq_data_byte(0);
   parser.i32_print_fmt = sq_data_end();
+
+  sq_data_start(sq_linkage_default, "float_print_fmt");
+  sq_data_string("%f\n");
+  sq_data_byte(0);
+  parser.float_print_fmt = sq_data_end();
 
   sq_data_start(sq_linkage_default, "str_print_fmt");
   sq_data_string("%.*s\n");

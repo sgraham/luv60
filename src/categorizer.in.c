@@ -128,7 +128,6 @@ decorator = '@' [a-z_][a-zA-Z0-9_]*;
 
   "\""        { return TOK_STRING_QUOTED; }
   decorator   { return TOK_IDENT_DECORATOR; }
-  float       { return TOK_FLOAT_LITERAL; }
   dec         { return TOK_INT_LITERAL; }
   hex         { return TOK_INT_LITERAL; }
   oct         { return TOK_INT_LITERAL; }
@@ -142,6 +141,7 @@ decorator = '@' [a-z_][a-zA-Z0-9_]*;
   */
 
 #if 0
+  float       { return TOK_FLOAT_LITERAL; }
   "<<="       { token = TOK_LSHIFTEQ; SKIP(); SKIP(); break; }
   ">>="       { token = TOK_RSHIFTEQ; SKIP(); SKIP(); break; }
   "+="        { token = TOK_PLUSEQ; SKIP(); break; }
