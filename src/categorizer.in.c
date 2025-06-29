@@ -14,7 +14,7 @@ bin = '0b' [01_]+ intsuffix?;
 oct = '0o' [0-7_]+ intsuffix?;
 dec = [0-9_]+ intsuffix?;
 hex = '0x' [0-9a-fA-F_]+ intsuffix?;
-float = [0-9]+ '.' [0-9]+;
+float = [0-9]+ '.' [0-9]+ [fd]*;
 decorator = '@' [a-z_][a-zA-Z0-9_]*;
 
   "alignof"   { return TOK_ALIGNOF; }

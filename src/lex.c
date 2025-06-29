@@ -476,12 +476,10 @@ uint32_t lex_indexer_fallback(const uint8_t* buf,
       ['w'] = true, ['x'] = true, ['y'] = true, ['z'] = true, ['`'] = true,
   };
 
-#if 0
   static bool is_digit[256] = {
       ['0'] = true, ['1'] = true, ['2'] = true, ['3'] = true, ['4'] = true,
       ['5'] = true, ['6'] = true, ['7'] = true, ['8'] = true, ['9'] = true,
   };
-#endif
 
   uint32_t i = 0;
   for (;;) {
@@ -516,7 +514,6 @@ uint32_t lex_indexer_fallback(const uint8_t* buf,
         ++i;
         break;
       default:
-#if 0
         // Just 'identifierish' handled idents and ints (including bin/hex
         // prefixes). But because '.' is a separator in `a.b`, but just part
         // of the number for a float, we need to handle number specially
@@ -526,12 +523,11 @@ uint32_t lex_indexer_fallback(const uint8_t* buf,
           *to++ = i;
           for (;;) {
             c = buf[++i];
-            if (!is_digit[(int)c] && c != '.') {
+            if (!is_digit[(int)c] && c != '.' && !is_identifierish[(int)c]) {
               break;
             }
           }
         } else
-#endif
         if (is_identifierish[(int)c]) {
           *to++ = i;
           for (;;) {

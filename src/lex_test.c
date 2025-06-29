@@ -461,3 +461,15 @@ TEST(Lex, ChunkCrossFloat) {
       ".2345";
   EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
 }
+
+TEST(Lex, IntegerSuffix) {
+  KindAndOffset expected[] = {
+      {TOK_INT_LITERAL, 0},     //
+      {TOK_I32, 7},             //
+      {TOK_FLOAT_LITERAL, 11},  //
+      {TOK_FLOAT_LITERAL, 16},  //
+      {TOK_EOF, 20},            //
+  };
+  const char input[] = "123i32 i32 2.0f 3.1d";
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+}
