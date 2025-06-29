@@ -825,7 +825,11 @@ static void print_double(Operand* op) {
 static void initialize_aggregate(SqRef base_addr, Type type) {
   size_t size = type_size(type);
   if (type_kind(type) == TYPE_STRUCT && type_struct_has_initializer(type)) {
-    ASSERT(false && "todo");
+    SqRef memcpy_func = sq_ref_extern("memcpy");
+    SqSymbol init_sym = { type_struct_initializer_SqSymbol(type) };
+    sq_i_call3(sq_type_void, memcpy_func, (SqCallArg){sq_type_long, base_addr},
+               (SqCallArg){sq_type_long, sq_ref_for_symbol(init_sym)},
+               (SqCallArg){sq_type_long, sq_const_int(size)});
 #if 0
     ir_ref memcpy_addr = ir_CONST_ADDR(memcpy);
     ir_ref default_blob = ir_CONST_ADDR(type_struct_initializer_blob(type));
@@ -3777,7 +3781,10 @@ static void struct_statement() {
 
   Type strukt = type_new_struct(name, num_fields, field_names, field_types, have_initializers);
   if (have_initializers) {
-    ASSERT(false && "need to make a data to copy");
+
+    // Because we need to zero init fields, build this as if it was jitting into
+    // a memory structure, and then use byte emission to build the data object.
+
     uint8_t* blob = arena_push(parser.arena, type_size(strukt), type_align(strukt));
     memset(blob, 0, type_size(strukt));
     for (uint32_t i = 0; i < num_fields; ++i) {
@@ -3792,14 +3799,20 @@ static void struct_statement() {
         }
         // TODO: not 100% certain this is not copying garbage from the val field
         // out of the range of the size of type if it gets convert_operand'd.
-        ASSERT(false && "todo");
-#if 0
         memcpy(blob + type_struct_field_offset(strukt, i), &field_initializers[i].val,
                type_size(field_type));
-#endif
       }
     }
-    type_struct_set_initializer_blob(strukt, blob);
+
+    sq_data_start(sq_linkage_default, cstr_copy(parser.arena, name));  // "_init"+name?
+    for (uint32_t i = 0; i < type_size(strukt); ++i) {
+      sq_data_byte(blob[i]);
+    }
+    SqSymbol init_sym = sq_data_end();
+
+    type_struct_set_initializer_symbol(strukt, init_sym.u);
+
+    ASSERT(!parser.cur_scope->is_function);
   }
   Sym* new = sym_new(SYM_TYPE, name, strukt);
   new->scope_decl = SSD_DECLARED_GLOBAL;

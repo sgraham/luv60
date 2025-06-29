@@ -66,7 +66,8 @@ typedef union TypeDataExtra {
     uint32_t field_offset;
   } STRUCT_EXTRA;
   struct {
-    void* addr;
+    // This is the SqSymbol internal :(
+    uint32_t initializer_symbol;
   } STRUCT_INITIALIZER;
   struct {
     Type param[WORDS_IN_EXTRA];
@@ -288,13 +289,13 @@ Type type_new_struct(Str name,
   return strukt;
 }
 
-void type_struct_set_initializer_blob(Type type, void* blob) {
+void type_struct_set_initializer_symbol(Type type, uint32_t sqSymbolInternal) {
   ASSERT(type_kind(type) == TYPE_STRUCT);
   ASSERT(type_struct_has_initializer(type));
   TypeData* td = type_td(type);
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
   TypeDataExtra* init_extra = &tde[type_struct_num_fields(type)];
-  init_extra->STRUCT_INITIALIZER.addr = blob;
+  init_extra->STRUCT_INITIALIZER.initializer_symbol= sqSymbolInternal;
 }
 
 // For TypeDatas that don't have extra entries.
@@ -596,13 +597,13 @@ bool type_struct_has_initializer(Type type) {
   return (td->STRUCT.has_init_align_and_num_fields & 0x80000000) != 0;
 }
 
-void* type_struct_initializer_blob(Type type) {
+uint32_t type_struct_initializer_SqSymbol(Type type) {
   ASSERT(type_kind(type) == TYPE_STRUCT);
   ASSERT(type_struct_has_initializer(type));
   TypeData* td = type_td(type);
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
   TypeDataExtra* init_extra = &tde[type_struct_num_fields(type)];
-  return init_extra->STRUCT_INITIALIZER.addr;
+  return init_extra->STRUCT_INITIALIZER.initializer_symbol;
 }
 
 Str type_struct_field_name(Type type, uint32_t i) {
