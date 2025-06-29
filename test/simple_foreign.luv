@@ -1,0 +1,10 @@
+# CLANGRUN: CLANG_BIN -g OUT_DIR/{self}.s test/test_simple_foreign.c -o OUT_DIR/{self}.exe
+# OUT: in foreign
+# OUT: 345
+
+foreign int testforeign_myfunc()
+
+def int main():
+    val = testforeign_myfunc()
+    print val
+    return 0

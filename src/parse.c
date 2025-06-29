@@ -648,6 +648,14 @@ static SqRef operand_to_sqref_imm(Operand* op) {
   }
 }
 
+static SqRef sqref_for_sym(Sym* sym) {
+  if (type_kind(sym->type) == TYPE_FUNC && type_func_flags(sym->type) & TFF_FOREIGN) {
+    return sq_ref_extern(cstr_copy(parser.arena, sym->name));
+  } else {
+    return sq_ref_for_symbol(sym->global);
+  }
+}
+
 #if 0
 static ir_ref addr_for_operand(Operand* op) {
   ir_ref var = ir_VAR(type_to_ir_type(op->type), "&");
@@ -2299,8 +2307,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
     } else {
       error("TODO: self ptr");
     }
-    return operand_rvalue_global_addr_bound(func_sym->type, sq_ref_for_symbol(func_sym->global),
-                                            self_ptr);
+    return operand_rvalue_global_addr_bound(func_sym->type, sqref_for_sym(func_sym), self_ptr);
   }
 
   ASSERT(false && "todo");
@@ -3117,13 +3124,13 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
     case SCOPE_RESULT_LOCAL:
       if (type_kind(sym->type) == TYPE_FUNC) {
         if (type_func_is_nested(sym->type)) {
-          return operand_bound_local_function(sym->type, sq_ref_for_symbol(sym->global), sym->ref2);
+          return operand_bound_local_function(sym->type, sqref_for_sym(sym), sym->ref2);
         } else {
-          return operand_rvalue_global_addr(sym->type, sq_ref_for_symbol(sym->global));
+          return operand_rvalue_global_addr(sym->type, sqref_for_sym(sym));
         }
       } else {
         if (sym->scope_decl == SSD_DECLARED_GLOBAL) {
-          return operand_lvalue_global_addr(sym->type, sq_ref_for_symbol(sym->global));
+          return operand_lvalue_global_addr(sym->type, sqref_for_sym(sym));
         } else {
           return operand_lvalue_local(sym->type, sym->ref);
         }
@@ -3134,9 +3141,9 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
     case SCOPE_RESULT_GLOBAL: {
       if (type_kind(sym->type) == TYPE_FUNC) {
         // Doesn't make sense in our use for GLOBAL to be bound I don't think.
-        return operand_rvalue_global_addr(sym->type, sq_ref_for_symbol(sym->global));
+        return operand_rvalue_global_addr(sym->type, sqref_for_sym(sym));
       } else {
-        return operand_lvalue_global_addr(sym->type, sq_ref_for_symbol(sym->global));
+        return operand_lvalue_global_addr(sym->type, sqref_for_sym(sym));
       }
     }
     case SCOPE_RESULT_UPVALUE: {
@@ -3629,11 +3636,6 @@ static void foreign_statement(void) {
       type_function(param_types, num_params, return_type, TFF_FOREIGN);
   Sym* funcsym = sym_new(SYM_FUNC, name, functype);
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
-
-  ASSERT(false && "todo");
-#if 0
-  funcsym->addr = parser.get_extern((StrView){str_raw_ptr(name), str_len(name)});
-#endif
 }
 
 static void on_statement(void) {
