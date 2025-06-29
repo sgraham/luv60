@@ -438,3 +438,26 @@ TEST(Lex, ChunkCrossDoubleTokensSomethingElseAfter) {
       "a";
   EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
 }
+
+TEST(Lex, FloatAndFieldDots) {
+  KindAndOffset expected[] = {
+      {TOK_IDENT_VAR, 0},      //
+      {TOK_DOT, 1},            //
+      {TOK_IDENT_VAR, 2},      //
+      {TOK_FLOAT_LITERAL, 4},  //
+      {TOK_EOF, 9},            //
+  };
+  const char input[] = "a.b 1.000";
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+}
+
+TEST(Lex, ChunkCrossFloat) {
+  KindAndOffset expected[] = {
+      {TOK_FLOAT_LITERAL, 63},  //
+      {TOK_EOF, 69},            //
+  };
+  const char input[] =
+      "                                                               1"
+      ".2345";
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+}
