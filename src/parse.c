@@ -2627,7 +2627,7 @@ static double scan_fractional_part_of_double(StrView num) {
   char* copy = arena_push(parser.arena, num.size + 2, 1);
   copy[0] = '.';
   memcpy(copy + 1, num.data, num.size);
-  copy[num.size] = 0;
+  copy[num.size + 1] = 0;
   char* end;
   return strtod(copy, &end);
 }
@@ -2663,8 +2663,8 @@ static Operand parse_number(bool can_assign, Type* expected) {
 
   double final = (double)integer_part.val.i64;
   if (check(TOK_INT_LITERAL)) {
-    final += scan_fractional_part_of_double(get_strview_for_offsets(prev_offset(), cur_offset()));
     advance();
+    final += scan_fractional_part_of_double(get_strview_for_offsets(prev_offset(), cur_offset()));
   } else {
     // Just "1.", nothing to add fractionally.
   }
