@@ -433,6 +433,7 @@ void sq_i_dbgloc(SqRef arg0 /*weee*/, SqRef arg1 /*weee*/);
 #define err_null(...) do { err_(__VA_ARGS__); return NULL; } while(0);
 #define ret_on_err() do { if (GC(in_error)) return; } while(0);
 #define ret_on_err_i() do { if (GC(in_error)) return 0; } while(0);
+#define ret_on_err_nullr() do { if (GC(in_error)) return NULL_R; } while(0);
 
 typedef unsigned char uchar;
 typedef unsigned int uint;
@@ -591,188 +592,195 @@ enum O {
 	#define V(Imm)
 #endif
 
-#ifndef P
-	#define P(CanFold, HasId, IdVal)
+#ifndef F
+#define F(a,b,c,d,e,f,g,h,i,j)
 #endif
-
 
 #define T(a,b,c,d,e,f,g,h) {                          \
 	{[Kw]=K##a, [Kl]=K##b, [Ks]=K##c, [Kd]=K##d}, \
 	{[Kw]=K##e, [Kl]=K##f, [Ks]=K##g, [Kd]=K##h}  \
 }
 
-
 /*********************/
 /* PUBLIC OPERATIONS */
 /*********************/
 
-/* Arithmetic and Bits */
-O(add,     T(w,l,s,d, w,l,s,d), P(1,1,0)) X(2,1,0) V(1)
-O(sub,     T(w,l,s,d, w,l,s,d), P(1,1,0)) X(2,1,0) V(0)
-O(neg,     T(w,l,s,d, x,x,x,x), P(1,0,0)) X(1,1,0) V(0)
-O(div,     T(w,l,s,d, w,l,s,d), P(1,1,1)) X(0,0,0) V(0)
-O(rem,     T(w,l,e,e, w,l,e,e), P(1,0,0)) X(0,0,0) V(0)
-O(udiv,    T(w,l,e,e, w,l,e,e), P(1,1,1)) X(0,0,0) V(0)
-O(urem,    T(w,l,e,e, w,l,e,e), P(1,0,0)) X(0,0,0) V(0)
-O(mul,     T(w,l,s,d, w,l,s,d), P(1,1,1)) X(2,0,0) V(0)
-O(and,     T(w,l,e,e, w,l,e,e), P(1,0,0)) X(2,1,0) V(1)
-O(or,      T(w,l,e,e, w,l,e,e), P(1,1,0)) X(2,1,0) V(1)
-O(xor,     T(w,l,e,e, w,l,e,e), P(1,1,0)) X(2,1,0) V(1)
-O(sar,     T(w,l,e,e, w,w,e,e), P(1,1,0)) X(1,1,0) V(1)
-O(shr,     T(w,l,e,e, w,w,e,e), P(1,1,0)) X(1,1,0) V(1)
-O(shl,     T(w,l,e,e, w,w,e,e), P(1,1,0)) X(1,1,0) V(1)
+/*                                can fold                        */
+/*                                | has identity                  */
+/*                                | | identity value for arg[1]   */
+/*                                | | | commutative               */
+/*                                | | | | associative             */
+/*                                | | | | | idempotent            */
+/*                                | | | | | | c{eq,ne}[wl]        */
+/*                                | | | | | | | c[us][gl][et][wl] */
+/*                                | | | | | | | | value if = args */
+/*                                | | | | | | | | | pinned        */
+/* Arithmetic and Bits            v v v v v v v v v v             */
+O(add,     T(w,l,s,d, w,l,s,d), F(1,1,0,1,1,0,0,0,0,0)) X(2,1,0) V(1)
+O(sub,     T(w,l,s,d, w,l,s,d), F(1,1,0,0,0,0,0,0,0,0)) X(2,1,0) V(0)
+O(neg,     T(w,l,s,d, x,x,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(1,1,0) V(0)
+O(div,     T(w,l,s,d, w,l,s,d), F(1,1,1,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(rem,     T(w,l,e,e, w,l,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(udiv,    T(w,l,e,e, w,l,e,e), F(1,1,1,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(urem,    T(w,l,e,e, w,l,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(mul,     T(w,l,s,d, w,l,s,d), F(1,1,1,1,0,0,0,0,0,0)) X(2,0,0) V(0)
+O(and,     T(w,l,e,e, w,l,e,e), F(1,0,0,1,1,1,0,0,0,0)) X(2,1,0) V(1)
+O(or,      T(w,l,e,e, w,l,e,e), F(1,1,0,1,1,1,0,0,0,0)) X(2,1,0) V(1)
+O(xor,     T(w,l,e,e, w,l,e,e), F(1,1,0,1,1,0,0,0,0,0)) X(2,1,0) V(1)
+O(sar,     T(w,l,e,e, w,w,e,e), F(1,1,0,0,0,0,0,0,0,0)) X(1,1,0) V(1)
+O(shr,     T(w,l,e,e, w,w,e,e), F(1,1,0,0,0,0,0,0,0,0)) X(1,1,0) V(1)
+O(shl,     T(w,l,e,e, w,w,e,e), F(1,1,0,0,0,0,0,0,0,0)) X(1,1,0) V(1)
 
 /* Comparisons */
-O(ceqw,    T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cnew,    T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csgew,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csgtw,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cslew,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csltw,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(1)
-O(cugew,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cugtw,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(culew,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cultw,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(1)
+O(ceqw,    T(w,w,e,e, w,w,e,e), F(1,1,1,1,0,0,1,0,1,0)) X(0,1,0) V(0)
+O(cnew,    T(w,w,e,e, w,w,e,e), F(1,1,0,1,0,0,1,0,0,0)) X(0,1,0) V(0)
+O(csgew,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(csgtw,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(0)
+O(cslew,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(csltw,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(1)
+O(cugew,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(cugtw,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(0)
+O(culew,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(cultw,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(1)
 
-O(ceql,    T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cnel,    T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csgel,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csgtl,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cslel,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csltl,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(1)
-O(cugel,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cugtl,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(culel,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cultl,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(1)
+O(ceql,    T(l,l,e,e, l,l,e,e), F(1,0,0,1,0,0,1,0,1,0)) X(0,1,0) V(0)
+O(cnel,    T(l,l,e,e, l,l,e,e), F(1,0,0,1,0,0,1,0,0,0)) X(0,1,0) V(0)
+O(csgel,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(csgtl,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(0)
+O(cslel,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(csltl,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(1)
+O(cugel,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(cugtl,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(0)
+O(culel,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(cultl,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(1)
 
-O(ceqs,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cges,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cgts,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cles,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(clts,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cnes,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cos,     T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cuos,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
+O(ceqs,    T(s,s,e,e, s,s,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cges,    T(s,s,e,e, s,s,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cgts,    T(s,s,e,e, s,s,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cles,    T(s,s,e,e, s,s,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(clts,    T(s,s,e,e, s,s,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cnes,    T(s,s,e,e, s,s,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cos,     T(s,s,e,e, s,s,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cuos,    T(s,s,e,e, s,s,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
 
-O(ceqd,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cged,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cgtd,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cled,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cltd,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cned,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cod,     T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cuod,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
+O(ceqd,    T(d,d,e,e, d,d,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cged,    T(d,d,e,e, d,d,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cgtd,    T(d,d,e,e, d,d,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cled,    T(d,d,e,e, d,d,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cltd,    T(d,d,e,e, d,d,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cned,    T(d,d,e,e, d,d,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cod,     T(d,d,e,e, d,d,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cuod,    T(d,d,e,e, d,d,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
 
 /* Memory */
-O(storeb,  T(w,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(storeh,  T(w,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(storew,  T(w,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(storel,  T(l,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(stores,  T(s,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(stored,  T(d,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
+O(storeb,  T(w,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(storeh,  T(w,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(storew,  T(w,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(storel,  T(l,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(stores,  T(s,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(stored,  T(d,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
 
-O(loadsb,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loadub,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loadsh,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loaduh,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loadsw,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loaduw,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(load,    T(m,m,m,m, x,x,x,x), P(0,0,0)) X(0,0,1) V(0)
+O(loadsb,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loadub,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loadsh,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loaduh,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loadsw,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loaduw,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(load,    T(m,m,m,m, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
 
 /* Extensions and Truncations */
-O(extsb,   T(w,w,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extub,   T(w,w,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extsh,   T(w,w,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extuh,   T(w,w,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extsw,   T(e,w,e,e, e,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extuw,   T(e,w,e,e, e,x,e,e), P(1,0,0)) X(0,0,1) V(0)
+O(extsb,   T(w,w,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extub,   T(w,w,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extsh,   T(w,w,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extuh,   T(w,w,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extsw,   T(e,w,e,e, e,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extuw,   T(e,w,e,e, e,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
-O(exts,    T(e,e,e,s, e,e,e,x), P(1,0,0)) X(0,0,1) V(0)
-O(truncd,  T(e,e,d,e, e,e,x,e), P(1,0,0)) X(0,0,1) V(0)
-O(stosi,   T(s,s,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(stoui,   T(s,s,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(dtosi,   T(d,d,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(dtoui,   T(d,d,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(swtof,   T(e,e,w,w, e,e,x,x), P(1,0,0)) X(0,0,1) V(0)
-O(uwtof,   T(e,e,w,w, e,e,x,x), P(1,0,0)) X(0,0,1) V(0)
-O(sltof,   T(e,e,l,l, e,e,x,x), P(1,0,0)) X(0,0,1) V(0)
-O(ultof,   T(e,e,l,l, e,e,x,x), P(1,0,0)) X(0,0,1) V(0)
-O(cast,    T(s,d,w,l, x,x,x,x), P(1,0,0)) X(0,0,1) V(0)
+O(exts,    T(e,e,e,s, e,e,e,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(truncd,  T(e,e,d,e, e,e,x,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(stosi,   T(s,s,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(stoui,   T(s,s,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(dtosi,   T(d,d,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(dtoui,   T(d,d,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(swtof,   T(e,e,w,w, e,e,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(uwtof,   T(e,e,w,w, e,e,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(sltof,   T(e,e,l,l, e,e,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(ultof,   T(e,e,l,l, e,e,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(cast,    T(s,d,w,l, x,x,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
 /* Stack Allocation */
-O(alloc4,  T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(alloc8,  T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(alloc16, T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
+O(alloc4,  T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(alloc8,  T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(alloc16, T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
 
 /* Variadic Function Helpers */
-O(vaarg,   T(m,m,m,m, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(vastart, T(m,e,e,e, x,e,e,e), P(0,0,0)) X(0,0,0) V(0)
+O(vaarg,   T(m,m,m,m, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(vastart, T(m,e,e,e, x,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
 
-O(copy,    T(w,l,s,d, x,x,x,x), P(0,0,0)) X(0,0,1) V(0)
+O(copy,    T(w,l,s,d, x,x,x,x), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
 /* Debug */
-O(dbgloc,  T(w,e,e,e, w,e,e,e), P(0,0,0)) X(0,0,1) V(0)
+O(dbgloc,  T(w,e,e,e, w,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
 
 /****************************************/
 /* INTERNAL OPERATIONS (keep nop first) */
 /****************************************/
 
 /* Miscellaneous and Architecture-Specific Operations */
-O(nop,     T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,1) V(0)
-O(addr,    T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(blit0,   T(m,e,e,e, m,e,e,e), P(0,0,0)) X(0,1,0) V(0)
-O(blit1,   T(w,e,e,e, x,e,e,e), P(0,0,0)) X(0,1,0) V(0)
-O(swap,    T(w,l,s,d, w,l,s,d), P(0,0,0)) X(1,0,0) V(0)
-O(sign,    T(w,l,e,e, x,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(salloc,  T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(xidiv,   T(w,l,e,e, x,x,e,e), P(0,0,0)) X(1,0,0) V(0)
-O(xdiv,    T(w,l,e,e, x,x,e,e), P(0,0,0)) X(1,0,0) V(0)
-O(xcmp,    T(w,l,s,d, w,l,s,d), P(0,0,0)) X(1,1,0) V(0)
-O(xtest,   T(w,l,e,e, w,l,e,e), P(0,0,0)) X(1,1,0) V(0)
-O(acmp,    T(w,l,e,e, w,l,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(acmn,    T(w,l,e,e, w,l,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(afcmp,   T(e,e,s,d, e,e,s,d), P(0,0,0)) X(0,0,0) V(0)
-O(reqz,    T(w,l,e,e, x,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(rnez,    T(w,l,e,e, x,x,e,e), P(0,0,0)) X(0,0,0) V(0)
+O(nop,     T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(addr,    T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(blit0,   T(m,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,1,0) V(0)
+O(blit1,   T(w,e,e,e, x,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,1,0) V(0)
+O(swap,    T(w,l,s,d, w,l,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(1,0,0) V(0)
+O(sign,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(salloc,  T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xidiv,   T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(1,0,0) V(0)
+O(xdiv,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(1,0,0) V(0)
+O(xcmp,    T(w,l,s,d, w,l,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(1,1,0) V(0)
+O(xtest,   T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(1,1,0) V(0)
+O(acmp,    T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(acmn,    T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(afcmp,   T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(reqz,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(rnez,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
 
 /* Arguments, Parameters, and Calls */
-O(par,     T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(parsb,   T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(parub,   T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(parsh,   T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(paruh,   T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(parc,    T(e,x,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(pare,    T(e,x,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(arg,     T(w,l,s,d, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(argsb,   T(w,e,e,e, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(argub,   T(w,e,e,e, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(argsh,   T(w,e,e,e, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(arguh,   T(w,e,e,e, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(argc,    T(e,x,e,e, e,l,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(arge,    T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(argv,    T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(call,    T(m,m,m,m, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
+O(par,     T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(parsb,   T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(parub,   T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(parsh,   T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(paruh,   T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(parc,    T(e,x,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(pare,    T(e,x,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(arg,     T(w,l,s,d, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argsb,   T(w,e,e,e, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argub,   T(w,e,e,e, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argsh,   T(w,e,e,e, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(arguh,   T(w,e,e,e, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argc,    T(e,x,e,e, e,l,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(arge,    T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argv,    T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(call,    T(m,m,m,m, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
 
 /* Flags Setting */
-O(flagieq,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagine,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagisge, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagisgt, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagisle, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagislt, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagiuge, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagiugt, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagiule, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagiult, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfeq,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfge,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfgt,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfle,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagflt,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfne,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfo,   T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfuo,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-
+O(flagieq,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagine,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagisge, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagisgt, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagisle, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagislt, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagiuge, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagiugt, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagiule, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagiult, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfeq,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfge,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfgt,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfle,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagflt,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfne,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfo,   T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfuo,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
 #undef T
 #undef X
@@ -824,6 +832,7 @@ enum {
 #define INRANGE(x, l, u) ((unsigned)(x) - l <= u - l) /* linear in x */
 #define isstore(o) INRANGE(o, Ostoreb, Ostored)
 #define isload(o) INRANGE(o, Oloadsb, Oload)
+#define isalloc(o) INRANGE(o, Oalloc4, Oalloc16)
 #define isext(o) INRANGE(o, Oextsb, Oextuw)
 #define ispar(o) INRANGE(o, Opar, Opare)
 #define isarg(o) INRANGE(o, Oarg, Oargv)
@@ -847,8 +856,15 @@ struct Op {
 	char *name;
 	short argcls[2][4];
 	uint canfold:1;
-	uint hasid:1;
-	uint idval:1; /* identity value 0/1 */
+	uint hasid:1;     /* op identity value? */
+	uint idval:1;     /* identity value 0/1 */
+	uint commutes:1;  /* commutative op? */
+	uint assoc:1;     /* associative op? */
+	uint idemp:1;     /* idempotent op? */
+	uint cmpeqwl:1;   /* Kl/Kw cmp eq/ne? */
+	uint cmplgtewl:1; /* Kl/Kw cmp lt/gt/le/ge? */
+	uint eqval:1;     /* 1 for eq; 0 for ne */
+	uint pinned:1;    /* GCM pinned op? */
 };
 
 struct Ins {
@@ -863,7 +879,8 @@ struct Phi {
 	Ref *arg;
 	Blk **blk;
 	uint narg;
-	int cls;
+	short cls;
+	uint visit:1;
 	Phi *link;
 };
 
@@ -886,6 +903,7 @@ struct Blk {
 	Blk *dom, *dlink;
 	Blk **fron;
 	uint nfron;
+	int depth;
 
 	Blk **pred;
 	uint npred;
@@ -977,6 +995,7 @@ struct Tmp {
 		Wuw
 	} width;
 	int visit;
+	uint gcmbid;
 };
 
 struct Con {
@@ -1201,6 +1220,9 @@ typedef struct GlobalContext {
 	Typ *typ;
 	Ins* insb;  // Ins insb[NIns];
 
+	/* nominally owned by gvn.c, but used in gvn.c and copy.c */
+	Ref con01[2];
+
 	/* nominally owned by main.c, but used everywhere */
 	Target T;
 	char debug['Z' + 1];
@@ -1244,30 +1266,34 @@ static void freeall(void);
 static void *vnew(ulong, size_t, Pool);
 static void vfree(void *);
 static void vgrow(void *, ulong);
+static void addins(Ins **, uint *, Ins *);
 static void strf(char[NString], char *, ...);
 static uint32_t intern(char *);
 static char *str(uint32_t);
 static int argcls(Ins *, int);
 static int isreg(Ref);
 static int iscmp(int, int *, int *);
+static void igroup(Blk *, Ins *, Ins **, Ins **);
 static void emit(int, int, Ref, Ref, Ref);
 static void emiti(Ins);
-static void idup(Ins **, Ins *, ulong);
+static void idup(Blk *, Ins *, ulong);
 static Ins *icpy(Ins *, Ins *, ulong);
 static int cmpop(int);
 static int cmpneg(int);
 static int clsmerge(short *, short);
 static int phicls(int, Tmp *);
+static uint phiargn(Phi *, Blk *);
+static Ref phiarg(Phi *, Blk *);
 static Ref newtmp(char *, int, Fn *);
 static void chuse(Ref, int, Fn *);
 static int symeq(Sym, Sym);
 static Ref newcon(Con *, Fn *);
 static Ref getcon(int64_t, Fn *);
 static int addcon(Con *, Con *, int);
+static int isconbits(Fn *fn, Ref r, int64_t *v);
 static void salloc(Ref, Ref, Fn *);
 static void dumpts(BSet *, Tmp *, FILE *);
 static void runmatch(uchar *, Num *, Ref, Ref *);
-
 static void bsinit(BSet *, uint);
 static void bszero(BSet *);
 static uint bscount(BSet *);
@@ -1299,16 +1325,19 @@ static void elimsb(Fn *);
 
 /* cfg.c */
 static Blk *newblk(void);
-static void edgedel(Blk *, Blk **);
 static void fillpreds(Fn *);
-static void fillrpo(Fn *);
+static void fillcfg(Fn *);
 static void filldom(Fn *);
 static int sdom(Blk *, Blk *);
 static int dom(Blk *, Blk *);
 static void fillfron(Fn *);
 static void loopiter(Fn *, void (*)(Blk *, Blk *));
+static void filldepth(Fn *);
+static Blk *lca(Blk *, Blk *);
 static void fillloop(Fn *);
 static void simpljmp(Fn *);
+static int reaches(Fn *, Blk *, Blk *);
+static int reachesnotvia(Fn *, Blk *, Blk *, Blk *);
 
 /* mem.c */
 static void promote(Fn *);
@@ -1326,15 +1355,28 @@ static int storesz(Ins *);
 static void loadopt(Fn *);
 
 /* ssa.c */
+static void adduse(Tmp *, int, Blk *, ...);
 static void filluse(Fn *);
 static void ssa(Fn *);
 static void ssacheck(Fn *);
 
 /* copy.c */
-static void copy(Fn *);
+static void narrowpars(Fn *fn);
+static Ref copyref(Fn *, Blk *, Ins *);
+static Ref phicopyref(Fn *, Blk *, Phi *);
 
 /* fold.c */
-static void fold(Fn *);
+static int foldint(Con *, int, int, Con *, Con *);
+static Ref foldref(Fn *, Ins *);
+
+/* gvn.c */
+extern Ref con01[2];  /* 0 and 1 */
+static int zeroval(Fn *, Blk *, Ref, int, int *);
+static void gvn(Fn *);
+
+/* gcm.c */
+static int pinned(Ins *);
+static void gcm(Fn *);
 
 /* simpl.c */
 static void simpl(Fn *);
@@ -1355,7 +1397,7 @@ static void emitfnlnk(char *, Lnk *, FILE *);
 static void emitdat(Dat *, FILE *);
 static void emitdbgfile(char *, FILE *);
 static void emitdbgloc(uint, uint, FILE *);
-static int stashbits(void *, int);
+static int stashbits(bits, int);
 static void elf_emitfnfin(char *, FILE *);
 static void elf_emitfin(FILE *);
 static void macho_emitfin(FILE *);
@@ -1808,66 +1850,47 @@ newblk(void)
 
 	b = alloc(sizeof *b);
 	*b = G(newblk_z);
+	b->ins = vnew(0, sizeof b->ins[0], PFn);
+	b->pred = vnew(0, sizeof b->pred[0], PFn);
 	return b;
 }
 
-void
-edgedel(Blk *bs, Blk **pbd)
+static void
+qbe_cfg_fixphis(Fn *f)
 {
-	Blk *bd;
+	Blk *b;
 	Phi *p;
-	uint a;
-	int mult;
+	uint n, n0;
 
-	bd = *pbd;
-	mult = 1 + (bs->s1 == bs->s2);
-	*pbd = 0;
-	if (!bd || mult > 1)
-		return;
-	for (p=bd->phi; p; p=p->link) {
-		for (a=0; p->blk[a]!=bs; a++)
-			SQ_ASSERT(a+1<p->narg);
-		p->narg--;
-		memmove(&p->blk[a], &p->blk[a+1],
-			sizeof p->blk[0] * (p->narg-a));
-		memmove(&p->arg[a], &p->arg[a+1],
-			sizeof p->arg[0] * (p->narg-a));
-	}
-	if (bd->npred != 0) {
-		for (a=0; bd->pred[a]!=bs; a++)
-			SQ_ASSERT(a+1<bd->npred);
-		bd->npred--;
-		memmove(&bd->pred[a], &bd->pred[a+1],
-			sizeof bd->pred[0] * (bd->npred-a));
+	for (b=f->start; b; b=b->link) {
+		SQ_ASSERT(b->id < f->nblk);
+		for (p=b->phi; p; p=p->link) {
+			for (n=n0=0; n<p->narg; n++)
+				if (p->blk[n]->id != -1u) {
+					p->blk[n0] = p->blk[n];
+					p->arg[n0] = p->arg[n];
+					n0++;
+				}
+			SQ_ASSERT(n0 > 0);
+			p->narg = n0;
+		}
 	}
 }
 
 static void
-qbe_cfg_addpred(Blk *bp, Blk *bc)
+qbe_cfg_addpred(Blk *bp, Blk *b)
 {
-	if (!bc->pred) {
-		bc->pred = alloc(bc->npred * sizeof bc->pred[0]);
-		bc->visit = 0;
-	}
-	bc->pred[bc->visit++] = bp;
+	vgrow(&b->pred, ++b->npred);
+	b->pred[b->npred-1] = bp;
 }
 
-/* fill predecessors information in blocks */
 void
 fillpreds(Fn *f)
 {
 	Blk *b;
 
-	for (b=f->start; b; b=b->link) {
+	for (b=f->start; b; b=b->link)
 		b->npred = 0;
-		b->pred = 0;
-	}
-	for (b=f->start; b; b=b->link) {
-		if (b->s1)
-			b->s1->npred++;
-		if (b->s2 && b->s2 != b->s1)
-			b->s2->npred++;
-	}
 	for (b=f->start; b; b=b->link) {
 		if (b->s1)
 			qbe_cfg_addpred(b, b->s1);
@@ -1876,50 +1899,53 @@ fillpreds(Fn *f)
 	}
 }
 
-static int
-qbe_cfg_rporec(Blk *b, uint x)
+static void
+qbe_cfg_porec(Blk *b, uint *npo)
 {
 	Blk *s1, *s2;
 
 	if (!b || b->id != -1u)
-		return x;
-	b->id = 1;
+		return;
+	b->id = 0; /* marker */
 	s1 = b->s1;
 	s2 = b->s2;
 	if (s1 && s2 && s1->loop > s2->loop) {
 		s1 = b->s2;
 		s2 = b->s1;
 	}
-	x = qbe_cfg_rporec(s1, x);
-	x = qbe_cfg_rporec(s2, x);
-	b->id = x;
-	SQ_ASSERT(x != -1u);
-	return x - 1;
+	qbe_cfg_porec(s1, npo);
+	qbe_cfg_porec(s2, npo);
+	b->id = (*npo)++;
 }
 
-/* fill the rpo information */
-void
-fillrpo(Fn *f)
+static void
+qbe_cfg_fillrpo(Fn *f)
 {
-	uint n;
 	Blk *b, **p;
 
 	for (b=f->start; b; b=b->link)
 		b->id = -1u;
-	n = 1 + qbe_cfg_rporec(f->start, f->nblk-1);
-	f->nblk -= n;
-	f->rpo = alloc(f->nblk * sizeof f->rpo[0]);
+	f->nblk = 0;
+	qbe_cfg_porec(f->start, &f->nblk);
+	vgrow(&f->rpo, f->nblk);
 	for (p=&f->start; (b=*p);) {
 		if (b->id == -1u) {
-			edgedel(b, &b->s1);
-			edgedel(b, &b->s2);
 			*p = b->link;
 		} else {
-			b->id -= n;
+			b->id = f->nblk-b->id-1;
 			f->rpo[b->id] = b;
 			p = &b->link;
 		}
 	}
+}
+
+/* fill rpo, preds; prune dead blks */
+void
+fillcfg(Fn *f)
+{
+	qbe_cfg_fillrpo(f);
+	fillpreds(f);
+	qbe_cfg_fixphis(f);
 }
 
 /* for dominators computation, read
@@ -2062,6 +2088,50 @@ loopiter(Fn *fn, void f(Blk *, Blk *))
 	}
 }
 
+/* dominator tree depth */
+void
+filldepth(Fn *fn)
+{
+	Blk *b, *d;
+	int depth;
+
+	for (b=fn->start; b; b=b->link)
+		b->depth = -1;
+
+	fn->start->depth = 0;
+
+	for (b=fn->start; b; b=b->link) {
+		if (b->depth != -1)
+			continue;
+		depth = 1;
+		for (d=b->idom; d->depth==-1; d=d->idom)
+			depth++;
+		depth += d->depth;
+		b->depth = depth;
+		for (d=b->idom; d->depth==-1; d=d->idom)
+			d->depth = --depth;
+	}
+}
+
+/* least common ancestor in dom tree */
+Blk *
+lca(Blk *b1, Blk *b2)
+{
+	if (!b1)
+		return b2;
+	if (!b2)
+		return b1;
+	while (b1->depth > b2->depth)
+		b1 = b1->idom;
+	while (b2->depth > b1->depth)
+		b2 = b2->idom;
+	while (b1 != b2) {
+		b1 = b1->idom;
+		b2 = b2->idom;
+	}
+	return b1;
+}
+
 static void
 multloop(Blk *hd, Blk *b)
 {
@@ -2129,24 +2199,319 @@ simpljmp(Fn *fn)
 	*p = ret;
 	qbe_free(uf);
 }
+
+static int
+qbe_cfg_reachrec(Blk *b, Blk *to)
+{
+	if (b == to)
+		return 1;
+	if (!b || b->visit)
+		return 0;
+
+	b->visit = 1;
+	if (qbe_cfg_reachrec(b->s1, to))
+		return 1;
+	if (qbe_cfg_reachrec(b->s2, to))
+		return 1;
+
+	return 0;
+}
+
+/* Blk.visit needs to be clear at entry */
+int
+reaches(Fn *fn, Blk *b, Blk *to)
+{
+	int r;
+
+	SQ_ASSERT(to);
+	r = qbe_cfg_reachrec(b, to);
+	for (b=fn->start; b; b=b->link)
+		b->visit = 0;
+	return r;
+}
+
+/* can b reach 'to' not through excl
+ * Blk.visit needs to be clear at entry */
+int
+reachesnotvia(Fn *fn, Blk *b, Blk *to, Blk *excl)
+{
+	excl->visit = 1;
+	return reaches(fn, b, to);
+}
 #undef G
 /*** END FILE: cfg.c ***/
 /*** START FILE: copy.c ***/
 /* skipping all.h */
 
+typedef struct Ext Ext;
+
+struct Ext {
+	char zext;
+	char nopw; /* is a no-op if arg width is <= nopw */
+	char usew; /* uses only the low usew bits of arg */
+};
+
 #define G(x) global_context.copy__##x
 
 static int
-qbe_copy_iscon(Ref r, int64_t bits, Fn *fn)
+qbe_copy_ext(Ins *i, Ext *e)
 {
-	return rtype(r) == RCon
-		&& fn->con[r.val].type == CBits
-		&& fn->con[r.val].bits.i == bits;
+	static Ext tbl[] = {
+		/*extsb*/ {0,  7,  8},
+		/*extub*/ {1,  8,  8},
+		/*extsh*/ {0, 15, 16},
+		/*extuh*/ {1, 16, 16},
+		/*extsw*/ {0, 31, 32},
+		/*extuw*/ {1, 32, 32},
+	};
+
+	if (!isext(i->op))
+		return 0;
+	*e = tbl[i->op - Oextsb];
+	return 1;
 }
 
 static int
-qbe_copy_iscopy(Ins *i, Ref r, Fn *fn)
+qbe_copy_bitwidth(uint64_t v)
 {
+	int n;
+
+	n = 0;
+	if (v >> 32) { n += 32; v >>= 32; }
+	if (v >> 16) { n += 16; v >>= 16; }
+	if (v >>  8) { n +=  8; v >>=  8; }
+	if (v >>  4) { n +=  4; v >>=  4; }
+	if (v >>  2) { n +=  2; v >>=  2; }
+	if (v >>  1) { n +=  1; v >>=  1; }
+	return n+v;
+}
+
+/* no more than w bits are used */
+static int
+qbe_copy_usewidthle(Fn *fn, Ref r, int w)
+{
+	Ext e;
+	Tmp *t;
+	Use *u;
+	Phi *p;
+	Ins *i;
+	Ref rc;
+	int64_t v;
+	int b;
+
+	SQ_ASSERT(rtype(r) == RTmp);
+	t = &fn->tmp[r.val];
+	for (u=t->use; u<&t->use[t->nuse]; u++) {
+		switch (u->type) {
+		case UPhi:
+			p = u->u.phi;
+			/* during gvn, phi nodes may be
+			 * replaced by other temps; in
+			 * this case, the replaced phi
+			 * uses are added to the
+			 * replacement temp uses and
+			 * Phi.to is set to NULL_R */
+			if (p->visit || req(p->to, NULL_R))
+				continue;
+			p->visit = 1;
+			b = qbe_copy_usewidthle(fn, p->to, w);
+			p->visit = 0;
+			if (b)
+				continue;
+			break;
+		case UIns:
+			i = u->u.ins;
+			SQ_ASSERT(i != 0);
+			if (i->op == Ocopy)
+				if (qbe_copy_usewidthle(fn, i->to, w))
+					continue;
+			if (qbe_copy_ext(i, &e)) {
+				if (e.usew <= w)
+					continue;
+				if (qbe_copy_usewidthle(fn, i->to, w))
+					continue;
+			}
+			if (i->op == Oand) {
+				if (req(r, i->arg[0]))
+					rc = i->arg[1];
+				else {
+					SQ_ASSERT(req(r, i->arg[1]));
+					rc = i->arg[0];
+				}
+				if (isconbits(fn, rc, &v)
+				&& qbe_copy_bitwidth(v) <= w)
+					continue;
+				break;
+			}
+			break;
+		default:
+			break;
+		}
+		return 0;
+	}
+	return 1;
+}
+
+static int
+qbe_copy_min_(int v1, int v2)
+{
+	return v1 < v2 ? v1 : v2;
+}
+
+/* is the ref narrower than w bits */
+static int
+qbe_copy_defwidthle(Fn *fn, Ref r, int w)
+{
+	Ext e;
+	Tmp *t;
+	Phi *p;
+	Ins *i;
+	uint n;
+	int64_t v;
+	int x;
+
+	if (isconbits(fn, r, &v)
+	&& qbe_copy_bitwidth(v) <= w)
+		return 1;
+	if (rtype(r) != RTmp)
+		return 0;
+	t = &fn->tmp[r.val];
+	if (t->cls != Kw)
+		return 0;
+
+	if (!t->def) {
+		/* phi def */
+		for (p=fn->rpo[t->bid]->phi; p; p=p->link)
+			if (req(p->to, r))
+				break;
+		SQ_ASSERT(p);
+		if (p->visit)
+			return 1;
+		p->visit = 1;
+		for (n=0; n<p->narg; n++)
+			if (!qbe_copy_defwidthle(fn, p->arg[n], w)) {
+				p->visit = 0;
+				return 0;
+			}
+		p->visit = 0;
+		return 1;
+	}
+
+	i = t->def;
+	if (i->op == Ocopy)
+                return qbe_copy_defwidthle(fn, i->arg[0], w);
+	if (i->op == Oshr || i->op == Osar) {
+		if (isconbits(fn, i->arg[1], &v))
+		if (0 < v && v <= 32) {
+			if (i->op == Oshr && w+v >= 32)
+				return 1;
+			if (w < 32) {
+				if (i->op == Osar)
+					w = qbe_copy_min_(31, w+v);
+				else
+					w = qbe_copy_min_(32, w+v);
+			}
+		}
+		return qbe_copy_defwidthle(fn, i->arg[0], w);
+	}
+	if (iscmp(i->op, &x, &x))
+		return w >= 1;
+	if (i->op == Oand) {
+		if (qbe_copy_defwidthle(fn, i->arg[0], w)
+		|| qbe_copy_defwidthle(fn, i->arg[1], w))
+			return 1;
+		return 0;
+	}
+	if (i->op == Oor || i->op == Oxor) {
+		if (qbe_copy_defwidthle(fn, i->arg[0], w)
+		&& qbe_copy_defwidthle(fn, i->arg[1], w))
+			return 1;
+		return 0;
+	}
+	if (qbe_copy_ext(i, &e)) {
+		if (e.zext && e.usew <= w)
+			return 1;
+		w = qbe_copy_min_(w, e.nopw);
+		return qbe_copy_defwidthle(fn, i->arg[0], w);
+	}
+
+	return 0;
+}
+
+static int
+qbe_copy_isw1(Fn *fn, Ref r)
+{
+	return qbe_copy_defwidthle(fn, r, 1);
+}
+
+/* insert early extub/extuh instructions
+ * for pars used only narrowly; this
+ * helps factoring extensions out of
+ * loops
+ *
+ * needs use; breaks use
+ */
+void
+narrowpars(Fn *fn)
+{
+	Blk *b;
+	int loop;
+	Ins ext, *i, *ins;
+	uint npar, nins;
+	Ref r;
+
+	/* only useful for functions with loops */
+	loop = 0;
+	for (b=fn->start; b; b=b->link)
+		if (b->loop > 1) {
+			loop = 1;
+			break;
+		}
+	if (!loop)
+		return;
+
+	b = fn->start;
+
+	npar = 0;
+	for (i=b->ins; i<&b->ins[b->nins]; i++) {
+		if (!ispar(i->op))
+			break;
+		npar++;
+	}
+	if (npar == 0)
+		return;
+
+	nins = b->nins + npar;
+	ins = vnew(nins, sizeof ins[0], PFn);
+	icpy(ins, b->ins, npar);
+	icpy(ins + 2*npar, b->ins+npar, b->nins-npar);
+	b->ins = ins;
+	b->nins = nins;
+
+	for (i=b->ins; i<&b->ins[b->nins]; i++) {
+		if (!ispar(i->op))
+			break;
+		ext = (Ins){.op = Onop};
+		if (i->cls == Kw)
+		if (qbe_copy_usewidthle(fn, i->to, 16)) {
+			ext.op = Oextuh;
+			if (qbe_copy_usewidthle(fn, i->to, 8))
+				ext.op = Oextub;
+			r = newtmp("vw", i->cls, fn);
+			ext.cls = i->cls;
+			ext.to = i->to;
+			ext.arg[0] = r;
+			i->to = r;
+		}
+		*(i+npar) = ext;
+	}
+}
+
+Ref
+copyref(Fn *fn, Blk *b, Ins *i)
+{
+	/* which extensions are copies for a given
+	 * argument width */
 	static bits extcpy[] = {
 		[WFull] = 0,
 		[Wsb] = BIT(Wsb) | BIT(Wsh) | BIT(Wsw),
@@ -2156,200 +2521,135 @@ qbe_copy_iscopy(Ins *i, Ref r, Fn *fn)
 		[Wsw] = BIT(Wsw),
 		[Wuw] = BIT(Wuw),
 	};
-	Op *op;
-	bits b;
+	Ext e;
 	Tmp *t;
+	int64_t v;
+	int w, z;
 
 	if (i->op == Ocopy)
-		return 1;
-	op = &optab[i->op];
-	if (op->hasid && KBASE(i->cls) == 0)
-		return qbe_copy_iscon(i->arg[1], op->idval, fn);
-	if (!isext(i->op) || rtype(r) != RTmp)
-		return 0;
-	if (i->op == Oextsw || i->op == Oextuw)
-	if (i->cls == Kw)
-		return 1;
+		return i->arg[0];
 
-	t = &fn->tmp[r.val];
-	SQ_ASSERT(KBASE(t->cls) == 0);
-	if (i->cls == Kl && t->cls == Kw)
-		return 0;
-	b = extcpy[t->width];
-	return (BIT(Wsb + (i->op-Oextsb)) & b) != 0;
-}
+	/* op identity value */
+	if (optab[i->op].hasid
+	&& KBASE(i->cls) == 0 /* integer only - fp NaN! */
+	&& req(i->arg[1], GC(con01)[optab[i->op].idval])
+	&& (!optab[i->op].cmpeqwl || qbe_copy_isw1(fn, i->arg[0])))
+		return i->arg[0];
 
-static Ref
-qbe_copy_copyof(Ref r, Ref *cpy)
-{
-	if (rtype(r) == RTmp && !req(cpy[r.val], NULL_R))
-		return cpy[r.val];
-	return r;
-}
+	/* idempotent op with identical args */
+	if (optab[i->op].idemp
+	&& req(i->arg[0], i->arg[1]))
+		return i->arg[0];
 
-/* detects a cluster of phis/copies redundant with 'r';
- * the algorithm is inspired by Section 3.2 of "Simple
- * and Efficient SSA Construction" by Braun M. et al.
- */
-static void
-qbe_copy_phisimpl(Phi *p, Ref r, Ref *cpy, Use ***pstk, BSet *ts, BSet *as, Fn *fn)
-{
-	Use **stk, *u, *u1;
-	uint nstk, a;
-	int t;
-	Ref r1;
-	Phi *p0;
+	/* integer cmp with identical args */
+	if ((optab[i->op].cmpeqwl || optab[i->op].cmplgtewl)
+	&& req(i->arg[0], i->arg[1]))
+		return GC(con01)[optab[i->op].eqval];
 
-	bszero(ts);
-	bszero(as);
-	p0 = &(Phi){.narg = 0};
-	stk = *pstk;
-	nstk = 1;
-	stk[0] = &(Use){.type = UPhi, .u.phi = p};
-	while (nstk) {
-		u = stk[--nstk];
-		if (u->type == UIns && qbe_copy_iscopy(u->u.ins, r, fn)) {
-			p = p0;
-			t = u->u.ins->to.val;
-		}
-		else if (u->type == UPhi) {
-			p = u->u.phi;
-			t = p->to.val;
-		}
-		else
-			continue;
-		if (bshas(ts, t))
-			continue;
-		bsset(ts, t);
-		for (a=0; a<p->narg; a++) {
-			r1 = qbe_copy_copyof(p->arg[a], cpy);
-			if (req(r1, r))
-				continue;
-			if (rtype(r1) != RTmp)
-				return;
-			bsset(as, r1.val);
-		}
-		u = fn->tmp[t].use;
-		u1 = &u[fn->tmp[t].nuse];
-		vgrow(pstk, nstk+(u1-u));
-		stk = *pstk;
-		for (; u<u1; u++)
-			stk[nstk++] = u;
-	}
-	bsdiff(as, ts);
-	if (!bscount(as))
-		for (t=0; bsiter(ts, &t); t++)
-			cpy[t] = r;
-}
+	/* cmpeq/ne 0 with 0/non-0 inference */
+	if (optab[i->op].cmpeqwl
+	&& req(i->arg[1], CON_Z)
+	&& zeroval(fn, b, i->arg[0], argcls(i, 0), &z))
+		return GC(con01)[optab[i->op].eqval^z^1];
 
-static void
-qbe_copy_subst(Ref *pr, Ref *cpy)
-{
-	SQ_ASSERT(rtype(*pr) != RTmp || !req(cpy[pr->val], NULL_R));
-	*pr = qbe_copy_copyof(*pr, cpy);
-}
+	/* redundant and mask */
+	if (i->op == Oand
+	&& isconbits(fn, i->arg[1], &v)
+	&& (v > 0 && ((v+1) & v) == 0)
+	&& qbe_copy_defwidthle(fn, i->arg[0], qbe_copy_bitwidth(v)))
+		return i->arg[0];
 
-/* requires use and dom, breaks use */
-void
-copy(Fn *fn)
-{
-	BSet ts[1], as[1];
-	Use **stk;
-	Phi *p, **pp;
-	Ins *i;
-	Blk *b;
-	uint n, a, eq;
-	Ref *cpy, r, r1;
-	int t;
+	if (i->cls == Kw
+	&& (i->op == Oextsw || i->op == Oextuw))
+		return i->arg[0];
 
-	bsinit(ts, fn->ntmp);
-	bsinit(as, fn->ntmp);
-	cpy = emalloc(fn->ntmp * sizeof cpy[0]);
-	stk = vnew(10, sizeof stk[0], PHeap);
+	if (qbe_copy_ext(i, &e) && rtype(i->arg[0]) == RTmp) {
+		t = &fn->tmp[i->arg[0].val];
+		SQ_ASSERT(KBASE(t->cls) == 0);
 
-	/* 1. build the copy-of map */
-	for (n=0; n<fn->nblk; n++) {
-		b = fn->rpo[n];
-		for (p=b->phi; p; p=p->link) {
-			SQ_ASSERT(rtype(p->to) == RTmp);
-			if (!req(cpy[p->to.val], NULL_R))
-				continue;
-			eq = 0;
-			r = NULL_R;
-			for (a=0; a<p->narg; a++)
-				if (p->blk[a]->id < n) {
-					r1 = qbe_copy_copyof(p->arg[a], cpy);
-					if (req(r, NULL_R) || req(r, UNDEF))
-						r = r1;
-					if (req(r1, r) || req(r1, UNDEF))
-						eq++;
-				}
-			SQ_ASSERT(!req(r, NULL_R));
-			if (rtype(r) == RTmp
-			&& !dom(fn->rpo[fn->tmp[r.val].bid], b))
-				cpy[p->to.val] = p->to;
-			else if (eq == p->narg)
-				cpy[p->to.val] = r;
-			else {
-				cpy[p->to.val] = p->to;
-				qbe_copy_phisimpl(p, r, cpy, &stk, ts, as, fn);
-			}
-		}
-		for (i=b->ins; i<&b->ins[b->nins]; i++) {
-			SQ_ASSERT(rtype(i->to) <= RTmp);
-			if (!req(cpy[i->to.val], NULL_R))
-				continue;
-			r = qbe_copy_copyof(i->arg[0], cpy);
-			if (qbe_copy_iscopy(i, r, fn))
-				cpy[i->to.val] = r;
-			else
-				cpy[i->to.val] = i->to;
-		}
+		/* do not break typing by returning
+		 * a narrower temp */
+		if ((int)KWIDE(i->cls) > KWIDE(t->cls))
+			return NULL_R;
+
+		w  = Wsb + (i->op - Oextsb);
+		if (BIT(w) & extcpy[t->width])
+			return i->arg[0];
+
+		/* avoid eliding extensions of params
+		 * inserted in the start block; their
+		 * point is to make further extensions
+		 * redundant */
+		if ((!t->def || !ispar(t->def->op))
+		&& qbe_copy_usewidthle(fn, i->to, e.usew))
+			return i->arg[0];
+
+		if (qbe_copy_defwidthle(fn, i->arg[0], e.nopw))
+			return i->arg[0];
 	}
 
-	/* 2. remove redundant phis/copies
-	 * and rewrite their uses */
-	for (b=fn->start; b; b=b->link) {
-		for (pp=&b->phi; (p=*pp);) {
-			r = cpy[p->to.val];
-			if (!req(r, p->to)) {
-				*pp = p->link;
-				continue;
-			}
-			for (a=0; a<p->narg; a++)
-				qbe_copy_subst(&p->arg[a], cpy);
-			pp=&p->link;
-		}
-		for (i=b->ins; i<&b->ins[b->nins]; i++) {
-			r = cpy[i->to.val];
-			if (!req(r, i->to)) {
-				*i = (Ins){.op = Onop};
-				continue;
-			}
-			qbe_copy_subst(&i->arg[0], cpy);
-			qbe_copy_subst(&i->arg[1], cpy);
-		}
-		qbe_copy_subst(&b->jmp.arg, cpy);
+	return NULL_R;
+}
+
+static int
+qbe_copy_phieq(Phi *pa, Phi *pb)
+{
+	Ref r;
+	uint n;
+
+	SQ_ASSERT(pa->narg == pb->narg);
+	for (n=0; n<pa->narg; n++) {
+		r = phiarg(pb, pa->blk[n]);
+		if (!req(pa->arg[n], r))
+			return 0;
+	}
+	return 1;
+}
+
+Ref
+phicopyref(Fn *fn, Blk *b, Phi *p)
+{
+	Blk *d, **s;
+	Phi *p1;
+	uint n, c;
+
+	/* identical args */
+	for (n=0; n<p->narg-1; n++)
+		if (!req(p->arg[n], p->arg[n+1]))
+			break;
+	if (n == p->narg-1)
+		return p->arg[n];
+
+	/* same as a previous phi */
+	for (p1=b->phi; p1!=p; p1=p1->link) {
+		SQ_ASSERT(p1);
+		if (qbe_copy_phieq(p1, p))
+			return p1->to;
 	}
 
-	if (GC(debug)['C']) {
-		fprintf(stderr, "\n> Copy information:");
-		for (t=Tmp0; t<fn->ntmp; t++) {
-			if (req(cpy[t], NULL_R)) {
-				fprintf(stderr, "\n%10s not seen!",
-					fn->tmp[t].name);
-			}
-			else if (!req(cpy[t], TMP(t))) {
-				fprintf(stderr, "\n%10s copy of ",
-					fn->tmp[t].name);
-				printref(cpy[t], fn, stderr);
-			}
-		}
-		fprintf(stderr, "\n\n> After copy elimination:\n");
-		printfn(fn, stderr);
-	}
-	vfree(stk);
-	qbe_free(cpy);
+	/* can be replaced by a
+	 * dominating jnz arg */
+	d = b->idom;
+	if (p->narg != 2
+	|| d->jmp.type != Jjnz
+	|| !qbe_copy_isw1(fn, d->jmp.arg))
+		return NULL_R;
+
+	s = (Blk*[]){0, 0};
+	for (n=0; n<2; n++)
+		for (c=0; c<2; c++)
+			if (req(p->arg[n], GC(con01)[c]))
+				s[c] = p->blk[n];
+
+	/* if s1 ends with a jnz on either b
+	 * or s2; the inference below is wrong
+	 * without the jump type checks */
+	if (d->s1 == s[1] && d->s2 == s[0]
+	&& d->s1->jmp.type == Jjmp
+	&& d->s2->jmp.type == Jjmp)
+		return d->jmp.arg;
+
+	return NULL_R;
 }
 #undef G
 /*** END FILE: copy.c ***/
@@ -2480,24 +2780,23 @@ emitdat(Dat *d, FILE *f)
 }
 
 struct Asmbits {
-	char bits[16];
+	bits n;
 	int size;
 	Asmbits *link;
 };
 
 int
-stashbits(void *bits, int size)
+stashbits(bits n, int size)
 {
 	Asmbits **pb, *b;
 	int i;
 
 	SQ_ASSERT(size == 4 || size == 8 || size == 16);
 	for (pb=&G(stash), i=0; (b=*pb); pb=&b->link, i++)
-		if (size <= b->size)
-		if (memcmp(bits, b->bits, size) == 0)
+		if (size <= b->size && b->n == n)
 			return i;
 	b = emalloc(sizeof *b);
-	memcpy(b->bits, bits, size);
+	b->n = n;
 	b->size = size;
 	b->link = 0;
 	*pb = b;
@@ -2508,9 +2807,9 @@ static void
 qbe_emit_emitfin(FILE *f, char *sec[3])
 {
 	Asmbits *b;
-	char *p;
 	int lg, i;
-	double d;
+	union { int32_t i; float f; } uf;
+	union { int64_t i; double d; } ud;
 
 	if (!G(stash))
 		return;
@@ -2524,17 +2823,24 @@ qbe_emit_emitfin(FILE *f, char *sec[3])
 					"%sfp%d:",
 					sec[lg-2], lg, GC(T).asloc, i
 				);
-				for (p=b->bits; p<&b->bits[b->size]; p+=4)
-					fprintf(f, "\n\t.int %"PRId32,
-						*(int32_t *)p);
-				if (lg <= 3) {
-					if (lg == 2)
-						d = *(float *)b->bits;
-					else
-						d = *(double *)b->bits;
-					fprintf(f, " /* %f */\n\n", d);
-				} else
-					fprintf(f, "\n\n");
+				if (lg == 4)
+					fprintf(f,
+						"\n\t.quad %"PRId64
+						"\n\t.quad 0\n\n",
+						(int64_t)b->n);
+				else if (lg == 3) {
+					ud.i = b->n;
+					fprintf(f,
+						"\n\t.quad %"PRId64
+						" /* %f */\n\n",
+						ud.i, ud.d);
+				} else if (lg == 2) {
+					uf.i = b->n;
+					fprintf(f,
+						"\n\t.int %"PRId32
+						" /* %f */\n\n",
+						uf.i, (double)uf.f);
+				}
 			}
 		}
 	while ((b=G(stash))) {
@@ -2614,12 +2920,8 @@ emitdbgloc(uint line, uint col, FILE *f)
 /*** START FILE: fold.c ***/
 /* skipping all.h */
 
+/* boring folding code */
 #define G(x) global_context.fold__##x
-
-enum {
-	Bot = -1, /* lattice bottom */
-	Top = 0,  /* lattice top (matches UNDEF) */
-};
 
 static int
 qbe_fold_iscon(Con *c, int w, uint64_t k)
@@ -2632,311 +2934,8 @@ qbe_fold_iscon(Con *c, int w, uint64_t k)
 		return (uint32_t)c->bits.i == (uint32_t)k;
 }
 
-static int
-qbe_fold_latval(Ref r)
-{
-	switch (rtype(r)) {
-	case RTmp:
-		return G(val)[r.val];
-	case RCon:
-		return r.val;
-	default:
-		die("unreachable");
-	}
-}
-
-static int
-qbe_fold_latmerge(int v, int m)
-{
-	return m == Top ? v : (v == Top || v == m) ? m : Bot;
-}
-
-static void
-qbe_fold_update(int t, int m, Fn *fn)
-{
-	Tmp *tmp;
-	uint u;
-
-	m = qbe_fold_latmerge(G(val)[t], m);
-	if (m != G(val)[t]) {
-		tmp = &fn->tmp[t];
-		for (u=0; u<tmp->nuse; u++) {
-			vgrow(&G(usewrk), ++G(nuse));
-			G(usewrk)[G(nuse)-1] = &tmp->use[u];
-		}
-		G(val)[t] = m;
-	}
-}
-
-static int
-qbe_fold_deadedge(int s, int d)
-{
-	Edge *e;
-
-	e = G(edge)[s];
-	if (e[0].dest == d && !e[0].dead)
-		return 0;
-	if (e[1].dest == d && !e[1].dead)
-		return 0;
-	return 1;
-}
-
-static void
-qbe_fold_visitphi(Phi *p, int n, Fn *fn)
-{
-	int v;
-	uint a;
-
-	v = Top;
-	for (a=0; a<p->narg; a++)
-		if (!qbe_fold_deadedge(p->blk[a]->id, n))
-			v = qbe_fold_latmerge(v, qbe_fold_latval(p->arg[a]));
-	qbe_fold_update(p->to.val, v, fn);
-}
-
-static int qbe_fold_opfold(int, int, Con *, Con *, Fn *);
-
-static void
-qbe_fold_visitins(Ins *i, Fn *fn)
-{
-	int v, l, r;
-
-	if (rtype(i->to) != RTmp)
-		return;
-	if (optab[i->op].canfold) {
-		l = qbe_fold_latval(i->arg[0]);
-		if (!req(i->arg[1], NULL_R))
-			r = qbe_fold_latval(i->arg[1]);
-		else
-			r = CON_Z.val;
-		if (l == Bot || r == Bot)
-			v = Bot;
-		else if (l == Top || r == Top)
-			v = Top;
-		else {
-			v = qbe_fold_opfold(i->op, i->cls, &fn->con[l], &fn->con[r], fn);
-			ret_on_err();
-		}
-	} else
-		v = Bot;
-	/* fprintf(stderr, "\nvisiting %s (%p)", optab[i->op].name, (void *)i); */
-	qbe_fold_update(i->to.val, v, fn);
-}
-
-static void
-qbe_fold_visitjmp(Blk *b, int n, Fn *fn)
-{
-	int l;
-
-	switch (b->jmp.type) {
-	case Jjnz:
-		l = qbe_fold_latval(b->jmp.arg);
-		if (l == Bot) {
-			G(edge)[n][1].work = G(flowrk);
-			G(edge)[n][0].work = &G(edge)[n][1];
-			G(flowrk) = &G(edge)[n][0];
-		}
-		else if (qbe_fold_iscon(&fn->con[l], 0, 0)) {
-			SQ_ASSERT(G(edge)[n][0].dead);
-			G(edge)[n][1].work = G(flowrk);
-			G(flowrk) = &G(edge)[n][1];
-		}
-		else {
-			SQ_ASSERT(G(edge)[n][1].dead);
-			G(edge)[n][0].work = G(flowrk);
-			G(flowrk) = &G(edge)[n][0];
-		}
-		break;
-	case Jjmp:
-		G(edge)[n][0].work = G(flowrk);
-		G(flowrk) = &G(edge)[n][0];
-		break;
-	case Jhlt:
-		break;
-	default:
-		if (isret(b->jmp.type))
-			break;
-		die("unreachable");
-	}
-}
-
-static void
-qbe_fold_initedge(Edge *e, Blk *s)
-{
-	if (s)
-		e->dest = s->id;
-	else
-		e->dest = -1;
-	e->dead = 1;
-	e->work = 0;
-}
-
-static int
-qbe_fold_renref(Ref *r)
-{
-	int l;
-
-	if (rtype(*r) == RTmp)
-		if ((l=G(val)[r->val]) != Bot) {
-			*r = CON(l);
-			return 1;
-		}
-	return 0;
-}
-
-/* require rpo, use, pred */
-void
-fold(Fn *fn)
-{
-	Edge *e, start;
-	Use *u;
-	Blk *b, **pb;
-	Phi *p, **pp;
-	Ins *i;
-	int t, d;
-	uint n, a;
-
-	G(val) = emalloc(fn->ntmp * sizeof G(val)[0]);
-	G(edge) = emalloc(fn->nblk * sizeof G(edge)[0]);
-	G(usewrk) = vnew(0, sizeof G(usewrk)[0], PHeap);
-
-	for (t=0; t<fn->ntmp; t++)
-		G(val)[t] = Top;
-	for (n=0; n<fn->nblk; n++) {
-		b = fn->rpo[n];
-		b->visit = 0;
-		qbe_fold_initedge(&G(edge)[n][0], b->s1);
-		qbe_fold_initedge(&G(edge)[n][1], b->s2);
-	}
-	qbe_fold_initedge(&start, fn->start);
-	G(flowrk) = &start;
-	G(nuse) = 0;
-
-	/* 1. find out constants and dead cfg edges */
-	for (;;) {
-		e = G(flowrk);
-		if (e) {
-			G(flowrk) = e->work;
-			e->work = 0;
-			if (e->dest == -1 || !e->dead)
-				continue;
-			e->dead = 0;
-			n = e->dest;
-			b = fn->rpo[n];
-			for (p=b->phi; p; p=p->link)
-				qbe_fold_visitphi(p, n, fn);
-			if (b->visit == 0) {
-				for (i=b->ins; i<&b->ins[b->nins]; i++) {
-					qbe_fold_visitins(i, fn);
-					ret_on_err();
-				}
-				qbe_fold_visitjmp(b, n, fn);
-			}
-			b->visit++;
-			SQ_ASSERT(b->jmp.type != Jjmp
-				|| !G(edge)[n][0].dead
-				|| G(flowrk) == &G(edge)[n][0]);
-		}
-		else if (G(nuse)) {
-			u = G(usewrk)[--G(nuse)];
-			n = u->bid;
-			b = fn->rpo[n];
-			if (b->visit == 0)
-				continue;
-			switch (u->type) {
-			case UPhi:
-				qbe_fold_visitphi(u->u.phi, u->bid, fn);
-				break;
-			case UIns:
-				qbe_fold_visitins(u->u.ins, fn);
-				ret_on_err();
-				break;
-			case UJmp:
-				qbe_fold_visitjmp(b, n, fn);
-				break;
-			default:
-				die("unreachable");
-			}
-		}
-		else
-			break;
-	}
-
-	if (GC(debug)['F']) {
-		fprintf(stderr, "\n> SCCP findings:");
-		for (t=Tmp0; t<fn->ntmp; t++) {
-			if (G(val)[t] == Bot)
-				continue;
-			fprintf(stderr, "\n%10s: ", fn->tmp[t].name);
-			if (G(val)[t] == Top)
-				fprintf(stderr, "Top");
-			else
-				printref(CON(G(val)[t]), fn, stderr);
-		}
-		fprintf(stderr, "\n dead code: ");
-	}
-
-	/* 2. trim dead code, replace constants */
-	d = 0;
-	for (pb=&fn->start; (b=*pb);) {
-		if (b->visit == 0) {
-			d = 1;
-			if (GC(debug)['F'])
-				fprintf(stderr, "%s ", b->name);
-			edgedel(b, &b->s1);
-			edgedel(b, &b->s2);
-			*pb = b->link;
-			continue;
-		}
-		for (pp=&b->phi; (p=*pp);)
-			if (G(val)[p->to.val] != Bot)
-				*pp = p->link;
-			else {
-				for (a=0; a<p->narg; a++)
-					if (!qbe_fold_deadedge(p->blk[a]->id, b->id))
-						qbe_fold_renref(&p->arg[a]);
-				pp = &p->link;
-			}
-		for (i=b->ins; i<&b->ins[b->nins]; i++)
-			if (qbe_fold_renref(&i->to))
-				*i = (Ins){.op = Onop};
-			else {
-				for (n=0; n<2; n++)
-					qbe_fold_renref(&i->arg[n]);
-				if (isstore(i->op))
-				if (req(i->arg[0], UNDEF))
-					*i = (Ins){.op = Onop};
-			}
-		qbe_fold_renref(&b->jmp.arg);
-		if (b->jmp.type == Jjnz && rtype(b->jmp.arg) == RCon) {
-				if (qbe_fold_iscon(&fn->con[b->jmp.arg.val], 0, 0)) {
-					edgedel(b, &b->s1);
-					b->s1 = b->s2;
-					b->s2 = 0;
-				} else
-					edgedel(b, &b->s2);
-				b->jmp.type = Jjmp;
-				b->jmp.arg = NULL_R;
-		}
-		pb = &b->link;
-	}
-
-	if (GC(debug)['F']) {
-		if (!d)
-			fprintf(stderr, "(none)");
-		fprintf(stderr, "\n\n> After constant folding:\n");
-		printfn(fn, stderr);
-	}
-
-	qbe_free(G(val));
-	qbe_free(G(edge));
-	vfree(G(usewrk));
-}
-
-/* boring folding code */
-
-static int
-qbe_fold_foldint(Con *res, int op, int w, Con *cl, Con *cr)
+int
+foldint(Con *res, int op, int w, Con *cl, Con *cr)
 {
 	union {
 		int64_t s;
@@ -3124,27 +3123,1020 @@ qbe_fold_foldflt(Con *res, int op, int w, Con *cl, Con *cr)
 	}
 }
 
-static int
+static Ref
 qbe_fold_opfold(int op, int cls, Con *cl, Con *cr, Fn *fn)
 {
 	Ref r;
 	Con c = {0};
 
 	if (cls == Kw || cls == Kl) {
-		if (qbe_fold_foldint(&c, op, cls == Kl, cl, cr))
-			return Bot;
+		if (foldint(&c, op, cls == Kl, cl, cr))
+			return NULL_R;
 	} else {
 		qbe_fold_foldflt(&c, op, cls == Kd, cl, cr);
-		ret_on_err_i();
+		ret_on_err_nullr();
 	}
 	if (!KWIDE(cls))
 		c.bits.i &= 0xffffffff;
 	r = newcon(&c, fn);
 	SQ_ASSERT(!(cls == Ks || cls == Kd) || c.flt);
-	return r.val;
+	return r;
+}
+
+/* used by GVN */
+Ref
+foldref(Fn *fn, Ins *i)
+{
+	Ref rr;
+	Con *cl, *cr;
+
+	if (rtype(i->to) != RTmp)
+		return NULL_R;
+	if (optab[i->op].canfold) {
+		if (rtype(i->arg[0]) != RCon)
+			return NULL_R;
+		cl = &fn->con[i->arg[0].val];
+		rr = i->arg[1];
+		if (req(rr, NULL_R))
+		    rr = CON_Z;
+		if (rtype(rr) != RCon)
+			return NULL_R;
+		cr = &fn->con[rr.val];
+
+		return qbe_fold_opfold(i->op, i->cls, cl, cr, fn);
+	}
+	return NULL_R;
 }
 #undef G
 /*** END FILE: fold.c ***/
+/*** START FILE: gcm.c ***/
+/* skipping all.h */
+
+#define NOBID (-1u)
+
+static int
+qbe_gcm_isdivwl(Ins *i)
+{
+	switch (i->op) {
+	case Odiv:
+	case Orem:
+	case Oudiv:
+	case Ourem:
+		return KBASE(i->cls) == 0;
+	default:
+		return 0;
+	}
+}
+
+int
+pinned(Ins *i)
+{
+	return optab[i->op].pinned || qbe_gcm_isdivwl(i);
+}
+
+/* pinned ins that can be eliminated if unused */
+static int
+qbe_gcm_canelim(Ins *i)
+{
+	return isload(i->op) || isalloc(i->op) || qbe_gcm_isdivwl(i);
+}
+
+static uint qbe_gcm_earlyins(Fn *, Blk *, Ins *);
+
+static uint
+qbe_gcm_schedearly(Fn *fn, Ref r)
+{
+	Tmp *t;
+	Blk *b;
+
+	if (rtype(r) != RTmp)
+		return 0;
+
+	t = &fn->tmp[r.val];
+	if (t->gcmbid != NOBID)
+		return t->gcmbid;
+
+	b = fn->rpo[t->bid];
+	if (t->def) {
+		SQ_ASSERT(b->ins <= t->def && t->def < &b->ins[b->nins]);
+		t->gcmbid = 0;  /* mark as visiting */
+		t->gcmbid = qbe_gcm_earlyins(fn, b, t->def);
+	} else {
+		/* phis do not move */
+		t->gcmbid = t->bid;
+	}
+
+	return t->gcmbid;
+}
+
+static uint
+qbe_gcm_earlyins(Fn *fn, Blk *b, Ins *i)
+{
+	uint b0, b1;
+
+	b0 = qbe_gcm_schedearly(fn, i->arg[0]);
+	SQ_ASSERT(b0 != NOBID);
+	b1 = qbe_gcm_schedearly(fn, i->arg[1]);
+	SQ_ASSERT(b1 != NOBID);
+	if (fn->rpo[b0]->depth < fn->rpo[b1]->depth) {
+		SQ_ASSERT(dom(fn->rpo[b0], fn->rpo[b1]));
+		b0 = b1;
+	}
+	return pinned(i) ? b->id : b0;
+}
+
+static void
+qbe_gcm_earlyblk(Fn *fn, uint bid)
+{
+	Blk *b;
+	Phi *p;
+	Ins *i;
+	uint n;
+
+	b = fn->rpo[bid];
+	for (p=b->phi; p; p=p->link)
+		for (n=0; n<p->narg; n++)
+			qbe_gcm_schedearly(fn, p->arg[n]);
+	for (i=b->ins; i<&b->ins[b->nins]; i++)
+		if (pinned(i)) {
+			qbe_gcm_schedearly(fn, i->arg[0]);
+			qbe_gcm_schedearly(fn, i->arg[1]);
+		}
+	qbe_gcm_schedearly(fn, b->jmp.arg);
+}
+
+/* least common ancestor in dom tree */
+static uint
+qbe_gcm_lcabid(Fn *fn, uint bid1, uint bid2)
+{
+	Blk *b;
+
+	if (bid1 == NOBID)
+		return bid2;
+	if (bid2 == NOBID)
+		return bid1;
+
+	b = lca(fn->rpo[bid1], fn->rpo[bid2]);
+	SQ_ASSERT(b);
+	return b->id;
+}
+
+static uint
+qbe_gcm_bestbid(Fn *fn, uint earlybid, uint latebid)
+{
+	Blk *curb, *earlyb, *bestb;
+
+	if (latebid == NOBID)
+		return NOBID; /* unused */
+
+	SQ_ASSERT(earlybid != NOBID);
+
+	earlyb = fn->rpo[earlybid];
+	bestb = curb = fn->rpo[latebid];
+	SQ_ASSERT(dom(earlyb, curb));
+
+	while (curb != earlyb) {
+		curb = curb->idom;
+		if (curb->loop < bestb->loop)
+			bestb = curb;
+	}
+	return bestb->id;
+}
+
+static uint qbe_gcm_lateins(Fn *, Blk *, Ins *, Ref r);
+static uint qbe_gcm_latephi(Fn *, Phi *, Ref r);
+static uint qbe_gcm_latejmp(Blk *, Ref r);
+
+/* return lca bid of ref uses */
+static uint
+qbe_gcm_schedlate(Fn *fn, Ref r)
+{
+	Tmp *t;
+	Blk *b;
+	Use *u;
+	uint earlybid;
+	uint latebid;
+	uint uselatebid = 0;
+
+	if (rtype(r) != RTmp)
+		return NOBID;
+
+	t = &fn->tmp[r.val];
+	if (t->visit)
+		return t->gcmbid;
+
+	t->visit = 1;
+	earlybid = t->gcmbid;
+	if (earlybid == NOBID)
+		return NOBID; /* not used */
+
+	/* reuse gcmbid for late bid */
+	t->gcmbid = t->bid;
+	latebid = NOBID;
+	for (u=t->use; u<&t->use[t->nuse]; u++) {
+		SQ_ASSERT(u->bid < fn->nblk);
+		b = fn->rpo[u->bid];
+		switch (u->type) {
+		case UXXX:
+			die("unreachable");
+			break;
+		case UPhi:
+			uselatebid = qbe_gcm_latephi(fn, u->u.phi, r);
+			break;
+		case UIns:
+			uselatebid = qbe_gcm_lateins(fn, b, u->u.ins, r);
+			break;
+		case UJmp:
+			uselatebid = qbe_gcm_latejmp(b, r);
+			break;
+		}
+		latebid = qbe_gcm_lcabid(fn, latebid, uselatebid);
+	}
+	/* latebid may be NOBID if the temp is used
+	 * in fixed instructions that may be eliminated
+	 * and are themselves unused transitively */
+
+	if (t->def && !pinned(t->def))
+		t->gcmbid = qbe_gcm_bestbid(fn, earlybid, latebid);
+	/* else, keep the early one */
+
+	/* now, gcmbid is the best bid */
+	return t->gcmbid;
+}
+
+/* returns lca bid of uses or NOBID if
+ * the definition can be eliminated */
+static uint
+qbe_gcm_lateins(Fn *fn, Blk *b, Ins *i, Ref r)
+{
+	uint latebid;
+
+	SQ_ASSERT(b->ins <= i && i < &b->ins[b->nins]);
+	SQ_ASSERT(req(i->arg[0], r) || req(i->arg[1], r));
+
+	latebid = qbe_gcm_schedlate(fn, i->to);
+	if (pinned(i)) {
+		if (latebid == NOBID)
+		if (qbe_gcm_canelim(i))
+			return NOBID;
+		return b->id;
+	}
+
+	return latebid;
+}
+
+static uint
+qbe_gcm_latephi(Fn *fn, Phi *p, Ref r)
+{
+	uint n;
+	uint latebid;
+
+	if (!p->narg)
+		return NOBID; /* marked as unused */
+
+	latebid = NOBID;
+	for (n = 0; n < p->narg; n++)
+		if (req(p->arg[n], r))
+			latebid = qbe_gcm_lcabid(fn, latebid, p->blk[n]->id);
+
+	SQ_ASSERT(latebid != NOBID);
+	return latebid;
+}
+
+static uint
+qbe_gcm_latejmp(Blk *b, Ref r)
+{
+	if (req(b->jmp.arg, NULL_R))
+		return NOBID;
+	else {
+		SQ_ASSERT(req(b->jmp.arg, r));
+		return b->id;
+	}
+}
+
+static void
+qbe_gcm_lateblk(Fn *fn, uint bid)
+{
+	Blk *b;
+	Phi **pp;
+	Ins *i;
+
+	b = fn->rpo[bid];
+	for (pp=&b->phi; *(pp);)
+		if (qbe_gcm_schedlate(fn, (*pp)->to) == NOBID) {
+			(*pp)->narg = 0; /* mark unused */
+			*pp = (*pp)->link; /* remove phi */
+		} else
+			pp = &(*pp)->link;
+
+	for (i=b->ins; i<&b->ins[b->nins]; i++)
+		if (pinned(i))
+			qbe_gcm_schedlate(fn, i->to);
+}
+
+static void
+qbe_gcm_addgcmins(Fn *fn, Ins *vins, uint nins)
+{
+	Ins *i;
+	Tmp *t;
+	Blk *b;
+
+	for (i=vins; i<&vins[nins]; i++) {
+		SQ_ASSERT(rtype(i->to) == RTmp);
+		t = &fn->tmp[i->to.val];
+		b = fn->rpo[t->gcmbid];
+		addins(&b->ins, &b->nins, i);
+	}
+}
+
+/* move live instructions to the
+ * end of their target block; use-
+ * before-def errors are fixed by
+ * schedblk */
+static void
+qbe_gcm_gcmmove(Fn *fn)
+{
+	Tmp *t;
+	Ins *vins, *i;
+	uint nins;
+
+	nins = 0;
+	vins = vnew(nins, sizeof vins[0], PFn);
+
+	for (t=fn->tmp; t<&fn->tmp[fn->ntmp]; t++) {
+		if (t->def == 0)
+			continue;
+		if (t->bid == t->gcmbid)
+			continue;
+		i = t->def;
+		if (pinned(i) && !qbe_gcm_canelim(i))
+			continue;
+		SQ_ASSERT(rtype(i->to) == RTmp);
+		SQ_ASSERT(t == &fn->tmp[i->to.val]);
+		if (t->gcmbid != NOBID)
+			addins(&vins, &nins, i);
+		*i = (Ins){.op = Onop};
+	}
+	qbe_gcm_addgcmins(fn, vins, nins);
+}
+
+/* dfs ordering */
+static Ins *
+qbe_gcm_schedins(Fn *fn, Blk *b, Ins *i, Ins **pvins, uint *pnins)
+{
+	Ins *i0, *i1;
+	Tmp *t;
+	uint n;
+
+	igroup(b, i, &i0, &i1);
+	for (i=i0; i<i1; i++)
+		for (n=0; n<2; n++) {
+			if (rtype(i->arg[n]) != RTmp)
+				continue;
+			t = &fn->tmp[i->arg[n].val];
+			if (t->bid != b->id || !t->def)
+				continue;
+			qbe_gcm_schedins(fn, b, t->def, pvins, pnins);
+		}
+	for (i=i0; i<i1; i++) {
+		addins(pvins, pnins, i);
+		*i = (Ins){.op = Onop};
+	}
+	return i1;
+}
+
+/* order ins within a block */
+static void
+qbe_gcm_schedblk(Fn *fn)
+{
+	Blk *b;
+	Ins *i, *vins;
+	uint nins;
+
+	vins = vnew(0, sizeof vins[0], PHeap);
+	for (b=fn->start; b; b=b->link) {
+		nins = 0;
+		for (i=b->ins; i<&b->ins[b->nins];)
+			i = qbe_gcm_schedins(fn, b, i, &vins, &nins);
+		idup(b, vins, nins);
+	}
+	vfree(vins);
+}
+
+static int
+qbe_gcm_cheap(Ins *i)
+{
+	int x;
+
+	if (KBASE(i->cls) != 0)
+		return 0;
+	switch (i->op) {
+	case Oneg:
+	case Oadd:
+	case Osub:
+	case Omul:
+	case Oand:
+	case Oor:
+	case Oxor:
+	case Osar:
+	case Oshr:
+	case Oshl:
+		return 1;
+	default:
+		return iscmp(i->op, &x, &x);
+	}
+}
+
+static void
+qbe_gcm_sinkref(Fn *fn, Blk *b, Ref *pr)
+{
+	Ins i;
+	Tmp *t;
+	Ref r;
+
+	if (rtype(*pr) != RTmp)
+		return;
+	t = &fn->tmp[pr->val];
+	if (!t->def
+	|| t->bid == b->id
+	|| pinned(t->def)
+	|| !qbe_gcm_cheap(t->def))
+		return;
+
+	/* sink t->def to b */
+	i = *t->def;
+	r = newtmp("snk", t->cls, fn);
+	t = 0;  /* invalidated */
+	*pr = r;
+	i.to = r;
+	fn->tmp[r.val].gcmbid = b->id;
+	emiti(i);
+	qbe_gcm_sinkref(fn, b, &i.arg[0]);
+	qbe_gcm_sinkref(fn, b, &i.arg[1]);
+}
+
+/* redistribute trivial ops to point of
+ * use to reduce register pressure
+ * requires rpo, use; breaks use
+ */
+static void
+qbe_gcm_sink(Fn *fn)
+{
+	Blk *b;
+	Ins *i;
+
+	for (b=fn->start; b; b=b->link) {
+		for (i=b->ins; i<&b->ins[b->nins]; i++)
+			if (isload(i->op))
+				qbe_gcm_sinkref(fn, b, &i->arg[0]);
+			else if (isstore(i->op))
+				qbe_gcm_sinkref(fn, b, &i->arg[1]);
+		qbe_gcm_sinkref(fn, b, &b->jmp.arg);
+	}
+	qbe_gcm_addgcmins(fn, GC(curi), &GC(insb)[NIns] - GC(curi));
+}
+
+/* requires use dom
+ * maintains rpo pred dom
+ * breaks use
+ */
+void
+gcm(Fn *fn)
+{
+	Tmp *t;
+	uint bid;
+
+	filldepth(fn);
+	fillloop(fn);
+
+	for (t=fn->tmp; t<&fn->tmp[fn->ntmp]; t++) {
+		t->visit = 0;
+		t->gcmbid = NOBID;
+	}
+	for (bid=0; bid<fn->nblk; bid++)
+		qbe_gcm_earlyblk(fn, bid);
+	for (bid=0; bid<fn->nblk; bid++)
+		qbe_gcm_lateblk(fn, bid);
+
+	qbe_gcm_gcmmove(fn);
+	filluse(fn);
+	GC(curi) = &GC(insb)[NIns];
+	qbe_gcm_sink(fn);
+	filluse(fn);
+	qbe_gcm_schedblk(fn);
+	
+	if (GC(debug)['G']) {
+		fprintf(stderr, "\n> After GCM:\n");
+		printfn(fn, stderr);
+	}
+}
+#undef G
+/*** END FILE: gcm.c ***/
+/*** START FILE: gvn.c ***/
+/* skipping all.h */
+
+static inline uint
+qbe_gvn_mix(uint x0, uint x1)
+{
+	return x0 + 17*x1;
+}
+
+static inline uint
+qbe_gvn_rhash(Ref r)
+{
+	return qbe_gvn_mix(r.type, r.val);
+}
+
+static uint
+qbe_gvn_ihash(Ins *i)
+{
+	uint h;
+
+	h = qbe_gvn_mix(i->op, i->cls);
+	h = qbe_gvn_mix(h, qbe_gvn_rhash(i->arg[0]));
+	h = qbe_gvn_mix(h, qbe_gvn_rhash(i->arg[1]));
+
+	return h;
+}
+
+static int
+qbe_gvn_ieq(Ins *ia, Ins *ib)
+{
+	if (ia->op == ib->op)
+	if (ia->cls == ib->cls)
+	if (req(ia->arg[0], ib->arg[0]))
+	if (req(ia->arg[1], ib->arg[1]))
+		return 1;
+	return 0;
+}
+
+static Ins **gvntbl;
+static uint gvntbln;
+
+static Ins *
+qbe_gvn_gvndup(Ins *i, int insert)
+{
+	uint idx;
+	Ins *ii;
+
+	idx = qbe_gvn_ihash(i) % gvntbln;
+	for (;;) {
+		ii = gvntbl[idx];
+		if (!ii)
+			break;
+		if (qbe_gvn_ieq(i, ii))
+			return ii;
+
+		idx++;
+		if (gvntbln <= idx)
+			idx = 0;
+	}
+	if (insert)
+		gvntbl[idx] = i;
+	return 0;
+}
+
+static void
+qbe_gvn_replaceuse(Fn *fn, Use *u, Ref r1, Ref r2)
+{
+	Blk *b;
+	Ins *i;
+	Phi *p;
+	Ref *pr;
+	Tmp *t2;
+	int n;
+
+	t2 = 0;
+	if (rtype(r2) == RTmp)
+		t2 = &fn->tmp[r2.val];
+	b = fn->rpo[u->bid];
+	switch (u->type) {
+	case UPhi:
+		p = u->u.phi;
+		for (pr=p->arg; pr<&p->arg[p->narg]; pr++)
+			if (req(*pr, r1))
+				*pr = r2;
+		if (t2)
+			adduse(t2, UPhi, b, p);
+		break;
+	case UIns:
+		i = u->u.ins;
+		for (n=0; n<2; n++)
+			if (req(i->arg[n], r1))
+				i->arg[n] = r2;
+		if (t2)
+			adduse(t2, UIns, b, i);
+		break;
+	case UJmp:
+		if (req(b->jmp.arg, r1))
+			b->jmp.arg = r2;
+		if (t2)
+			adduse(t2, UJmp, b);
+		break;
+	case UXXX:
+		die("unreachable");
+	}
+}
+
+static void
+qbe_gvn_replaceuses(Fn *fn, Ref r1, Ref r2)
+{
+	Tmp *t1;
+	Use *u;
+
+	SQ_ASSERT(rtype(r1) == RTmp);
+	t1 = &fn->tmp[r1.val];
+	for (u=t1->use; u<&t1->use[t1->nuse]; u++)
+		qbe_gvn_replaceuse(fn, u, r1, r2);
+	t1->nuse = 0;
+}
+
+static void
+qbe_gvn_dedupphi(Fn *fn, Blk *b)
+{
+	Phi *p, **pp;
+	Ref r;
+
+	for (pp=&b->phi; (p=*pp);) {
+		r = phicopyref(fn, b, p);
+		if (!req(r, NULL_R)) {
+			qbe_gvn_replaceuses(fn, p->to, r);
+			p->to = NULL_R;
+			*pp = p->link;
+		} else
+			pp = &p->link;
+	}
+}
+
+static int
+qbe_gvn_rcmp(Ref a, Ref b)
+{
+	if (rtype(a) != rtype(b))
+		return rtype(a) - rtype(b);
+	return a.val - b.val;
+}
+
+static void
+qbe_gvn_normins(Fn *fn, Ins *i)
+{
+	uint n;
+	int64_t v;
+	Ref r;
+
+	/* truncate constant bits to
+	 * 32 bits for s/w uses */
+	for (n=0; n<2; n++) {
+		if (!KWIDE(argcls(i, n)))
+		if (isconbits(fn, i->arg[n], &v))
+		if ((v & 0xffffffff) != v)
+			i->arg[n] = getcon(v & 0xffffffff, fn);
+	}
+	/* order arg[0] <= arg[1] for
+	 * commutative ops, preferring
+	 * RTmp in arg[0] */
+	if (optab[i->op].commutes)
+	if (qbe_gvn_rcmp(i->arg[0], i->arg[1]) > 0) {
+		r = i->arg[1];
+		i->arg[1] = i->arg[0];
+		i->arg[0] = r;
+	}
+}
+
+static int
+qbe_gvn_negcon(int cls, Con *c)
+{
+	static Con z = {.type = CBits, .bits.i = 0};
+
+	return foldint(c, Osub, cls, &z, c);
+}
+
+static void
+qbe_gvn_assoccon(Fn *fn, Blk *b, Ins *i1)
+{
+	Tmp *t2;
+	Ins *i2;
+	int op, fail;
+	Con c, c1, c2;
+
+	op = i1->op;
+	if (op == Osub)
+		op = Oadd;
+
+	if (!optab[op].assoc
+	|| KBASE(i1->cls) != 0
+	|| rtype(i1->arg[0]) != RTmp
+	|| rtype(i1->arg[1]) != RCon)
+		return;
+	c1 = fn->con[i1->arg[1].val];
+
+	t2 = &fn->tmp[i1->arg[0].val];
+	if (t2->def == 0)
+		return;
+	i2 = t2->def;
+
+	if (op != (i2->op == Osub ? Oadd : i2->op)
+	|| rtype(i2->arg[1]) != RCon)
+		return;
+	c2 = fn->con[i2->arg[1].val];
+
+	SQ_ASSERT(KBASE(i2->cls) == 0);
+	SQ_ASSERT(KWIDE(i2->cls) >= KWIDE(i1->cls));
+
+	if (i1->op == Osub && qbe_gvn_negcon(i1->cls, &c1))
+		return;
+	if (i2->op == Osub && qbe_gvn_negcon(i2->cls, &c2))
+		return;
+	if (foldint(&c, op, i1->cls, &c1, &c2))
+		return;
+
+	if (op == Oadd && c.type == CBits)
+	if ((i1->cls == Kl  && c.bits.i < 0)
+	|| (i1->cls == Kw && (int32_t)c.bits.i < 0)) {
+		fail = qbe_gvn_negcon(i1->cls, &c);
+		SQ_ASSERT(fail == 0);
+		op = Osub;
+	}
+
+	i1->op = op;
+	i1->arg[0] = i2->arg[0];
+	i1->arg[1] = newcon(&c, fn);
+	adduse(&fn->tmp[i1->arg[0].val], UIns, b, i1);
+}
+
+static void
+qbe_gvn_killins(Fn *fn, Ins *i, Ref r)
+{
+	qbe_gvn_replaceuses(fn, i->to, r);
+	*i = (Ins){.op = Onop};
+}
+
+static void
+qbe_gvn_dedupins(Fn *fn, Blk *b, Ins *i)
+{
+	Ref r;
+	Ins *i1;
+
+	qbe_gvn_normins(fn, i);
+	if (i->op == Onop || pinned(i))
+		return;
+
+	SQ_ASSERT(!req(i->to, NULL_R));
+	qbe_gvn_assoccon(fn, b, i);
+
+	r = copyref(fn, b, i);
+	if (!req(r, NULL_R)) {
+		qbe_gvn_killins(fn, i, r);
+		return;
+	}
+	r = foldref(fn, i);
+	if (!req(r, NULL_R)) {
+		qbe_gvn_killins(fn, i, r);
+		return;
+	}
+	i1 = qbe_gvn_gvndup(i, 1);
+	if (i1) {
+		qbe_gvn_killins(fn, i, i1->to);
+		return;
+	}
+}
+
+static int
+cmpeqz(Fn *fn, Ref r, Ref *arg, int *cls, int *eqval)
+{
+	Ins *i;
+
+	if (rtype(r) != RTmp)
+		return 0;
+	i = fn->tmp[r.val].def;
+	if (i)
+	if (optab[i->op].cmpeqwl)
+	if (req(i->arg[1], CON_Z)) {
+		*arg = i->arg[0];
+		*cls = argcls(i, 0);
+		*eqval = optab[i->op].eqval;
+		return 1;
+	}
+	return 0;
+}
+
+static int
+qbe_gvn_branchdom(Fn *fn, Blk *bif, Blk *bbr1, Blk *bbr2, Blk *b)
+{
+	SQ_ASSERT(bif->jmp.type == Jjnz);
+
+	if (b != bif
+	&& dom(bbr1, b)
+	&& !reachesnotvia(fn, bbr2, b, bif))
+		return 1;
+
+	return 0;
+}
+
+static int
+qbe_gvn_domzero(Fn *fn, Blk *d, Blk *b, int *z)
+{
+	if (qbe_gvn_branchdom(fn, d, d->s1, d->s2, b)) {
+		*z = 0;
+		return 1;
+	}
+	if (qbe_gvn_branchdom(fn, d, d->s2, d->s1, b)) {
+		*z = 1;
+		return 1;
+	}
+	return 0;
+}
+
+/* infer 0/non-0 value from dominating jnz */
+int
+zeroval(Fn *fn, Blk *b, Ref r, int cls, int *z)
+{
+	Blk *d;
+	Ref arg;
+	int cls1, eqval;
+
+	for (d=b->idom; d; d=d->idom) {
+		if (d->jmp.type != Jjnz)
+			continue;
+		if (req(r, d->jmp.arg)
+		&& cls == Kw
+		&& qbe_gvn_domzero(fn, d, b, z)) {
+			return 1;
+		}
+		if (cmpeqz(fn, d->jmp.arg, &arg, &cls1, &eqval)
+		&& req(r, arg)
+		&& cls == cls1
+		&& qbe_gvn_domzero(fn, d, b, z)) {
+			*z ^= eqval;
+			return 1;
+		}
+	}
+	return 0;
+}
+
+static int
+qbe_gvn_usecls(Use *u, Ref r, int cls)
+{
+	int k;
+
+	switch (u->type) {
+	case UIns:
+		k = Kx;  /* widest use */
+		if (req(u->u.ins->arg[0], r))
+			k = argcls(u->u.ins, 0);
+		if (req(u->u.ins->arg[1], r))
+		if (k == Kx || !KWIDE(k))
+			k = argcls(u->u.ins, 1);
+		return k == Kx ? cls : k;
+	case UPhi:
+		if (req(u->u.phi->to, NULL_R))
+			return cls; /* eliminated */
+		return u->u.phi->cls;
+	case UJmp:
+		return Kw;
+	default:
+		break;
+	}
+	die("unreachable");
+}
+
+static void
+qbe_gvn_propjnz0(Fn *fn, Blk *bif, Blk *s0, Blk *snon0, Ref r, int cls)
+{
+	Blk *b;
+	Tmp *t;
+	Use *u;
+
+	if (s0->npred != 1 || rtype(r) != RTmp)
+		return;
+	t = &fn->tmp[r.val];
+	for (u=t->use; u<&t->use[t->nuse]; u++) {
+		b = fn->rpo[u->bid];
+		/* we may compare an l temp with a w
+		 * comparison; so check that the use
+		 * does not involve high bits */
+		if (qbe_gvn_usecls(u, r, cls) == cls)
+		if (qbe_gvn_branchdom(fn, bif, s0, snon0, b))
+			qbe_gvn_replaceuse(fn, u, r, CON_Z);
+	}
+}
+
+static void
+qbe_gvn_dedupjmp(Fn *fn, Blk *b)
+{
+	Blk **ps;
+	int64_t v;
+	Ref arg;
+	int cls, eqval, z;
+
+	if (b->jmp.type != Jjnz)
+		return;
+
+	/* propagate jmp arg as 0 through s2 */
+	qbe_gvn_propjnz0(fn, b, b->s2, b->s1, b->jmp.arg, Kw);
+	/* propagate cmp eq/ne 0 def of jmp arg as 0 */
+	if (cmpeqz(fn, b->jmp.arg, &arg, &cls, &eqval)) {
+		ps = (Blk*[]){b->s1, b->s2};
+		qbe_gvn_propjnz0(fn, b, ps[eqval^1], ps[eqval], arg, cls);
+	}
+
+	/* collapse trivial/constant jnz to jmp */
+	v = 1;
+	z = 0;
+	if (b->s1 == b->s2
+	|| isconbits(fn, b->jmp.arg, &v)
+	|| zeroval(fn, b, b->jmp.arg, Kw, &z)) {
+		if (v == 0 || z)
+			b->s1 = b->s2;
+		/* we later move active ins out of dead blks */
+		b->s2 = 0;
+		b->jmp.type = Jjmp;
+		b->jmp.arg = NULL_R;
+	}
+}
+
+static void
+qbe_gvn_rebuildcfg(Fn *fn)
+{
+	uint n, nblk;
+	Blk *b, *s, **rpo;
+	Ins *i;
+
+	nblk = fn->nblk;
+	rpo = emalloc(nblk * sizeof rpo[0]);
+	memcpy(rpo, fn->rpo, nblk * sizeof rpo[0]);
+
+	fillcfg(fn);
+
+	/* move instructions that were in
+	 * killed blocks and may be active
+	 * in the computation in the start
+	 * block */
+	s = fn->start;
+	for (n=0; n<nblk; n++) {
+		b = rpo[n];
+		if (b->id != -1u)
+			continue;
+		/* blk unreachable after GVN */
+		SQ_ASSERT(b != s);
+		for (i=b->ins; i<&b->ins[b->nins]; i++)
+			if (!optab[i->op].pinned)
+			if (qbe_gvn_gvndup(i, 0) == i)
+				addins(&s->ins, &s->nins, i);
+	}
+	qbe_free(rpo);
+}
+
+/* requires rpo pred ssa use
+ * recreates rpo preds
+ * breaks pred use dom ssa (GCM fixes ssa)
+ */
+void
+gvn(Fn *fn)
+{
+	Blk *b;
+	Phi *p;
+	Ins *i;
+	uint n, nins;
+
+	GC(con01)[0] = getcon(0, fn);
+	GC(con01)[1] = getcon(1, fn);
+
+	/* copy.c uses the visit bit */
+	for (b=fn->start; b; b=b->link)
+		for (p=b->phi; p; p=p->link)
+			p->visit = 0;
+
+	fillloop(fn);
+	narrowpars(fn);
+	filluse(fn);
+	ssacheck(fn);
+
+	nins = 0;
+	for (b=fn->start; b; b=b->link) {
+		b->visit = 0;
+		nins += b->nins;
+	}
+
+	gvntbln = nins + nins/2;
+	gvntbl = emalloc(gvntbln * sizeof gvntbl[0]);
+	for (n=0; n<fn->nblk; n++) {
+		b = fn->rpo[n];
+		qbe_gvn_dedupphi(fn, b);
+		for (i=b->ins; i<&b->ins[b->nins]; i++)
+			qbe_gvn_dedupins(fn, b, i);
+		qbe_gvn_dedupjmp(fn, b);
+	}
+	qbe_gvn_rebuildcfg(fn);
+	qbe_free(gvntbl);
+	gvntbl = 0;
+
+	if (GC(debug)['G']) {
+		fprintf(stderr, "\n> After GVN:\n");
+		printfn(fn, stderr);
+	}
+}
+#undef G
+/*** END FILE: gvn.c ***/
 /*** START FILE: live.c ***/
 /* skipping all.h */
 
@@ -3671,6 +4663,7 @@ qbe_load_def(Slice sl, bits msk, Blk *b, Ins *i, Loc *il)
 			goto Load;
 		p->arg[np] = r1;
 		p->blk[np] = bp;
+		/* XXX - multiplicity in predecessors!!! */
 	}
 	if (msk != msks)
 		qbe_load_mask(cls, &r, msk, il);
@@ -3772,8 +4765,7 @@ loadopt(Fn *fn)
 			vgrow(&ib, ++nt);
 			ib[nt-1] = *i;
 		}
-		b->nins = nt;
-		idup(&b->ins, ib, nt);
+		idup(b, ib, nt);
 	}
 	vfree(ib);
 	vfree(G(ilog));
@@ -3828,8 +4820,7 @@ qbe_main_func(Fn *fn)
 		printfn(fn, stderr);
 	}
 	GC(T).abi0(fn);
-	fillrpo(fn);
-	fillpreds(fn);
+	fillcfg(fn);
 	filluse(fn);
 	promote(fn);
 	ret_on_err();
@@ -3844,27 +4835,31 @@ qbe_main_func(Fn *fn)
 	fillalias(fn);
 	coalesce(fn);
 	filluse(fn);
+	filldom(fn);
 	ssacheck(fn);
-	ret_on_err();
-	copy(fn);
+  ret_on_err();
+	gvn(fn);
+	fillcfg(fn);
 	filluse(fn);
-	fold(fn);
+	filldom(fn);
+	gcm(fn);
+	filluse(fn);
+	ssacheck(fn);
 	GC(T).abi1(fn);
 	simpl(fn);
-	fillpreds(fn);
+	fillcfg(fn);
 	filluse(fn);
 	GC(T).isel(fn);
-	ret_on_err();
-	fillrpo(fn);
+  ret_on_err();
+	fillcfg(fn);
 	filllive(fn);
 	fillloop(fn);
 	fillcost(fn);
 	spill(fn);
 	rega(fn);
-	fillrpo(fn);
+	fillcfg(fn);
 	simpljmp(fn);
-	fillpreds(fn);
-	fillrpo(fn);
+	fillcfg(fn);
 	SQ_ASSERT(fn->rpo[0] == fn->start);
 	for (n=0;; n++)
 		if (n == fn->nblk-1) {
@@ -4398,9 +5393,15 @@ enum {
 };
 
 static Op optab[NOp] = {
-#undef P
-#define P(cf, hi, id) .canfold = cf, .hasid = hi, .idval = id
-#define O(op, t, p) [O##op]={.name = #op, .argcls = t, p},
+#undef F
+#define F(cf, hi, id, co, as, im, ic, lg, cv, pn) \
+	.canfold = cf, \
+	.hasid = hi, .idval = id, \
+	.commutes = co, .assoc = as, \
+	.idemp = im, \
+	.cmpeqwl = ic, .cmplgtewl = lg, .eqval = cv, \
+	.pinned = pn
+#define O(op, k, flags) [O##op]={.name = #op, .argcls = k, flags},
 /* ------------------------------------------------------------including ops.h */
 #ifndef X /* amd64 */
 	#define X(NMemArgs, SetsZeroFlag, LeavesFlags)
@@ -4410,188 +5411,195 @@ static Op optab[NOp] = {
 	#define V(Imm)
 #endif
 
-#ifndef P
-	#define P(CanFold, HasId, IdVal)
+#ifndef F
+#define F(a,b,c,d,e,f,g,h,i,j)
 #endif
-
 
 #define T(a,b,c,d,e,f,g,h) {                          \
 	{[Kw]=K##a, [Kl]=K##b, [Ks]=K##c, [Kd]=K##d}, \
 	{[Kw]=K##e, [Kl]=K##f, [Ks]=K##g, [Kd]=K##h}  \
 }
 
-
 /*********************/
 /* PUBLIC OPERATIONS */
 /*********************/
 
-/* Arithmetic and Bits */
-O(add,     T(w,l,s,d, w,l,s,d), P(1,1,0)) X(2,1,0) V(1)
-O(sub,     T(w,l,s,d, w,l,s,d), P(1,1,0)) X(2,1,0) V(0)
-O(neg,     T(w,l,s,d, x,x,x,x), P(1,0,0)) X(1,1,0) V(0)
-O(div,     T(w,l,s,d, w,l,s,d), P(1,1,1)) X(0,0,0) V(0)
-O(rem,     T(w,l,e,e, w,l,e,e), P(1,0,0)) X(0,0,0) V(0)
-O(udiv,    T(w,l,e,e, w,l,e,e), P(1,1,1)) X(0,0,0) V(0)
-O(urem,    T(w,l,e,e, w,l,e,e), P(1,0,0)) X(0,0,0) V(0)
-O(mul,     T(w,l,s,d, w,l,s,d), P(1,1,1)) X(2,0,0) V(0)
-O(and,     T(w,l,e,e, w,l,e,e), P(1,0,0)) X(2,1,0) V(1)
-O(or,      T(w,l,e,e, w,l,e,e), P(1,1,0)) X(2,1,0) V(1)
-O(xor,     T(w,l,e,e, w,l,e,e), P(1,1,0)) X(2,1,0) V(1)
-O(sar,     T(w,l,e,e, w,w,e,e), P(1,1,0)) X(1,1,0) V(1)
-O(shr,     T(w,l,e,e, w,w,e,e), P(1,1,0)) X(1,1,0) V(1)
-O(shl,     T(w,l,e,e, w,w,e,e), P(1,1,0)) X(1,1,0) V(1)
+/*                                can fold                        */
+/*                                | has identity                  */
+/*                                | | identity value for arg[1]   */
+/*                                | | | commutative               */
+/*                                | | | | associative             */
+/*                                | | | | | idempotent            */
+/*                                | | | | | | c{eq,ne}[wl]        */
+/*                                | | | | | | | c[us][gl][et][wl] */
+/*                                | | | | | | | | value if = args */
+/*                                | | | | | | | | | pinned        */
+/* Arithmetic and Bits            v v v v v v v v v v             */
+O(add,     T(w,l,s,d, w,l,s,d), F(1,1,0,1,1,0,0,0,0,0)) X(2,1,0) V(1)
+O(sub,     T(w,l,s,d, w,l,s,d), F(1,1,0,0,0,0,0,0,0,0)) X(2,1,0) V(0)
+O(neg,     T(w,l,s,d, x,x,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(1,1,0) V(0)
+O(div,     T(w,l,s,d, w,l,s,d), F(1,1,1,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(rem,     T(w,l,e,e, w,l,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(udiv,    T(w,l,e,e, w,l,e,e), F(1,1,1,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(urem,    T(w,l,e,e, w,l,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(mul,     T(w,l,s,d, w,l,s,d), F(1,1,1,1,0,0,0,0,0,0)) X(2,0,0) V(0)
+O(and,     T(w,l,e,e, w,l,e,e), F(1,0,0,1,1,1,0,0,0,0)) X(2,1,0) V(1)
+O(or,      T(w,l,e,e, w,l,e,e), F(1,1,0,1,1,1,0,0,0,0)) X(2,1,0) V(1)
+O(xor,     T(w,l,e,e, w,l,e,e), F(1,1,0,1,1,0,0,0,0,0)) X(2,1,0) V(1)
+O(sar,     T(w,l,e,e, w,w,e,e), F(1,1,0,0,0,0,0,0,0,0)) X(1,1,0) V(1)
+O(shr,     T(w,l,e,e, w,w,e,e), F(1,1,0,0,0,0,0,0,0,0)) X(1,1,0) V(1)
+O(shl,     T(w,l,e,e, w,w,e,e), F(1,1,0,0,0,0,0,0,0,0)) X(1,1,0) V(1)
 
 /* Comparisons */
-O(ceqw,    T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cnew,    T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csgew,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csgtw,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cslew,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csltw,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(1)
-O(cugew,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cugtw,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(culew,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cultw,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(1)
+O(ceqw,    T(w,w,e,e, w,w,e,e), F(1,1,1,1,0,0,1,0,1,0)) X(0,1,0) V(0)
+O(cnew,    T(w,w,e,e, w,w,e,e), F(1,1,0,1,0,0,1,0,0,0)) X(0,1,0) V(0)
+O(csgew,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(csgtw,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(0)
+O(cslew,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(csltw,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(1)
+O(cugew,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(cugtw,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(0)
+O(culew,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(cultw,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(1)
 
-O(ceql,    T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cnel,    T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csgel,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csgtl,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cslel,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csltl,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(1)
-O(cugel,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cugtl,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(culel,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cultl,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(1)
+O(ceql,    T(l,l,e,e, l,l,e,e), F(1,0,0,1,0,0,1,0,1,0)) X(0,1,0) V(0)
+O(cnel,    T(l,l,e,e, l,l,e,e), F(1,0,0,1,0,0,1,0,0,0)) X(0,1,0) V(0)
+O(csgel,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(csgtl,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(0)
+O(cslel,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(csltl,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(1)
+O(cugel,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(cugtl,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(0)
+O(culel,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(cultl,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(1)
 
-O(ceqs,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cges,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cgts,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cles,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(clts,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cnes,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cos,     T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cuos,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
+O(ceqs,    T(s,s,e,e, s,s,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cges,    T(s,s,e,e, s,s,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cgts,    T(s,s,e,e, s,s,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cles,    T(s,s,e,e, s,s,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(clts,    T(s,s,e,e, s,s,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cnes,    T(s,s,e,e, s,s,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cos,     T(s,s,e,e, s,s,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cuos,    T(s,s,e,e, s,s,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
 
-O(ceqd,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cged,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cgtd,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cled,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cltd,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cned,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cod,     T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cuod,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
+O(ceqd,    T(d,d,e,e, d,d,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cged,    T(d,d,e,e, d,d,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cgtd,    T(d,d,e,e, d,d,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cled,    T(d,d,e,e, d,d,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cltd,    T(d,d,e,e, d,d,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cned,    T(d,d,e,e, d,d,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cod,     T(d,d,e,e, d,d,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cuod,    T(d,d,e,e, d,d,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
 
 /* Memory */
-O(storeb,  T(w,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(storeh,  T(w,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(storew,  T(w,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(storel,  T(l,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(stores,  T(s,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(stored,  T(d,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
+O(storeb,  T(w,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(storeh,  T(w,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(storew,  T(w,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(storel,  T(l,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(stores,  T(s,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(stored,  T(d,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
 
-O(loadsb,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loadub,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loadsh,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loaduh,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loadsw,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loaduw,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(load,    T(m,m,m,m, x,x,x,x), P(0,0,0)) X(0,0,1) V(0)
+O(loadsb,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loadub,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loadsh,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loaduh,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loadsw,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loaduw,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(load,    T(m,m,m,m, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
 
 /* Extensions and Truncations */
-O(extsb,   T(w,w,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extub,   T(w,w,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extsh,   T(w,w,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extuh,   T(w,w,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extsw,   T(e,w,e,e, e,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extuw,   T(e,w,e,e, e,x,e,e), P(1,0,0)) X(0,0,1) V(0)
+O(extsb,   T(w,w,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extub,   T(w,w,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extsh,   T(w,w,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extuh,   T(w,w,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extsw,   T(e,w,e,e, e,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extuw,   T(e,w,e,e, e,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
-O(exts,    T(e,e,e,s, e,e,e,x), P(1,0,0)) X(0,0,1) V(0)
-O(truncd,  T(e,e,d,e, e,e,x,e), P(1,0,0)) X(0,0,1) V(0)
-O(stosi,   T(s,s,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(stoui,   T(s,s,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(dtosi,   T(d,d,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(dtoui,   T(d,d,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(swtof,   T(e,e,w,w, e,e,x,x), P(1,0,0)) X(0,0,1) V(0)
-O(uwtof,   T(e,e,w,w, e,e,x,x), P(1,0,0)) X(0,0,1) V(0)
-O(sltof,   T(e,e,l,l, e,e,x,x), P(1,0,0)) X(0,0,1) V(0)
-O(ultof,   T(e,e,l,l, e,e,x,x), P(1,0,0)) X(0,0,1) V(0)
-O(cast,    T(s,d,w,l, x,x,x,x), P(1,0,0)) X(0,0,1) V(0)
+O(exts,    T(e,e,e,s, e,e,e,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(truncd,  T(e,e,d,e, e,e,x,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(stosi,   T(s,s,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(stoui,   T(s,s,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(dtosi,   T(d,d,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(dtoui,   T(d,d,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(swtof,   T(e,e,w,w, e,e,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(uwtof,   T(e,e,w,w, e,e,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(sltof,   T(e,e,l,l, e,e,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(ultof,   T(e,e,l,l, e,e,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(cast,    T(s,d,w,l, x,x,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
 /* Stack Allocation */
-O(alloc4,  T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(alloc8,  T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(alloc16, T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
+O(alloc4,  T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(alloc8,  T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(alloc16, T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
 
 /* Variadic Function Helpers */
-O(vaarg,   T(m,m,m,m, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(vastart, T(m,e,e,e, x,e,e,e), P(0,0,0)) X(0,0,0) V(0)
+O(vaarg,   T(m,m,m,m, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(vastart, T(m,e,e,e, x,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
 
-O(copy,    T(w,l,s,d, x,x,x,x), P(0,0,0)) X(0,0,1) V(0)
+O(copy,    T(w,l,s,d, x,x,x,x), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
 /* Debug */
-O(dbgloc,  T(w,e,e,e, w,e,e,e), P(0,0,0)) X(0,0,1) V(0)
+O(dbgloc,  T(w,e,e,e, w,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
 
 /****************************************/
 /* INTERNAL OPERATIONS (keep nop first) */
 /****************************************/
 
 /* Miscellaneous and Architecture-Specific Operations */
-O(nop,     T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,1) V(0)
-O(addr,    T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(blit0,   T(m,e,e,e, m,e,e,e), P(0,0,0)) X(0,1,0) V(0)
-O(blit1,   T(w,e,e,e, x,e,e,e), P(0,0,0)) X(0,1,0) V(0)
-O(swap,    T(w,l,s,d, w,l,s,d), P(0,0,0)) X(1,0,0) V(0)
-O(sign,    T(w,l,e,e, x,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(salloc,  T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(xidiv,   T(w,l,e,e, x,x,e,e), P(0,0,0)) X(1,0,0) V(0)
-O(xdiv,    T(w,l,e,e, x,x,e,e), P(0,0,0)) X(1,0,0) V(0)
-O(xcmp,    T(w,l,s,d, w,l,s,d), P(0,0,0)) X(1,1,0) V(0)
-O(xtest,   T(w,l,e,e, w,l,e,e), P(0,0,0)) X(1,1,0) V(0)
-O(acmp,    T(w,l,e,e, w,l,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(acmn,    T(w,l,e,e, w,l,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(afcmp,   T(e,e,s,d, e,e,s,d), P(0,0,0)) X(0,0,0) V(0)
-O(reqz,    T(w,l,e,e, x,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(rnez,    T(w,l,e,e, x,x,e,e), P(0,0,0)) X(0,0,0) V(0)
+O(nop,     T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(addr,    T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(blit0,   T(m,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,1,0) V(0)
+O(blit1,   T(w,e,e,e, x,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,1,0) V(0)
+O(swap,    T(w,l,s,d, w,l,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(1,0,0) V(0)
+O(sign,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(salloc,  T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xidiv,   T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(1,0,0) V(0)
+O(xdiv,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(1,0,0) V(0)
+O(xcmp,    T(w,l,s,d, w,l,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(1,1,0) V(0)
+O(xtest,   T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(1,1,0) V(0)
+O(acmp,    T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(acmn,    T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(afcmp,   T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(reqz,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(rnez,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
 
 /* Arguments, Parameters, and Calls */
-O(par,     T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(parsb,   T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(parub,   T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(parsh,   T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(paruh,   T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(parc,    T(e,x,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(pare,    T(e,x,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(arg,     T(w,l,s,d, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(argsb,   T(w,e,e,e, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(argub,   T(w,e,e,e, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(argsh,   T(w,e,e,e, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(arguh,   T(w,e,e,e, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(argc,    T(e,x,e,e, e,l,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(arge,    T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(argv,    T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(call,    T(m,m,m,m, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
+O(par,     T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(parsb,   T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(parub,   T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(parsh,   T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(paruh,   T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(parc,    T(e,x,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(pare,    T(e,x,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(arg,     T(w,l,s,d, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argsb,   T(w,e,e,e, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argub,   T(w,e,e,e, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argsh,   T(w,e,e,e, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(arguh,   T(w,e,e,e, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argc,    T(e,x,e,e, e,l,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(arge,    T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argv,    T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(call,    T(m,m,m,m, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
 
 /* Flags Setting */
-O(flagieq,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagine,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagisge, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagisgt, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagisle, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagislt, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagiuge, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagiugt, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagiule, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagiult, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfeq,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfge,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfgt,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfle,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagflt,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfne,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfo,   T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfuo,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-
+O(flagieq,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagine,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagisge, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagisgt, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagisle, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagislt, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagiuge, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagiugt, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagiule, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagiult, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfeq,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfge,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfgt,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfle,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagflt,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfne,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfo,   T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfuo,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
 #undef T
 #undef X
@@ -4602,7 +5610,7 @@ O(flagfuo,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
 | column -t -o ' '
 */
 /* ------------------------------------------------------------end of ops.h */
-#undef P
+#undef F
 };
 
 typedef enum {
@@ -4634,8 +5642,7 @@ typedef enum {
 static void
 qbe_parse_closeblk(void)
 {
-	G(curb)->nins = GC(curi) - GC(insb);
-	idup(&G(curb)->ins, GC(insb), G(curb)->nins);
+	idup(G(curb), GC(insb), GC(curi)-GC(insb));
 	G(blink) = &G(curb)->link;
 	GC(curi) = GC(insb);
 }
@@ -5403,8 +6410,7 @@ qbe_rega_doblk(Blk *b, RMap *cur)
 			 * the above loop must be changed */
 		}
 	}
-	b->nins = &GC(insb)[NIns] - GC(curi);
-	idup(&b->ins, GC(curi), b->nins);
+	idup(b, GC(curi), &GC(insb)[NIns]-GC(curi));
 }
 
 /* qsort() comparison function to peel
@@ -5635,10 +6641,9 @@ rega(Fn *fn)
 			blist = b1;
 			fn->nblk++;
 			strf(b1->name, "%s_%s", b->name, s->name);
-			b1->nins = &GC(insb)[NIns] - GC(curi);
-			G(stmov) += b1->nins;
+			G(stmov) += &GC(insb)[NIns]-GC(curi);
 			G(stblk) += 1;
-			idup(&b1->ins, GC(curi), b1->nins);
+			idup(b1, GC(curi), &GC(insb)[NIns]-GC(curi));
 			b1->jmp.type = Jjmp;
 			b1->s1 = s;
 			**ps = b1;
@@ -5785,10 +6790,8 @@ simpl(Fn *fn)
 			--i;
 			qbe_simpl_ins(&i, &new, b, fn);
 		}
-		if (new) {
-			b->nins = &GC(insb)[NIns] - GC(curi);
-			idup(&b->ins, GC(curi), b->nins);
-		}
+		if (new)
+			idup(b, GC(curi), &GC(insb)[NIns]-GC(curi));
 	}
 }
 #undef G
@@ -6306,8 +7309,7 @@ spill(Fn *fn)
 				p->to = qbe_spill_slot(p->to.val);
 		}
 		bscopy(b->in, v);
-		b->nins = &GC(insb)[NIns] - GC(curi);
-		idup(&b->ins, GC(curi), b->nins);
+		idup(b, GC(curi), &GC(insb)[NIns]-GC(curi));
 	}
 
 	/* align the locals to a 16 byte boundary */
@@ -6333,8 +7335,8 @@ spill(Fn *fn)
 
 #define G(x) global_context.ssa__##x
 
-static void
-qbe_ssa_adduse(Tmp *tmp, int ty, Blk *b, ...)
+void
+adduse(Tmp *tmp, int ty, Blk *b, ...)
 {
 	Use *u;
 	int n;
@@ -6376,7 +7378,6 @@ filluse(Fn *fn)
 	uint a;
 	Tmp *tmp;
 
-	/* todo, is this the correct file? */
 	tmp = fn->tmp;
 	for (t=Tmp0; t<fn->ntmp; t++) {
 		tmp[t].def = 0;
@@ -6400,7 +7401,7 @@ filluse(Fn *fn)
 			for (a=0; a<p->narg; a++)
 				if (rtype(p->arg[a]) == RTmp) {
 					t = p->arg[a].val;
-					qbe_ssa_adduse(&tmp[t], UPhi, b, p);
+					adduse(&tmp[t], UPhi, b, p);
 					t = phicls(t, fn->tmp);
 					if (t != tp)
 						tmp[t].phi = tp;
@@ -6431,11 +7432,11 @@ filluse(Fn *fn)
 			for (m=0; m<2; m++)
 				if (rtype(i->arg[m]) == RTmp) {
 					t = i->arg[m].val;
-					qbe_ssa_adduse(&tmp[t], UIns, b, i);
+					adduse(&tmp[t], UIns, b, i);
 				}
 		}
 		if (rtype(b->jmp.arg) == RTmp)
-			qbe_ssa_adduse(&tmp[b->jmp.arg.val], UJmp, b);
+			adduse(&tmp[b->jmp.arg.val], UJmp, b);
 	}
 }
 
@@ -6477,7 +7478,7 @@ qbe_ssa_phiins(Fn *fn)
 				continue;
 		}
 		bszero(u);
-		k = -1;
+		k = Kx;
 		bp = be;
 		for (b=fn->start; b; b=b->link) {
 			b->visit = 0;
@@ -6853,6 +7854,15 @@ vgrow(void *vp, ulong len)
 }
 
 void
+addins(Ins **pvins, uint *pnins, Ins *i)
+{
+	if (i->op == Onop)
+		return;
+	vgrow(pvins, ++(*pnins));
+	(*pvins)[(*pnins)-1] = *i;
+}
+
+void
 strf(char str[NString], char *s, ...)
 {
 	va_list ap;
@@ -6927,6 +7937,51 @@ iscmp(int op, int *pk, int *pc)
 	return 1;
 }
 
+void
+igroup(Blk *b, Ins *i, Ins **i0, Ins **i1)
+{
+	Ins *ib, *ie;
+
+	ib = b->ins;
+	ie = ib + b->nins;
+	switch (i->op) {
+	case Oblit0:
+		*i0 = i;
+		*i1 = i + 2;
+		return;
+	case Oblit1:
+		*i0 = i - 1;
+		*i1 = i + 1;
+		return;
+	case_Opar:
+		for (; i>ib && ispar((i-1)->op); i--)
+			;
+		*i0 = i;
+		for (; i<ie && ispar(i->op); i++)
+			;
+		*i1 = i;
+		return;
+	case Ocall:
+	case_Oarg:
+		for (; i>ib && isarg((i-1)->op); i--)
+			;
+		*i0 = i;
+		for (; i<ie && i->op != Ocall; i++)
+			;
+		SQ_ASSERT(i < ie);
+		*i1 = i + 1;
+		return;
+	default:
+		if (ispar(i->op))
+			goto case_Opar;
+		if (isarg(i->op))
+			goto case_Oarg;
+		*i0 = i;
+		*i1 = i + 1;
+		return;
+	}
+}
+
 int
 argcls(Ins *i, int n)
 {
@@ -6951,18 +8006,18 @@ emiti(Ins i)
 }
 
 void
-idup(Ins **pd, Ins *s, ulong n)
+idup(Blk *b, Ins *s, ulong n)
 {
-	*pd = alloc(n * sizeof(Ins));
-	if (n)
-		memcpy(*pd, s, n * sizeof(Ins));
+	vgrow(&b->ins, n);
+	icpy(b->ins, s, n);
+	b->nins = n;
 }
 
 Ins *
 icpy(Ins *d, Ins *s, ulong n)
 {
 	if (n)
-		memcpy(d, s, n * sizeof(Ins));
+		memmove(d, s, n * sizeof(Ins));
 	return d + n;
 }
 
@@ -7030,6 +8085,28 @@ phicls(int t, Tmp *tmp)
 	t1 = phicls(t1, tmp);
 	tmp[t].phi = t1;
 	return t1;
+}
+
+uint
+phiargn(Phi *p, Blk *b)
+{
+	uint n;
+
+	if (p)
+		for (n=0; n<p->narg; n++)
+			if (p->blk[n] == b)
+				return n;
+	return -1;
+}
+
+Ref
+phiarg(Phi *p, Blk *b)
+{
+	uint n;
+
+	n = phiargn(p, b);
+	SQ_ASSERT(n != -1u && "block not found");
+	return p->arg[n];
 }
 
 Ref
@@ -7112,6 +8189,21 @@ addcon(Con *c0, Con *c1, int m)
 		c0->bits.i += c1->bits.i * m;
 	}
 	return 1;
+}
+
+int
+isconbits(Fn *fn, Ref r, int64_t *v)
+{
+	Con *c;
+
+	if (rtype(r) == RCon) {
+		c = &fn->con[r.val];
+		if (c->type == CBits) {
+			*v = c->bits.i;
+			return 1;
+		}
+	}
+	return 0;
 }
 
 void
@@ -7743,9 +8835,9 @@ Next:
 	goto Next;
 }
 
-static void *negmask[4] = {
-	[Ks] = (uint32_t[4]){ 0x80000000 },
-	[Kd] = (uint64_t[2]){ 0x8000000000000000 },
+static bits negmask[4] = {
+	[Ks] = 0x80000000,
+	[Kd] = 0x8000000000000000,
 };
 
 static void
@@ -7970,6 +9062,7 @@ amd64_sysv_emitfn(Fn *fn, FILE *f)
 	Blk *b, *s;
 	Ins *i, itmp;
 	int *r, c, o, n, lbl;
+	uint p;
 	QBE_AMD64_EMIT_E *e;
 
 	e = &(QBE_AMD64_EMIT_E){.f = f, .fn = fn};
@@ -7998,8 +9091,14 @@ amd64_sysv_emitfn(Fn *fn, FILE *f)
 		}
 
 	for (lbl=0, b=fn->start; b; b=b->link) {
-		if (lbl || b->npred > 1)
+		if (lbl || b->npred > 1) {
+			for (p=0; p<b->npred; p++)
+				if (b->pred[p]->id >= b->id)
+					break;
+			if (p != b->npred)
+				fprintf(f, ".p2align 4\n");
 			fprintf(f, "%sbb%d:\n", GC(T).asloc, G(amd64_sysv_emitfn_id0)+b->id);
+		}
 		for (i=b->ins; i!=&b->ins[b->nins]; i++)
 			qbe_amd64_emit_emitins(*i, e);
 		lbl = 1;
@@ -8261,7 +9360,7 @@ qbe_amd64_isel_fixarg(Ref *r, int k, Ins *i, Fn *fn)
 		vgrow(&fn->mem, ++fn->nmem);
 		memset(&a, 0, sizeof a);
 		a.offset.type = CAddr;
-		n = stashbits(&fn->con[r0.val].bits, KWIDE(k) ? 8 : 4);
+		n = stashbits(fn->con[r0.val].bits.i, KWIDE(k) ? 8 : 4);
 		/* quote the name so that we do not
 		 * add symbol prefixes on the apple
 		 * target variant
@@ -9003,10 +10102,9 @@ amd64_isel(Fn *fn)
 		qbe_amd64_isel_seljmp(b, fn);
 		for (i=&b->ins[b->nins]; i!=b->ins;) {
 			qbe_amd64_isel_sel(*--i, num, fn);
-			ret_on_err();
-		}
-		b->nins = &GC(insb)[NIns] - GC(curi);
-		idup(&b->ins, GC(curi), b->nins);
+      ret_on_err();
+    }
+		idup(b, GC(curi), &GC(insb)[NIns]-GC(curi));
 	}
 	qbe_free(num);
 
@@ -9530,8 +10628,7 @@ qbe_amd64_sysv_split(Fn *fn, Blk *b)
 
 	++fn->nblk;
 	bn = newblk();
-	bn->nins = &GC(insb)[NIns] - GC(curi);
-	idup(&bn->ins, GC(curi), bn->nins);
+	idup(bn, GC(curi), &GC(insb)[NIns]-GC(curi));
 	GC(curi) = &GC(insb)[NIns];
 	bn->visit = ++b->visit;
 	strf(bn->name, "%s.%d", b->name, b->visit);
@@ -9679,9 +10776,9 @@ void
 amd64_sysv_abi(Fn *fn)
 {
 	Blk *b;
-	Ins *i, *i0, *ip;
+	Ins *i, *i0;
 	QBE_AMD64_SYSV_RAlloc *ral;
-	int n, fa;
+	int n0, n1, ioff, fa;
 
 	for (b=fn->start; b; b=b->link)
 		b->visit = 0;
@@ -9691,13 +10788,14 @@ amd64_sysv_abi(Fn *fn)
 		if (!ispar(i->op))
 			break;
 	fa = qbe_amd64_sysv_selpar(fn, b->ins, i);
-	ret_on_err();
-	n = b->nins - (i - b->ins) + (&GC(insb)[NIns] - GC(curi));
-	i0 = alloc(n * sizeof(Ins));
-	ip = icpy(ip = i0, GC(curi), &GC(insb)[NIns] - GC(curi));
-	ip = icpy(ip, i, &b->ins[b->nins] - i);
-	b->nins = n;
-	b->ins = i0;
+  ret_on_err();
+	n0 = &GC(insb)[NIns] - GC(curi);
+	ioff = i - b->ins;
+	n1 = b->nins - ioff;
+	vgrow(&b->ins, n0+n1);
+	icpy(b->ins+n0, b->ins+ioff, n1);
+	icpy(b->ins, GC(curi), n0);
+	b->nins = n0+n1;
 
 	/* lower calls, returns, and vararg instructions */
 	ral = 0;
@@ -9735,8 +10833,7 @@ amd64_sysv_abi(Fn *fn)
 		if (b == fn->start)
 			for (; ral; ral=ral->link)
 				emiti(ral->i);
-		b->nins = &GC(insb)[NIns] - GC(curi);
-		idup(&b->ins, GC(curi), b->nins);
+		idup(b, GC(curi), &GC(insb)[NIns]-GC(curi));
 	} while (b != fn->start);
 
 	if (GC(debug)['A']) {
@@ -9761,188 +10858,195 @@ static Amd64Op amd64_op[NOp] = {
 	#define V(Imm)
 #endif
 
-#ifndef P
-	#define P(CanFold, HasId, IdVal)
+#ifndef F
+#define F(a,b,c,d,e,f,g,h,i,j)
 #endif
-
 
 #define T(a,b,c,d,e,f,g,h) {                          \
 	{[Kw]=K##a, [Kl]=K##b, [Ks]=K##c, [Kd]=K##d}, \
 	{[Kw]=K##e, [Kl]=K##f, [Ks]=K##g, [Kd]=K##h}  \
 }
 
-
 /*********************/
 /* PUBLIC OPERATIONS */
 /*********************/
 
-/* Arithmetic and Bits */
-O(add,     T(w,l,s,d, w,l,s,d), P(1,1,0)) X(2,1,0) V(1)
-O(sub,     T(w,l,s,d, w,l,s,d), P(1,1,0)) X(2,1,0) V(0)
-O(neg,     T(w,l,s,d, x,x,x,x), P(1,0,0)) X(1,1,0) V(0)
-O(div,     T(w,l,s,d, w,l,s,d), P(1,1,1)) X(0,0,0) V(0)
-O(rem,     T(w,l,e,e, w,l,e,e), P(1,0,0)) X(0,0,0) V(0)
-O(udiv,    T(w,l,e,e, w,l,e,e), P(1,1,1)) X(0,0,0) V(0)
-O(urem,    T(w,l,e,e, w,l,e,e), P(1,0,0)) X(0,0,0) V(0)
-O(mul,     T(w,l,s,d, w,l,s,d), P(1,1,1)) X(2,0,0) V(0)
-O(and,     T(w,l,e,e, w,l,e,e), P(1,0,0)) X(2,1,0) V(1)
-O(or,      T(w,l,e,e, w,l,e,e), P(1,1,0)) X(2,1,0) V(1)
-O(xor,     T(w,l,e,e, w,l,e,e), P(1,1,0)) X(2,1,0) V(1)
-O(sar,     T(w,l,e,e, w,w,e,e), P(1,1,0)) X(1,1,0) V(1)
-O(shr,     T(w,l,e,e, w,w,e,e), P(1,1,0)) X(1,1,0) V(1)
-O(shl,     T(w,l,e,e, w,w,e,e), P(1,1,0)) X(1,1,0) V(1)
+/*                                can fold                        */
+/*                                | has identity                  */
+/*                                | | identity value for arg[1]   */
+/*                                | | | commutative               */
+/*                                | | | | associative             */
+/*                                | | | | | idempotent            */
+/*                                | | | | | | c{eq,ne}[wl]        */
+/*                                | | | | | | | c[us][gl][et][wl] */
+/*                                | | | | | | | | value if = args */
+/*                                | | | | | | | | | pinned        */
+/* Arithmetic and Bits            v v v v v v v v v v             */
+O(add,     T(w,l,s,d, w,l,s,d), F(1,1,0,1,1,0,0,0,0,0)) X(2,1,0) V(1)
+O(sub,     T(w,l,s,d, w,l,s,d), F(1,1,0,0,0,0,0,0,0,0)) X(2,1,0) V(0)
+O(neg,     T(w,l,s,d, x,x,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(1,1,0) V(0)
+O(div,     T(w,l,s,d, w,l,s,d), F(1,1,1,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(rem,     T(w,l,e,e, w,l,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(udiv,    T(w,l,e,e, w,l,e,e), F(1,1,1,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(urem,    T(w,l,e,e, w,l,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(mul,     T(w,l,s,d, w,l,s,d), F(1,1,1,1,0,0,0,0,0,0)) X(2,0,0) V(0)
+O(and,     T(w,l,e,e, w,l,e,e), F(1,0,0,1,1,1,0,0,0,0)) X(2,1,0) V(1)
+O(or,      T(w,l,e,e, w,l,e,e), F(1,1,0,1,1,1,0,0,0,0)) X(2,1,0) V(1)
+O(xor,     T(w,l,e,e, w,l,e,e), F(1,1,0,1,1,0,0,0,0,0)) X(2,1,0) V(1)
+O(sar,     T(w,l,e,e, w,w,e,e), F(1,1,0,0,0,0,0,0,0,0)) X(1,1,0) V(1)
+O(shr,     T(w,l,e,e, w,w,e,e), F(1,1,0,0,0,0,0,0,0,0)) X(1,1,0) V(1)
+O(shl,     T(w,l,e,e, w,w,e,e), F(1,1,0,0,0,0,0,0,0,0)) X(1,1,0) V(1)
 
 /* Comparisons */
-O(ceqw,    T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cnew,    T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csgew,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csgtw,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cslew,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csltw,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(1)
-O(cugew,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cugtw,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(culew,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cultw,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(1)
+O(ceqw,    T(w,w,e,e, w,w,e,e), F(1,1,1,1,0,0,1,0,1,0)) X(0,1,0) V(0)
+O(cnew,    T(w,w,e,e, w,w,e,e), F(1,1,0,1,0,0,1,0,0,0)) X(0,1,0) V(0)
+O(csgew,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(csgtw,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(0)
+O(cslew,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(csltw,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(1)
+O(cugew,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(cugtw,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(0)
+O(culew,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(cultw,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(1)
 
-O(ceql,    T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cnel,    T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csgel,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csgtl,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cslel,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csltl,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(1)
-O(cugel,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cugtl,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(culel,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cultl,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(1)
+O(ceql,    T(l,l,e,e, l,l,e,e), F(1,0,0,1,0,0,1,0,1,0)) X(0,1,0) V(0)
+O(cnel,    T(l,l,e,e, l,l,e,e), F(1,0,0,1,0,0,1,0,0,0)) X(0,1,0) V(0)
+O(csgel,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(csgtl,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(0)
+O(cslel,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(csltl,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(1)
+O(cugel,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(cugtl,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(0)
+O(culel,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(cultl,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(1)
 
-O(ceqs,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cges,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cgts,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cles,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(clts,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cnes,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cos,     T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cuos,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
+O(ceqs,    T(s,s,e,e, s,s,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cges,    T(s,s,e,e, s,s,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cgts,    T(s,s,e,e, s,s,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cles,    T(s,s,e,e, s,s,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(clts,    T(s,s,e,e, s,s,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cnes,    T(s,s,e,e, s,s,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cos,     T(s,s,e,e, s,s,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cuos,    T(s,s,e,e, s,s,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
 
-O(ceqd,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cged,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cgtd,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cled,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cltd,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cned,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cod,     T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cuod,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
+O(ceqd,    T(d,d,e,e, d,d,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cged,    T(d,d,e,e, d,d,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cgtd,    T(d,d,e,e, d,d,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cled,    T(d,d,e,e, d,d,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cltd,    T(d,d,e,e, d,d,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cned,    T(d,d,e,e, d,d,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cod,     T(d,d,e,e, d,d,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cuod,    T(d,d,e,e, d,d,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
 
 /* Memory */
-O(storeb,  T(w,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(storeh,  T(w,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(storew,  T(w,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(storel,  T(l,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(stores,  T(s,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(stored,  T(d,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
+O(storeb,  T(w,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(storeh,  T(w,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(storew,  T(w,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(storel,  T(l,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(stores,  T(s,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(stored,  T(d,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
 
-O(loadsb,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loadub,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loadsh,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loaduh,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loadsw,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loaduw,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(load,    T(m,m,m,m, x,x,x,x), P(0,0,0)) X(0,0,1) V(0)
+O(loadsb,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loadub,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loadsh,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loaduh,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loadsw,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loaduw,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(load,    T(m,m,m,m, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
 
 /* Extensions and Truncations */
-O(extsb,   T(w,w,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extub,   T(w,w,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extsh,   T(w,w,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extuh,   T(w,w,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extsw,   T(e,w,e,e, e,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extuw,   T(e,w,e,e, e,x,e,e), P(1,0,0)) X(0,0,1) V(0)
+O(extsb,   T(w,w,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extub,   T(w,w,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extsh,   T(w,w,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extuh,   T(w,w,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extsw,   T(e,w,e,e, e,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extuw,   T(e,w,e,e, e,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
-O(exts,    T(e,e,e,s, e,e,e,x), P(1,0,0)) X(0,0,1) V(0)
-O(truncd,  T(e,e,d,e, e,e,x,e), P(1,0,0)) X(0,0,1) V(0)
-O(stosi,   T(s,s,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(stoui,   T(s,s,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(dtosi,   T(d,d,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(dtoui,   T(d,d,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(swtof,   T(e,e,w,w, e,e,x,x), P(1,0,0)) X(0,0,1) V(0)
-O(uwtof,   T(e,e,w,w, e,e,x,x), P(1,0,0)) X(0,0,1) V(0)
-O(sltof,   T(e,e,l,l, e,e,x,x), P(1,0,0)) X(0,0,1) V(0)
-O(ultof,   T(e,e,l,l, e,e,x,x), P(1,0,0)) X(0,0,1) V(0)
-O(cast,    T(s,d,w,l, x,x,x,x), P(1,0,0)) X(0,0,1) V(0)
+O(exts,    T(e,e,e,s, e,e,e,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(truncd,  T(e,e,d,e, e,e,x,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(stosi,   T(s,s,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(stoui,   T(s,s,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(dtosi,   T(d,d,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(dtoui,   T(d,d,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(swtof,   T(e,e,w,w, e,e,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(uwtof,   T(e,e,w,w, e,e,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(sltof,   T(e,e,l,l, e,e,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(ultof,   T(e,e,l,l, e,e,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(cast,    T(s,d,w,l, x,x,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
 /* Stack Allocation */
-O(alloc4,  T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(alloc8,  T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(alloc16, T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
+O(alloc4,  T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(alloc8,  T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(alloc16, T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
 
 /* Variadic Function Helpers */
-O(vaarg,   T(m,m,m,m, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(vastart, T(m,e,e,e, x,e,e,e), P(0,0,0)) X(0,0,0) V(0)
+O(vaarg,   T(m,m,m,m, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(vastart, T(m,e,e,e, x,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
 
-O(copy,    T(w,l,s,d, x,x,x,x), P(0,0,0)) X(0,0,1) V(0)
+O(copy,    T(w,l,s,d, x,x,x,x), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
 /* Debug */
-O(dbgloc,  T(w,e,e,e, w,e,e,e), P(0,0,0)) X(0,0,1) V(0)
+O(dbgloc,  T(w,e,e,e, w,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
 
 /****************************************/
 /* INTERNAL OPERATIONS (keep nop first) */
 /****************************************/
 
 /* Miscellaneous and Architecture-Specific Operations */
-O(nop,     T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,1) V(0)
-O(addr,    T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(blit0,   T(m,e,e,e, m,e,e,e), P(0,0,0)) X(0,1,0) V(0)
-O(blit1,   T(w,e,e,e, x,e,e,e), P(0,0,0)) X(0,1,0) V(0)
-O(swap,    T(w,l,s,d, w,l,s,d), P(0,0,0)) X(1,0,0) V(0)
-O(sign,    T(w,l,e,e, x,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(salloc,  T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(xidiv,   T(w,l,e,e, x,x,e,e), P(0,0,0)) X(1,0,0) V(0)
-O(xdiv,    T(w,l,e,e, x,x,e,e), P(0,0,0)) X(1,0,0) V(0)
-O(xcmp,    T(w,l,s,d, w,l,s,d), P(0,0,0)) X(1,1,0) V(0)
-O(xtest,   T(w,l,e,e, w,l,e,e), P(0,0,0)) X(1,1,0) V(0)
-O(acmp,    T(w,l,e,e, w,l,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(acmn,    T(w,l,e,e, w,l,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(afcmp,   T(e,e,s,d, e,e,s,d), P(0,0,0)) X(0,0,0) V(0)
-O(reqz,    T(w,l,e,e, x,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(rnez,    T(w,l,e,e, x,x,e,e), P(0,0,0)) X(0,0,0) V(0)
+O(nop,     T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(addr,    T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(blit0,   T(m,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,1,0) V(0)
+O(blit1,   T(w,e,e,e, x,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,1,0) V(0)
+O(swap,    T(w,l,s,d, w,l,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(1,0,0) V(0)
+O(sign,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(salloc,  T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xidiv,   T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(1,0,0) V(0)
+O(xdiv,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(1,0,0) V(0)
+O(xcmp,    T(w,l,s,d, w,l,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(1,1,0) V(0)
+O(xtest,   T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(1,1,0) V(0)
+O(acmp,    T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(acmn,    T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(afcmp,   T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(reqz,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(rnez,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
 
 /* Arguments, Parameters, and Calls */
-O(par,     T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(parsb,   T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(parub,   T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(parsh,   T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(paruh,   T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(parc,    T(e,x,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(pare,    T(e,x,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(arg,     T(w,l,s,d, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(argsb,   T(w,e,e,e, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(argub,   T(w,e,e,e, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(argsh,   T(w,e,e,e, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(arguh,   T(w,e,e,e, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(argc,    T(e,x,e,e, e,l,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(arge,    T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(argv,    T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(call,    T(m,m,m,m, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
+O(par,     T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(parsb,   T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(parub,   T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(parsh,   T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(paruh,   T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(parc,    T(e,x,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(pare,    T(e,x,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(arg,     T(w,l,s,d, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argsb,   T(w,e,e,e, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argub,   T(w,e,e,e, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argsh,   T(w,e,e,e, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(arguh,   T(w,e,e,e, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argc,    T(e,x,e,e, e,l,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(arge,    T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argv,    T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(call,    T(m,m,m,m, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
 
 /* Flags Setting */
-O(flagieq,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagine,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagisge, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagisgt, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagisle, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagislt, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagiuge, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagiugt, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagiule, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagiult, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfeq,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfge,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfgt,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfle,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagflt,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfne,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfo,   T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfuo,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-
+O(flagieq,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagine,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagisge, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagisgt, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagisle, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagislt, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagiuge, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagiugt, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagiule, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagiult, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfeq,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfge,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfgt,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfle,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagflt,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfne,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfo,   T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfuo,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
 #undef T
 #undef X
@@ -10573,7 +11677,7 @@ static void lower_args_for_block(Fn* func,
 
   lower_block_return(func, block);
 
-  if (block->ins) {
+  if (block->nins) {
     // Work backwards through the instructions, either copying them unchanged,
     // or modifying as necessary.
     for (Ins* instr = &block->ins[block->nins - 1]; instr >= block->ins;) {
@@ -10612,8 +11716,7 @@ static void lower_args_for_block(Fn* func,
 
   // emit/emiti add instructions from the end to the beginning of the temporary
   // global buffer. dup the final version into the final block storage.
-  block->nins = &GC(insb)[NIns] - GC(curi);
-  idup(&block->ins, GC(curi), block->nins);
+  idup(block, GC(curi), &GC(insb)[NIns]-GC(curi));
 }
 
 static Ins* find_end_of_func_parameters(Blk* start_block) {
@@ -10717,7 +11820,7 @@ static QBE_AMD64_WINABI_RegisterUsage lower_func_parameters(Fn* func) {
   int num_created_instrs = &GC(insb)[NIns] - GC(curi);
   int num_other_after_instrs = (int)(start_block->nins - num_params);
   int new_total_instrs = num_other_after_instrs + num_created_instrs;
-  Ins* new_instrs = alloc(new_total_instrs * sizeof(Ins));
+  Ins* new_instrs = vnew(new_total_instrs, sizeof(Ins), PFn);
   Ins* instr_p = icpy(new_instrs, GC(curi), num_created_instrs);
   icpy(instr_p, end_of_params, num_other_after_instrs);
   start_block->nins = new_total_instrs;
@@ -11327,8 +12430,7 @@ qbe_arm64_abi_split(Fn *fn, Blk *b)
 
 	++fn->nblk;
 	bn = newblk();
-	bn->nins = &GC(insb)[NIns] - GC(curi);
-	idup(&bn->ins, GC(curi), bn->nins);
+	idup(bn, GC(curi), &GC(insb)[NIns]-GC(curi));
 	GC(curi) = &GC(insb)[NIns];
 	bn->visit = ++b->visit;
 	strf(bn->name, "%s.%d", b->name, b->visit);
@@ -11512,9 +12614,9 @@ void
 arm64_abi(Fn *fn)
 {
 	Blk *b;
-	Ins *i, *i0, *ip;
+	Ins *i, *i0;
 	QBE_ARM64_ABI_Insl *il;
-	int n;
+	int n0, n1, ioff;
 	QBE_ARM64_ABI_Params p;
 
 	for (b=fn->start; b; b=b->link)
@@ -11525,12 +12627,13 @@ arm64_abi(Fn *fn)
 		if (!ispar(i->op))
 			break;
 	p = qbe_arm64_abi_selpar(fn, b->ins, i);
-	n = b->nins - (i - b->ins) + (&GC(insb)[NIns] - GC(curi));
-	i0 = alloc(n * sizeof(Ins));
-	ip = icpy(ip = i0, GC(curi), &GC(insb)[NIns] - GC(curi));
-	ip = icpy(ip, i, &b->ins[b->nins] - i);
-	b->nins = n;
-	b->ins = i0;
+	n0 = &GC(insb)[NIns] - GC(curi);
+	ioff = i - b->ins;
+	n1 = b->nins - ioff;
+	vgrow(&b->ins, n0+n1);
+	icpy(b->ins+n0, b->ins+ioff, n1);
+	icpy(b->ins, GC(curi), n0);
+	b->nins = n0+n1;
 
 	/* lower calls, returns, and vararg instructions */
 	il = 0;
@@ -11574,8 +12677,7 @@ arm64_abi(Fn *fn)
 		if (b == fn->start)
 			for (; il; il=il->link)
 				emiti(il->i);
-		b->nins = &GC(insb)[NIns] - GC(curi);
-		idup(&b->ins, GC(curi), b->nins);
+		idup(b, GC(curi), &GC(insb)[NIns]-GC(curi));
 	} while (b != fn->start);
 
 	if (GC(debug)['A']) {
@@ -11626,8 +12728,7 @@ apple_extsb(Fn *fn)
 					emit(op, Kw, i->to, i->arg[0], NULL_R);
 				}
 		}
-		b->nins = &GC(insb)[NIns] - GC(curi);
-		idup(&b->ins, GC(curi), b->nins);
+		idup(b, GC(curi), &GC(insb)[NIns]-GC(curi));
 	}
 
 	if (GC(debug)['A']) {
@@ -11858,7 +12959,7 @@ qbe_arm64_emit_emitf(char *s, Ins *i, QBE_ARM64_EMIT_E *e)
 			goto Switch;
 		case '?':
 			if (KBASE(k) == 0)
-				fputs(qbe_arm64_emit_rname(QBE_ARM64_R18, k), e->f);
+				fputs(qbe_arm64_emit_rname(QBE_ARM64_IP1, k), e->f);
 			else
 				fputs(k==Ks ? "s31" : "d31", e->f);
 			break;
@@ -12009,9 +13110,9 @@ qbe_arm64_emit_fixarg(Ref *pr, int sz, QBE_ARM64_EMIT_E *e)
 	if (rtype(r) == RSlot) {
 		s = qbe_arm64_emit_slot(r, e);
 		if (s > sz * 4095u) {
-			i = &(Ins){Oaddr, Kl, TMP(QBE_ARM64_IP0), {r}};
+			i = &(Ins){Oaddr, Kl, TMP(QBE_ARM64_IP1), {r}};
 			qbe_arm64_emit_emitins(i, e);
-			*pr = TMP(QBE_ARM64_IP0);
+			*pr = TMP(QBE_ARM64_IP1);
 		}
 	}
 }
@@ -12056,7 +13157,7 @@ qbe_arm64_emit_emitins(Ins *i, QBE_ARM64_EMIT_E *e)
 		if (rtype(i->to) == RSlot) {
 			r = i->to;
 			if (!isreg(i->arg[0])) {
-				i->to = TMP(QBE_ARM64_R18);
+				i->to = TMP(QBE_ARM64_IP1);
 				qbe_arm64_emit_emitins(i, e);
 				i->arg[0] = i->to;
 			}
@@ -12077,7 +13178,7 @@ qbe_arm64_emit_emitins(Ins *i, QBE_ARM64_EMIT_E *e)
 			qbe_arm64_emit_emitins(i, e);
 			break;
 		default:
-			SQ_ASSERT(i->to.val != QBE_ARM64_R18);
+			SQ_ASSERT(i->to.val != QBE_ARM64_IP1);
 			goto Table;
 		}
 		break;
@@ -12429,7 +13530,7 @@ qbe_arm64_isel_fixarg(Ref *pr, int k, int phi, Fn *fn)
 		if (KBASE(k) == 0) {
 			emit(Ocopy, k, r1, r0, NULL_R);
 		} else {
-			n = stashbits(&c->bits, KWIDE(k) ? 8 : 4);
+			n = stashbits(c->bits.i, KWIDE(k) ? 8 : 4);
 			vgrow(&fn->con, ++fn->ncon);
 			c = &fn->con[fn->ncon-1];
 			snprintf(buf, sizeof(buf), "\"%sfp%d\"", GC(T).asloc, n);
@@ -12626,8 +13727,7 @@ arm64_isel(Fn *fn)
 		qbe_arm64_isel_seljmp(b, fn);
 		for (i=&b->ins[b->nins]; i!=b->ins;)
 			qbe_arm64_isel_sel(*--i, fn);
-		b->nins = &GC(insb)[NIns] - GC(curi);
-		idup(&b->ins, GC(curi), b->nins);
+		idup(b, GC(curi), &GC(insb)[NIns]-GC(curi));
 	}
 
 	if (GC(debug)['I']) {
@@ -12656,7 +13756,7 @@ static int arm64_rclob[] = {
 	-1
 };
 
-#define RGLOB (BIT(QBE_ARM64_FP) | BIT(QBE_ARM64_SP) | BIT(QBE_ARM64_R18))
+#define RGLOB (BIT(QBE_ARM64_FP) | BIT(QBE_ARM64_SP) | BIT(QBE_ARM64_IP1) | BIT(QBE_ARM64_R18))
 
 static int
 arm64_memargs(int op)
@@ -12671,7 +13771,7 @@ arm64_memargs(int op)
 	.fpr0 = QBE_ARM64_V0, \
 	.nfpr = QBE_ARM64_NFPR, \
 	.rglob = RGLOB, \
-	.nrglob = 3, \
+	.nrglob = 4, \
 	.rsave = arm64_rsave, \
 	.nrsave = {QBE_ARM64_NGPS, QBE_ARM64_NFPS}, \
 	.retregs = arm64_retregs, \
@@ -13305,9 +14405,9 @@ void
 rv64_abi(Fn *fn)
 {
 	Blk *b;
-	Ins *i, *i0, *ip;
+	Ins *i, *i0;
 	QBE_RV64_ABI_Insl *il;
-	int n;
+	int n0, n1, ioff;
 	QBE_RV64_ABI_Params p;
 
 	for (b=fn->start; b; b=b->link)
@@ -13318,13 +14418,14 @@ rv64_abi(Fn *fn)
 		if (!ispar(i->op))
 			break;
 	p = qbe_rv64_abi_selpar(fn, b->ins, i);
-	ret_on_err();
-	n = b->nins - (i - b->ins) + (&GC(insb)[NIns] - GC(curi));
-	i0 = alloc(n * sizeof(Ins));
-	ip = icpy(ip = i0, GC(curi), &GC(insb)[NIns] - GC(curi));
-	ip = icpy(ip, i, &b->ins[b->nins] - i);
-	b->nins = n;
-	b->ins = i0;
+  ret_on_err();
+	n0 = &GC(insb)[NIns] - GC(curi);
+	ioff = i - b->ins;
+	n1 = b->nins - ioff;
+	vgrow(&b->ins, n0+n1);
+	icpy(b->ins+n0, b->ins+ioff, n1);
+	icpy(b->ins, GC(curi), n0);
+	b->nins = n0+n1;
 
 	/* lower calls, returns, and vararg instructions */
 	il = 0;
@@ -13363,8 +14464,7 @@ rv64_abi(Fn *fn)
 		if (b == fn->start)
 			for (; il; il=il->link)
 				emiti(il->i);
-		b->nins = &GC(insb)[NIns] - GC(curi);
-		idup(&b->ins, GC(curi), b->nins);
+		idup(b, GC(curi), &GC(insb)[NIns]-GC(curi));
 	} while (b != fn->start);
 
 	if (GC(debug)['A']) {
@@ -13987,7 +15087,7 @@ qbe_rv64_isel_fixarg(Ref *r, int k, Ins *i, Fn *fn)
 			 * immediates
 			 */
 			SQ_ASSERT(c->type == CBits);
-			n = stashbits(&c->bits, KWIDE(k) ? 8 : 4);
+			n = stashbits(c->bits.i, KWIDE(k) ? 8 : 4);
 			vgrow(&fn->con, ++fn->ncon);
 			c = &fn->con[fn->ncon-1];
 			snprintf(buf, sizeof(buf), "\"%sfp%d\"", GC(T).asloc, n);
@@ -14191,10 +15291,9 @@ rv64_isel(Fn *fn)
 		qbe_rv64_isel_seljmp(b, fn);
 		for (i=&b->ins[b->nins]; i!=b->ins;) {
 			qbe_rv64_isel_sel(*--i, fn);
-			ret_on_err();
-		}
-		b->nins = &GC(insb)[NIns] - GC(curi);
-		idup(&b->ins, GC(curi), b->nins);
+      ret_on_err();
+    }
+		idup(b, GC(curi), &GC(insb)[NIns]-GC(curi));
 	}
 
 	if (GC(debug)['I']) {
@@ -14219,188 +15318,195 @@ static Rv64Op rv64_op[NOp] = {
 	#define V(Imm)
 #endif
 
-#ifndef P
-	#define P(CanFold, HasId, IdVal)
+#ifndef F
+#define F(a,b,c,d,e,f,g,h,i,j)
 #endif
-
 
 #define T(a,b,c,d,e,f,g,h) {                          \
 	{[Kw]=K##a, [Kl]=K##b, [Ks]=K##c, [Kd]=K##d}, \
 	{[Kw]=K##e, [Kl]=K##f, [Ks]=K##g, [Kd]=K##h}  \
 }
 
-
 /*********************/
 /* PUBLIC OPERATIONS */
 /*********************/
 
-/* Arithmetic and Bits */
-O(add,     T(w,l,s,d, w,l,s,d), P(1,1,0)) X(2,1,0) V(1)
-O(sub,     T(w,l,s,d, w,l,s,d), P(1,1,0)) X(2,1,0) V(0)
-O(neg,     T(w,l,s,d, x,x,x,x), P(1,0,0)) X(1,1,0) V(0)
-O(div,     T(w,l,s,d, w,l,s,d), P(1,1,1)) X(0,0,0) V(0)
-O(rem,     T(w,l,e,e, w,l,e,e), P(1,0,0)) X(0,0,0) V(0)
-O(udiv,    T(w,l,e,e, w,l,e,e), P(1,1,1)) X(0,0,0) V(0)
-O(urem,    T(w,l,e,e, w,l,e,e), P(1,0,0)) X(0,0,0) V(0)
-O(mul,     T(w,l,s,d, w,l,s,d), P(1,1,1)) X(2,0,0) V(0)
-O(and,     T(w,l,e,e, w,l,e,e), P(1,0,0)) X(2,1,0) V(1)
-O(or,      T(w,l,e,e, w,l,e,e), P(1,1,0)) X(2,1,0) V(1)
-O(xor,     T(w,l,e,e, w,l,e,e), P(1,1,0)) X(2,1,0) V(1)
-O(sar,     T(w,l,e,e, w,w,e,e), P(1,1,0)) X(1,1,0) V(1)
-O(shr,     T(w,l,e,e, w,w,e,e), P(1,1,0)) X(1,1,0) V(1)
-O(shl,     T(w,l,e,e, w,w,e,e), P(1,1,0)) X(1,1,0) V(1)
+/*                                can fold                        */
+/*                                | has identity                  */
+/*                                | | identity value for arg[1]   */
+/*                                | | | commutative               */
+/*                                | | | | associative             */
+/*                                | | | | | idempotent            */
+/*                                | | | | | | c{eq,ne}[wl]        */
+/*                                | | | | | | | c[us][gl][et][wl] */
+/*                                | | | | | | | | value if = args */
+/*                                | | | | | | | | | pinned        */
+/* Arithmetic and Bits            v v v v v v v v v v             */
+O(add,     T(w,l,s,d, w,l,s,d), F(1,1,0,1,1,0,0,0,0,0)) X(2,1,0) V(1)
+O(sub,     T(w,l,s,d, w,l,s,d), F(1,1,0,0,0,0,0,0,0,0)) X(2,1,0) V(0)
+O(neg,     T(w,l,s,d, x,x,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(1,1,0) V(0)
+O(div,     T(w,l,s,d, w,l,s,d), F(1,1,1,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(rem,     T(w,l,e,e, w,l,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(udiv,    T(w,l,e,e, w,l,e,e), F(1,1,1,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(urem,    T(w,l,e,e, w,l,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(mul,     T(w,l,s,d, w,l,s,d), F(1,1,1,1,0,0,0,0,0,0)) X(2,0,0) V(0)
+O(and,     T(w,l,e,e, w,l,e,e), F(1,0,0,1,1,1,0,0,0,0)) X(2,1,0) V(1)
+O(or,      T(w,l,e,e, w,l,e,e), F(1,1,0,1,1,1,0,0,0,0)) X(2,1,0) V(1)
+O(xor,     T(w,l,e,e, w,l,e,e), F(1,1,0,1,1,0,0,0,0,0)) X(2,1,0) V(1)
+O(sar,     T(w,l,e,e, w,w,e,e), F(1,1,0,0,0,0,0,0,0,0)) X(1,1,0) V(1)
+O(shr,     T(w,l,e,e, w,w,e,e), F(1,1,0,0,0,0,0,0,0,0)) X(1,1,0) V(1)
+O(shl,     T(w,l,e,e, w,w,e,e), F(1,1,0,0,0,0,0,0,0,0)) X(1,1,0) V(1)
 
 /* Comparisons */
-O(ceqw,    T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cnew,    T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csgew,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csgtw,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cslew,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csltw,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(1)
-O(cugew,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cugtw,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(culew,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cultw,   T(w,w,e,e, w,w,e,e), P(1,0,0)) X(0,1,0) V(1)
+O(ceqw,    T(w,w,e,e, w,w,e,e), F(1,1,1,1,0,0,1,0,1,0)) X(0,1,0) V(0)
+O(cnew,    T(w,w,e,e, w,w,e,e), F(1,1,0,1,0,0,1,0,0,0)) X(0,1,0) V(0)
+O(csgew,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(csgtw,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(0)
+O(cslew,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(csltw,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(1)
+O(cugew,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(cugtw,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(0)
+O(culew,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(cultw,   T(w,w,e,e, w,w,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(1)
 
-O(ceql,    T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cnel,    T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csgel,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csgtl,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cslel,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(csltl,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(1)
-O(cugel,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cugtl,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(culel,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cultl,   T(l,l,e,e, l,l,e,e), P(1,0,0)) X(0,1,0) V(1)
+O(ceql,    T(l,l,e,e, l,l,e,e), F(1,0,0,1,0,0,1,0,1,0)) X(0,1,0) V(0)
+O(cnel,    T(l,l,e,e, l,l,e,e), F(1,0,0,1,0,0,1,0,0,0)) X(0,1,0) V(0)
+O(csgel,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(csgtl,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(0)
+O(cslel,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(csltl,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(1)
+O(cugel,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(cugtl,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(0)
+O(culel,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,1,0)) X(0,1,0) V(0)
+O(cultl,   T(l,l,e,e, l,l,e,e), F(1,0,0,0,0,0,0,1,0,0)) X(0,1,0) V(1)
 
-O(ceqs,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cges,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cgts,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cles,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(clts,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cnes,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cos,     T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cuos,    T(s,s,e,e, s,s,e,e), P(1,0,0)) X(0,1,0) V(0)
+O(ceqs,    T(s,s,e,e, s,s,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cges,    T(s,s,e,e, s,s,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cgts,    T(s,s,e,e, s,s,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cles,    T(s,s,e,e, s,s,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(clts,    T(s,s,e,e, s,s,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cnes,    T(s,s,e,e, s,s,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cos,     T(s,s,e,e, s,s,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cuos,    T(s,s,e,e, s,s,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
 
-O(ceqd,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cged,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cgtd,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cled,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cltd,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cned,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cod,     T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
-O(cuod,    T(d,d,e,e, d,d,e,e), P(1,0,0)) X(0,1,0) V(0)
+O(ceqd,    T(d,d,e,e, d,d,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cged,    T(d,d,e,e, d,d,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cgtd,    T(d,d,e,e, d,d,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cled,    T(d,d,e,e, d,d,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cltd,    T(d,d,e,e, d,d,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cned,    T(d,d,e,e, d,d,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cod,     T(d,d,e,e, d,d,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
+O(cuod,    T(d,d,e,e, d,d,e,e), F(1,0,0,1,0,0,0,0,0,0)) X(0,1,0) V(0)
 
 /* Memory */
-O(storeb,  T(w,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(storeh,  T(w,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(storew,  T(w,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(storel,  T(l,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(stores,  T(s,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(stored,  T(d,e,e,e, m,e,e,e), P(0,0,0)) X(0,0,1) V(0)
+O(storeb,  T(w,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(storeh,  T(w,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(storew,  T(w,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(storel,  T(l,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(stores,  T(s,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(stored,  T(d,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
 
-O(loadsb,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loadub,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loadsh,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loaduh,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loadsw,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(loaduw,  T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(load,    T(m,m,m,m, x,x,x,x), P(0,0,0)) X(0,0,1) V(0)
+O(loadsb,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loadub,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loadsh,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loaduh,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loadsw,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(loaduw,  T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
+O(load,    T(m,m,m,m, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
 
 /* Extensions and Truncations */
-O(extsb,   T(w,w,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extub,   T(w,w,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extsh,   T(w,w,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extuh,   T(w,w,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extsw,   T(e,w,e,e, e,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(extuw,   T(e,w,e,e, e,x,e,e), P(1,0,0)) X(0,0,1) V(0)
+O(extsb,   T(w,w,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extub,   T(w,w,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extsh,   T(w,w,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extuh,   T(w,w,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extsw,   T(e,w,e,e, e,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(extuw,   T(e,w,e,e, e,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
-O(exts,    T(e,e,e,s, e,e,e,x), P(1,0,0)) X(0,0,1) V(0)
-O(truncd,  T(e,e,d,e, e,e,x,e), P(1,0,0)) X(0,0,1) V(0)
-O(stosi,   T(s,s,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(stoui,   T(s,s,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(dtosi,   T(d,d,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(dtoui,   T(d,d,e,e, x,x,e,e), P(1,0,0)) X(0,0,1) V(0)
-O(swtof,   T(e,e,w,w, e,e,x,x), P(1,0,0)) X(0,0,1) V(0)
-O(uwtof,   T(e,e,w,w, e,e,x,x), P(1,0,0)) X(0,0,1) V(0)
-O(sltof,   T(e,e,l,l, e,e,x,x), P(1,0,0)) X(0,0,1) V(0)
-O(ultof,   T(e,e,l,l, e,e,x,x), P(1,0,0)) X(0,0,1) V(0)
-O(cast,    T(s,d,w,l, x,x,x,x), P(1,0,0)) X(0,0,1) V(0)
+O(exts,    T(e,e,e,s, e,e,e,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(truncd,  T(e,e,d,e, e,e,x,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(stosi,   T(s,s,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(stoui,   T(s,s,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(dtosi,   T(d,d,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(dtoui,   T(d,d,e,e, x,x,e,e), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(swtof,   T(e,e,w,w, e,e,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(uwtof,   T(e,e,w,w, e,e,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(sltof,   T(e,e,l,l, e,e,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(ultof,   T(e,e,l,l, e,e,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(cast,    T(s,d,w,l, x,x,x,x), F(1,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
 /* Stack Allocation */
-O(alloc4,  T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(alloc8,  T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(alloc16, T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
+O(alloc4,  T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(alloc8,  T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(alloc16, T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
 
 /* Variadic Function Helpers */
-O(vaarg,   T(m,m,m,m, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(vastart, T(m,e,e,e, x,e,e,e), P(0,0,0)) X(0,0,0) V(0)
+O(vaarg,   T(m,m,m,m, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(vastart, T(m,e,e,e, x,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
 
-O(copy,    T(w,l,s,d, x,x,x,x), P(0,0,0)) X(0,0,1) V(0)
+O(copy,    T(w,l,s,d, x,x,x,x), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
 /* Debug */
-O(dbgloc,  T(w,e,e,e, w,e,e,e), P(0,0,0)) X(0,0,1) V(0)
+O(dbgloc,  T(w,e,e,e, w,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,1) V(0)
 
 /****************************************/
 /* INTERNAL OPERATIONS (keep nop first) */
 /****************************************/
 
 /* Miscellaneous and Architecture-Specific Operations */
-O(nop,     T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,1) V(0)
-O(addr,    T(m,m,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(blit0,   T(m,e,e,e, m,e,e,e), P(0,0,0)) X(0,1,0) V(0)
-O(blit1,   T(w,e,e,e, x,e,e,e), P(0,0,0)) X(0,1,0) V(0)
-O(swap,    T(w,l,s,d, w,l,s,d), P(0,0,0)) X(1,0,0) V(0)
-O(sign,    T(w,l,e,e, x,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(salloc,  T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(xidiv,   T(w,l,e,e, x,x,e,e), P(0,0,0)) X(1,0,0) V(0)
-O(xdiv,    T(w,l,e,e, x,x,e,e), P(0,0,0)) X(1,0,0) V(0)
-O(xcmp,    T(w,l,s,d, w,l,s,d), P(0,0,0)) X(1,1,0) V(0)
-O(xtest,   T(w,l,e,e, w,l,e,e), P(0,0,0)) X(1,1,0) V(0)
-O(acmp,    T(w,l,e,e, w,l,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(acmn,    T(w,l,e,e, w,l,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(afcmp,   T(e,e,s,d, e,e,s,d), P(0,0,0)) X(0,0,0) V(0)
-O(reqz,    T(w,l,e,e, x,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(rnez,    T(w,l,e,e, x,x,e,e), P(0,0,0)) X(0,0,0) V(0)
+O(nop,     T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(addr,    T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(blit0,   T(m,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,1,0) V(0)
+O(blit1,   T(w,e,e,e, x,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,1,0) V(0)
+O(swap,    T(w,l,s,d, w,l,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(1,0,0) V(0)
+O(sign,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(salloc,  T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xidiv,   T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(1,0,0) V(0)
+O(xdiv,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(1,0,0) V(0)
+O(xcmp,    T(w,l,s,d, w,l,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(1,1,0) V(0)
+O(xtest,   T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(1,1,0) V(0)
+O(acmp,    T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(acmn,    T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(afcmp,   T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(reqz,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(rnez,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
 
 /* Arguments, Parameters, and Calls */
-O(par,     T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(parsb,   T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(parub,   T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(parsh,   T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(paruh,   T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(parc,    T(e,x,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(pare,    T(e,x,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(arg,     T(w,l,s,d, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(argsb,   T(w,e,e,e, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(argub,   T(w,e,e,e, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(argsh,   T(w,e,e,e, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(arguh,   T(w,e,e,e, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(argc,    T(e,x,e,e, e,l,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(arge,    T(e,l,e,e, e,x,e,e), P(0,0,0)) X(0,0,0) V(0)
-O(argv,    T(x,x,x,x, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
-O(call,    T(m,m,m,m, x,x,x,x), P(0,0,0)) X(0,0,0) V(0)
+O(par,     T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(parsb,   T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(parub,   T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(parsh,   T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(paruh,   T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(parc,    T(e,x,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(pare,    T(e,x,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(arg,     T(w,l,s,d, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argsb,   T(w,e,e,e, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argub,   T(w,e,e,e, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argsh,   T(w,e,e,e, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(arguh,   T(w,e,e,e, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argc,    T(e,x,e,e, e,l,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(arge,    T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(argv,    T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(call,    T(m,m,m,m, x,x,x,x), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
 
 /* Flags Setting */
-O(flagieq,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagine,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagisge, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagisgt, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagisle, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagislt, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagiuge, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagiugt, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagiule, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagiult, T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfeq,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfge,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfgt,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfle,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagflt,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfne,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfo,   T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-O(flagfuo,  T(x,x,e,e, x,x,e,e), P(0,0,0)) X(0,0,1) V(0)
-
+O(flagieq,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagine,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagisge, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagisgt, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagisle, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagislt, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagiuge, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagiugt, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagiule, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagiult, T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfeq,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfge,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfgt,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfle,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagflt,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfne,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfo,   T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+O(flagfuo,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
 #undef T
 #undef X
@@ -15130,7 +16236,7 @@ SqSymbol sq_func_end(void) {
   G(curf)->mem = vnew(0, sizeof G(curf)->mem[0], PFn);
   G(curf)->nmem = 0;
   G(curf)->nblk = SQC(pfs.num_blocks);
-  G(curf)->rpo = 0;
+	G(curf)->rpo = vnew(G(nblk), sizeof G(curf)->rpo[0], PFn);
   for (Blk* b = G(curf)->start; b; b = b->link) {
     SQ_ASSERT(b->dlink == 0);
   }
@@ -15186,6 +16292,8 @@ SqBlock sq_block_declare_named(const char* name) {
   Blk* blk = _sqblock_to_internal_blk(ret);
   memset(blk, 0, sizeof(Blk));
   blk->id = ret.u;
+	blk->ins = vnew(0, sizeof blk->ins[0], PFn);
+	blk->pred = vnew(0, sizeof blk->pred[0], PFn);
   SQ_NAMED_IF_DEBUG(blk->name, name);
   return ret;
 }
@@ -15937,7 +17045,7 @@ void sq_i_dbgloc(SqRef arg0 /*weee*/, SqRef arg1 /*weee*/) { _normal_two_op_void
 
 QBE LICENSE:
 
-© 2015-2024 Quentin Carbonneaux <quentin@c9x.me>
+© 2015-2025 Quentin Carbonneaux <quentin@c9x.me>
 
 Permission is hereby granted, free of charge, to any person obtaining a
 copy of this software and associated documentation files (the "Software"),
@@ -15960,7 +17068,7 @@ DEALINGS IN THE SOFTWARE.
 ---
 
 All other sqbe code under the same license,
-� 2025 Scott Graham <scott.sqbe@h4ck3r.net>
+© 2025 Scott Graham <scott.sqbe@h4ck3r.net>
 
 */
 
