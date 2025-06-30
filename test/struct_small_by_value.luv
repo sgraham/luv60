@@ -1,5 +1,5 @@
 # DISABLED
-# CLANGRUN: CLANG_BIN -g OUT_DIR/{self}.s test/test_helper_struct.c -o OUT_DIR/{self}.exe"
+# CLANGRUN: CLANG_BIN -g OUT_DIR/{self}.s test/test_helper_struct.c -o OUT_DIR/{self}.exe
 # OUT: 123
 # OUT: 3.140000
 # OUT: ls.x: 10

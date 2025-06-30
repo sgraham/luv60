@@ -3,6 +3,8 @@
 #include "base_config.h"
 #include "base_core.h"
 
+#include "../third_party/sqbe/sqbe.h"
+
 #if ARCH_X64
 #include <intrin.h>
 #endif
@@ -212,7 +214,8 @@ Type type_new_struct(Str name,
                      Str* field_names,
                      Type* field_types,
                      bool has_initializer);
-void type_struct_set_initializer_symbol(Type type, uint32_t sqSymbolInternal);
+void type_struct_set_initializer_symbol(Type type, SqSymbol init_sym);
+void type_struct_set_sqtype(Type type, SqType sqtype);
 
 static inline FORCE_INLINE bool type_is_none(Type a) { return a.u == 0; }
 static inline FORCE_INLINE bool type_eq(Type a, Type b) { return a.u == b.u; }
@@ -242,7 +245,8 @@ uint32_t type_array_count(Type type);
 uint32_t type_struct_num_fields(Type type);
 Str type_struct_decl_name(Type type);
 bool type_struct_has_initializer(Type type);
-uint32_t type_struct_initializer_SqSymbol(Type type);
+SqSymbol type_struct_initializer_sym(Type type);
+SqType type_struct_sqtype(Type type);
 Str type_struct_field_name(Type type, uint32_t i);
 Type type_struct_field_type(Type type, uint32_t i);
 uint32_t type_struct_field_offset(Type type, uint32_t i);

@@ -1,7 +1,5 @@
 #include "luv60.h"
 
-#include "../third_party/sqbe/sqbe.h"
-
 #include "dict.h"
 
 typedef struct RuntimeStr {
@@ -320,8 +318,7 @@ static SqType type_to_sqtype(Type type) {
     return parser.sq_type_range;
   }
   if (type_is_aggregate(type)) {
-    ASSERT(false && "todo; aggregate");
-    return sq_type_void;
+    return type_struct_sqtype(type);
   }
   switch (type_kind(type)) {
     case TYPE_VOID:
@@ -826,7 +823,7 @@ static void initialize_aggregate(SqRef base_addr, Type type) {
   size_t size = type_size(type);
   if (type_kind(type) == TYPE_STRUCT && type_struct_has_initializer(type)) {
     SqRef memcpy_func = sq_ref_extern("memcpy");
-    SqSymbol init_sym = { type_struct_initializer_SqSymbol(type) };
+    SqSymbol init_sym = type_struct_initializer_sym(type);
     sq_i_call3(sq_type_void, memcpy_func, (SqCallArg){sq_type_long, base_addr},
                (SqCallArg){sq_type_long, sq_ref_for_symbol(init_sym)},
                (SqCallArg){sq_type_long, sq_const_int(size)});
@@ -3739,6 +3736,8 @@ static void struct_statement() {
   consume(TOK_NEWLINE, "Expect newline to start struct.");
   consume(TOK_INDENT, "Expect indented struct body.");
 
+  sq_type_struct_start(cstr_copy(parser.arena, name), 0);
+
   Str field_names[MAX_STRUCT_FIELDS];
   Type field_types[MAX_STRUCT_FIELDS];
   Operand field_initializers[MAX_STRUCT_FIELDS];
@@ -3754,6 +3753,8 @@ static void struct_statement() {
       error("Expect struct field type.");
     }
     field_types[num_fields] = field_type;
+
+    sq_type_add_field(type_to_sqtype(field_type));
 
     Str field_name = parse_name("Expect struct field name.");
     for (uint32_t i = 0; i < num_fields; ++i) {
@@ -3779,9 +3780,12 @@ static void struct_statement() {
   }
   consume(TOK_DEDENT, "Expecting dedent after struct definition.");
 
-  Type strukt = type_new_struct(name, num_fields, field_names, field_types, have_initializers);
-  if (have_initializers) {
+  SqType sqtype = sq_type_struct_end();
 
+  Type strukt = type_new_struct(name, num_fields, field_names, field_types, have_initializers);
+  type_struct_set_sqtype(strukt, sqtype);
+
+  if (have_initializers) {
     // Because we need to zero init fields, build this as if it was jitting into
     // a memory structure, and then use byte emission to build the data object.
 
@@ -3810,7 +3814,7 @@ static void struct_statement() {
     }
     SqSymbol init_sym = sq_data_end();
 
-    type_struct_set_initializer_symbol(strukt, init_sym.u);
+    type_struct_set_initializer_symbol(strukt, init_sym);
 
     ASSERT(!parser.cur_scope->is_function);
   }

@@ -64,11 +64,11 @@ typedef union TypeDataExtra {
     Str field_name;
     Type field_type;
     uint32_t field_offset;
-  } STRUCT_EXTRA;
+  } STRUCT_FIELDS;
   struct {
-    // This is the SqSymbol internal :(
-    uint32_t initializer_symbol;
-  } STRUCT_INITIALIZER;
+    SqSymbol initializer_symbol;
+    SqType sqtype;
+  } STRUCT_EXTRA;
   struct {
     Type param[WORDS_IN_EXTRA];
   } FUNC_EXTRA;
@@ -250,7 +250,7 @@ Type type_new_struct(Str name,
                      Type* field_types,
                      bool has_initializer) {
   uint32_t unused;
-  Type strukt = type_alloc(TYPE_STRUCT, /*extra=*/num_fields + (has_initializer ? 1 : 0), &unused);
+  Type strukt = type_alloc(TYPE_STRUCT, /*STRUCT_FIELDS=*/num_fields + /*STRUCT_EXTRA*/ 1, &unused);
 
   TypeData* td = type_td(strukt);
 
@@ -264,9 +264,9 @@ Type type_new_struct(Str name,
     size = ALIGN_UP(size, type_align(t));
     ASSERT(IS_POW2(type_align(t)));
 
-    tde[i].STRUCT_EXTRA.field_name = field_names[i];
-    tde[i].STRUCT_EXTRA.field_type = t;
-    tde[i].STRUCT_EXTRA.field_offset = size;
+    tde[i].STRUCT_FIELDS.field_name = field_names[i];
+    tde[i].STRUCT_FIELDS.field_type = t;
+    tde[i].STRUCT_FIELDS.field_offset = size;
 
     field_sizes += type_size(t);
     align = MAX(align, type_align(t));
@@ -289,13 +289,21 @@ Type type_new_struct(Str name,
   return strukt;
 }
 
-void type_struct_set_initializer_symbol(Type type, uint32_t sqSymbolInternal) {
+void type_struct_set_initializer_symbol(Type type, SqSymbol init_sym) {
   ASSERT(type_kind(type) == TYPE_STRUCT);
   ASSERT(type_struct_has_initializer(type));
   TypeData* td = type_td(type);
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
   TypeDataExtra* init_extra = &tde[type_struct_num_fields(type)];
-  init_extra->STRUCT_INITIALIZER.initializer_symbol= sqSymbolInternal;
+  init_extra->STRUCT_EXTRA.initializer_symbol = init_sym;
+}
+
+void type_struct_set_sqtype(Type type, SqType sqtype) {
+  ASSERT(type_kind(type) == TYPE_STRUCT);
+  TypeData* td = type_td(type);
+  TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
+  TypeDataExtra* init_extra = &tde[type_struct_num_fields(type)];
+  init_extra->STRUCT_EXTRA.sqtype = sqtype;
 }
 
 // For TypeDatas that don't have extra entries.
@@ -597,13 +605,23 @@ bool type_struct_has_initializer(Type type) {
   return (td->STRUCT.has_init_align_and_num_fields & 0x80000000) != 0;
 }
 
-uint32_t type_struct_initializer_SqSymbol(Type type) {
+SqSymbol type_struct_initializer_sym(Type type) {
   ASSERT(type_kind(type) == TYPE_STRUCT);
   ASSERT(type_struct_has_initializer(type));
   TypeData* td = type_td(type);
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
   TypeDataExtra* init_extra = &tde[type_struct_num_fields(type)];
-  return init_extra->STRUCT_INITIALIZER.initializer_symbol;
+  return init_extra->STRUCT_EXTRA.initializer_symbol;
+}
+
+SqType type_struct_sqtype(Type type) {
+  ASSERT(type_kind(type) == TYPE_STRUCT);
+  TypeData* td = type_td(type);
+  TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
+  TypeDataExtra* init_extra = &tde[type_struct_num_fields(type)];
+  SqType sqtype = init_extra->STRUCT_EXTRA.sqtype;
+  ASSERT(sqtype.u);
+  return sqtype;
 }
 
 Str type_struct_field_name(Type type, uint32_t i) {
@@ -611,7 +629,7 @@ Str type_struct_field_name(Type type, uint32_t i) {
   ASSERT(i < type_struct_num_fields(type));
   TypeData* td = type_td(type);
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
-  return tde[i].STRUCT_EXTRA.field_name;
+  return tde[i].STRUCT_FIELDS.field_name;
 }
 
 Type type_struct_field_type(Type type, uint32_t i) {
@@ -619,7 +637,7 @@ Type type_struct_field_type(Type type, uint32_t i) {
   ASSERT(i < type_struct_num_fields(type));
   TypeData* td = type_td(type);
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
-  return tde[i].STRUCT_EXTRA.field_type;
+  return tde[i].STRUCT_FIELDS.field_type;
 }
 
 uint32_t type_struct_field_offset(Type type, uint32_t i) {
@@ -627,7 +645,7 @@ uint32_t type_struct_field_offset(Type type, uint32_t i) {
   ASSERT(i < type_struct_num_fields(type));
   TypeData* td = type_td(type);
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
-  return tde[i].STRUCT_EXTRA.field_offset;
+  return tde[i].STRUCT_FIELDS.field_offset;
 }
 
 uint32_t type_struct_field_index_by_name(Type type, Str name) {
@@ -636,7 +654,7 @@ uint32_t type_struct_field_index_by_name(Type type, Str name) {
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
   uint32_t num_fields = type_struct_num_fields(type);
   for (uint32_t i = 0; i < num_fields; ++i) {
-    if (str_eq(tde[i].STRUCT_EXTRA.field_name, name)) {
+    if (str_eq(tde[i].STRUCT_FIELDS.field_name, name)) {
       return i;
     }
   }
@@ -649,9 +667,9 @@ bool type_struct_find_field_by_name(Type type, Str name, Type* out_type, uint32_
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
   uint32_t num_fields = type_struct_num_fields(type);
   for (uint32_t i = 0; i < num_fields; ++i) {
-    if (str_eq(tde[i].STRUCT_EXTRA.field_name, name)) {
-      *out_type = tde[i].STRUCT_EXTRA.field_type;
-      *out_offset = tde[i].STRUCT_EXTRA.field_offset;
+    if (str_eq(tde[i].STRUCT_FIELDS.field_name, name)) {
+      *out_type = tde[i].STRUCT_FIELDS.field_type;
+      *out_offset = tde[i].STRUCT_FIELDS.field_offset;
       return true;
     }
   }
