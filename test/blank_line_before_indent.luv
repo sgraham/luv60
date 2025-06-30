@@ -4,5 +4,4 @@ def int main():
     return 33
 
 
-# RUN: {self} --main-rc
 # RET: 33

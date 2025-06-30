@@ -2,7 +2,6 @@
 
 #include "dict.h"
 
-
 typedef struct RuntimeStr {
   const uint8_t* data;
   int64_t length;
@@ -51,11 +50,11 @@ typedef struct Sym {
   Str name;
   Type type;
   union {
-    ir_ref ref;
+    SqRef ref;
     struct {
       // (kind == SYM_FUNC) or (kind == SYM_VAR and scope_decl == GLOBAL)
-      void* addr;
-      ir_ref ref2;  // upvals for SYM_FUNC
+      SqSymbol global;
+      SqRef ref2;  // Upvals for SYM_FUNC
     };
   };
   SymScopeDecl scope_decl;
@@ -64,13 +63,8 @@ typedef struct Sym {
 #define MAX_SCOPES 32
 #define MAX_FUNC_PARAMS 32
 #define MAX_STRUCT_FIELDS 64
-#define MAX_PENDING_CONDS 32
 #define MAX_UPVALS 32
 #define MAX_PACKAGE_DEPTH 16
-
-typedef struct PendingCond {
-  ir_ref iftrue;
-} PendingCond;
 
 typedef enum ScopeResult {
   SCOPE_RESULT_GLOBAL,
@@ -88,7 +82,7 @@ typedef struct Upval {
   // Only valid when SCOPE_RESULT_LOCAL or _PARAMETER, and only in the specific
   // scope it's meant for. GLOBAL/UNDEFINED are not valid, and UPVALUE means it
   // needs to be acquired through the functions $up, not this ref.
-  ir_ref ref;
+  SqRef ref;
 } Upval;
 
 typedef struct UpvalMap {
@@ -111,12 +105,11 @@ typedef struct Scope {
   // FuncData
   Sym* func_sym;
   Sym* return_slot;
-  PendingCond pending_conds[MAX_PENDING_CONDS];
-  int num_pending_conds;
-  ir_ctx ctx;
+  SqBlock return_block;
+  SqItemCtx func_item_ctx;
   uint64_t arena_saved_pos;
   UpvalMap upval_map;
-  ir_ref upval_base;
+  SqRef upval_base;
 
   // VarScope
   union {
@@ -156,17 +149,25 @@ typedef struct Parser {
   int num_scopes;
   Scope* cur_scope;
 
-  void* main_func_entry;
-  void* (*get_extern)(StrView);
   int verbose;
-  bool ir_only;
-  int opt_level;
-  ir_code_buffer code_buffer;
 
   Str static_str_main;
   Str static_str_repr;
   Str static_str_ret;
   Str static_str_up;
+
+  SqSymbol i32_print_fmt;
+  SqSymbol float_print_fmt;
+  SqSymbol str_print_fmt;
+  SqSymbol range2_print_fmt;
+  SqSymbol range3_print_fmt;
+  SqSymbol str_true;
+  SqSymbol str_false;
+
+  SqType sq_type_str;
+  SqType sq_type_range;
+
+  int str_counter;
 } Parser;
 
 static Parser parser;
@@ -212,9 +213,9 @@ typedef struct Operand {
   Type type;
   union {
     Val val;
-    ir_ref ref;
+    SqRef ref;
   };
-  ir_ref ref2; // Extra ref, used for fat function pointers (addr & $up)
+  SqRef ref2; // Used for fat function pointers and $up.
 } Operand;
 
 static inline FORCE_INLINE bool op_is_const(Operand op) {
@@ -309,39 +310,45 @@ static LastStatementType parse_statement(bool toplevel);
 static Operand parse_expression(Type* expected);
 static LastStatementType parse_block(void);
 
-static ir_type type_to_ir_type(Type type) {
+static SqType type_to_sqtype(Type type) {
+  if (type_kind(type) == TYPE_STR) {
+    return parser.sq_type_str;
+  }
+  if (type_kind(type) == TYPE_RANGE) {
+    return parser.sq_type_range;
+  }
   if (type_is_aggregate(type)) {
-    return IR_U64;
+    return type_struct_sqtype(type);
   }
   switch (type_kind(type)) {
     case TYPE_VOID:
-      return IR_VOID;
+      return sq_type_void;
     case TYPE_BOOL:
-      return IR_BOOL;
+      return sq_type_ubyte;
     case TYPE_U8:
-      return IR_U8;
+      return sq_type_ubyte;
     case TYPE_U16:
-      return IR_U16;
+      return sq_type_uhalf;
     case TYPE_U32:
-      return IR_U32;
+      return sq_type_word;
     case TYPE_U64:
-      return IR_U64;
+      return sq_type_long;
     case TYPE_I8:
-      return IR_I8;
+      return sq_type_sbyte;
     case TYPE_I16:
-      return IR_I16;
+      return sq_type_shalf;
     case TYPE_I32:
-      return IR_I32;
+      return sq_type_word;
     case TYPE_I64:
-      return IR_I64;
+      return sq_type_long;
     case TYPE_DOUBLE:
-      return IR_DOUBLE;
+      return sq_type_double;
     case TYPE_FLOAT:
-      return IR_FLOAT;
+      return sq_type_single;
     case TYPE_PTR:
-      return IR_ADDR;
+      return sq_type_long;
     default:
-      base_writef_stderr("type_to_ir_type: %s\n", type_as_str(type));
+      base_writef_stderr("type_to_sqtype: %s\n", type_as_str(type));
       ASSERT(false && "todo");
       abort();
   }
@@ -356,33 +363,33 @@ static Operand operand_sym(Type type, LqSymbol lqsym) {
 }
 #endif
 
-static Operand operand_lvalue_local(Type type, ir_ref ref) {
+static Operand operand_lvalue_local(Type type, SqRef ref) {
   return (Operand){.kind = OPK_REF_LVAL_LOCAL_ADDR, .type = type, .ref = ref};
 }
 
-static Operand operand_rvalue_local_addr(Type type, ir_ref ref) {
+static Operand operand_rvalue_local_addr(Type type, SqRef ref) {
   return (Operand){.kind = OPK_REF_RVAL_LOCAL_ADDR, .type = type, .ref = ref};
 }
 
-static Operand operand_bound_local_function(Type type, ir_ref ref, ir_ref ref2) {
+static Operand operand_bound_local_function(Type type, SqRef ref, SqRef ref2) {
   return (Operand){
       .kind = OPK_REF_RVAL_LOCAL_ADDR_BOUND_FUNC, .type = type, .ref = ref, .ref2 = ref2};
 }
 
-static Operand operand_rvalue_global_addr(Type type, ir_ref ref) {
+static Operand operand_rvalue_global_addr(Type type, SqRef ref) {
   return (Operand){.kind = OPK_REF_RVAL_GLOBAL_ADDR, .type = type, .ref = ref};
 }
 
-static Operand operand_rvalue_global_addr_bound(Type type, ir_ref ref, ir_ref ref2) {
+static Operand operand_rvalue_global_addr_bound(Type type, SqRef ref, SqRef ref2) {
   return (Operand){
       .kind = OPK_REF_RVAL_GLOBAL_ADDR_BOUND_FUNC, .type = type, .ref = ref, .ref2 = ref2};
 }
 
-static Operand operand_lvalue_global_addr(Type type, ir_ref ref) {
+static Operand operand_lvalue_global_addr(Type type, SqRef ref) {
   return (Operand){.kind = OPK_REF_LVAL_GLOBAL_ADDR, .type = type, .ref = ref};
 }
 
-static Operand operand_rvalue_imm(Type type, ir_ref ref) {
+static Operand operand_rvalue_imm(Type type, SqRef ref) {
   return (Operand){.kind = OPK_REF_RVAL, .type = type, .ref = ref};
 }
 
@@ -469,32 +476,155 @@ NORETURN static void errorf_offset(uint32_t offset, const char* fmt, ...) {
   error_offset(offset, str);
 }
 
-static ir_ref operand_to_irref_imm(Operand* op) {
+static SqType sqbasetype_from_type(Type type) {
+  if (type_size(type) == 8) {
+    return sq_type_long;
+  }
+  return sq_type_word;
+}
+
+typedef SqRef (*ExtFunc)(SqType, SqRef);
+
+static SqRef _sextsw(SqType size_class, SqRef arg0) {
+  ASSERT(size_class.u == sq_type_long.u);
+  return sq_i_extuw(arg0);
+}
+
+static ExtFunc sext_by_type(Type type) {
+  ASSERT(type_is_integer(type));
+  ASSERT(type_is_signed(type));
+  switch (type_kind(type)) {
+    case TYPE_I8:
+      return sq_i_extsb;
+    case TYPE_I16:
+      return sq_i_extsh;
+    case TYPE_I32:
+      return _sextsw;
+    case TYPE_I64:
+      error("shouldn't be sext'ing i64");
+    default:
+      error("unhandled sext");
+  }
+}
+
+static SqRef _zextuw(SqType size_class, SqRef arg0) {
+  ASSERT(size_class.u == sq_type_long.u);
+  return sq_i_extuw(arg0);
+}
+
+static ExtFunc zext_by_type(Type type) {
+  ASSERT(type_is_integer(type));
+  ASSERT(!type_is_signed(type));
+  switch (type_kind(type)) {
+    case TYPE_U8:
+      return sq_i_extub;
+    case TYPE_U16:
+      return sq_i_extuh;
+    case TYPE_U32:
+      return _zextuw;
+    case TYPE_U64:
+      error("shouldn't be zext'ing u64");
+    default:
+      error("unhandled zext");
+  }
+}
+
+static void store_by_type_val_into(Type type, SqRef val, SqRef into) {
+  if (type_is_aggregate(type)) {
+    SqRef memcpy_func = sq_ref_extern("memcpy");
+    sq_i_call3(sq_type_void, memcpy_func, (SqCallArg){sq_type_long, into},
+               (SqCallArg){sq_type_long, val},
+               (SqCallArg){sq_type_long, sq_const_int(type_size(type))});
+  } else if (type_kind(type) == TYPE_DOUBLE) {
+    sq_i_stored(val, into);
+  } else if (type_kind(type) == TYPE_FLOAT) {
+    sq_i_stores(val, into);
+  } else {
+    switch (type_size(type)) {
+      case 8:
+        sq_i_storel(val, into);
+        break;
+      case 4:
+        sq_i_storew(val, into);
+        break;
+      case 2:
+        sq_i_storeh(val, into);
+        break;
+      case 1:
+        sq_i_storeb(val, into);
+        break;
+      default:
+        errorf("invalid store size %zu", type_size(type));
+    }
+  }
+}
+
+static SqRef load_by_type_from(Type type, SqRef from) {
+  SqType resultsize = sqbasetype_from_type(type);
+  ASSERT(resultsize.u == sq_type_long.u || resultsize.u == sq_type_word.u);
+  if (type_kind(type) == TYPE_BOOL) {
+    return sq_i_loadub(resultsize, from);
+  } else if (type_kind(type) == TYPE_PTR) {
+    return sq_i_load(resultsize, from);
+  } else if (type_kind(type) == TYPE_DOUBLE) {
+    return sq_i_load(sq_type_double, from);
+  } else if (type_kind(type) == TYPE_FLOAT) {
+    return sq_i_load(sq_type_single, from);
+  } else if (type_is_unsigned(type)) {
+    switch (type_size(type)) {
+      case 8:
+        return sq_i_load(resultsize, from);
+      case 4:
+        return sq_i_loaduw(resultsize, from);
+      case 2:
+        return sq_i_loaduh(resultsize, from);
+      case 1:
+        return sq_i_loadub(resultsize, from);
+      default:
+        errorf("invalid unsigned load size %zu", type_size(type));
+    }
+  } else {
+    switch (type_size(type)) {
+      case 8:
+        return sq_i_load(resultsize, from);
+      case 4:
+        return sq_i_loadsw(resultsize, from);
+      case 2:
+        return sq_i_loadsh(resultsize, from);
+      case 1:
+        return sq_i_loadsb(resultsize, from);
+      default:
+        errorf("invalid signed load size %zu", type_size(type));
+    }
+  }
+}
+
+static SqRef operand_to_sqref_imm(Operand* op) {
   switch (op->kind) {
     case OPK_CONST: {
       switch (type_kind(op->type)) {
         case TYPE_BOOL:
-          return ir_CONST_BOOL(op->val.b);
-        case TYPE_U8:
-          return ir_CONST_U8(op->val.u8);
+          return sq_const_int(op->val.b);
         case TYPE_I8:
-          return ir_CONST_I8(op->val.i8);
-        case TYPE_U16:
-          return ir_CONST_U16(op->val.u16);
+          return sq_const_int(op->val.i8);
+        case TYPE_U8:
+          return sq_const_int((int64_t)op->val.u8);
         case TYPE_I16:
-          return ir_CONST_I16(op->val.i16);
-        case TYPE_U32:
-          return ir_CONST_U32(op->val.u32);
+          return sq_const_int(op->val.i16);
+        case TYPE_U16:
+          return sq_const_int((int64_t)op->val.u16);
         case TYPE_I32:
-          return ir_CONST_I32(op->val.i32);
-        case TYPE_U64:
-          return ir_CONST_U64(op->val.u64);
+          return sq_const_int(op->val.i32);
+        case TYPE_U32:
+          return sq_const_int((int64_t)op->val.u32);
         case TYPE_I64:
-          return ir_CONST_I64(op->val.i64);
+          return sq_const_int(op->val.i64);
+        case TYPE_U64:
+          return sq_const_int((int64_t)op->val.u64);
         case TYPE_FLOAT:
-          return ir_CONST_FLOAT(op->val.f);
+          return sq_const_single(op->val.f);
         case TYPE_DOUBLE:
-          return ir_CONST_DOUBLE(op->val.d);
+          return sq_const_double(op->val.d);
         default:
           error("internal error: unexpected const type.");
       }
@@ -503,29 +633,40 @@ static ir_ref operand_to_irref_imm(Operand* op) {
       return op->ref;
     case OPK_REF_RVAL_LOCAL_ADDR_BOUND_FUNC:  // assume something else will load ref2
     case OPK_REF_LVAL_LOCAL_ADDR:
-    case OPK_REF_RVAL_LOCAL_ADDR:
+    case OPK_REF_RVAL_LOCAL_ADDR: {
       if (type_is_aggregate(op->type)) {
         // TODO: This seems questionable.
         return op->ref;
       }
-      return ir_VLOAD(type_to_ir_type(op->type), op->ref);
+      return load_by_type_from(op->type, op->ref);
+    }
     case OPK_REF_RVAL_GLOBAL_ADDR:
     case OPK_REF_LVAL_GLOBAL_ADDR:
       if (type_is_aggregate(op->type)) {
         // TODO: This seems questionable. see test/print.luv
         return op->ref;
       }
-      return ir_LOAD(type_to_ir_type(op->type), op->ref);
+      return load_by_type_from(op->type, op->ref);
     default:
       error("internal error: unhandled OpKind");
   }
 }
 
+static SqRef sqref_for_sym(Sym* sym) {
+  if (type_kind(sym->type) == TYPE_FUNC && type_func_flags(sym->type) & TFF_FOREIGN) {
+    return sq_ref_extern(cstr_copy(parser.arena, sym->name));
+  } else {
+    return sq_ref_for_symbol(sym->global);
+  }
+}
+
+#if 0
 static ir_ref addr_for_operand(Operand* op) {
   ir_ref var = ir_VAR(type_to_ir_type(op->type), "&");
   ir_VSTORE(var, operand_to_irref_imm(op));
   return ir_VADDR(var);
 }
+#endif
 
 typedef struct NameSymPair {
   Str name;
@@ -592,103 +733,128 @@ static Sym* sym_new(SymKind kind, Str name, Type type) {
   }
 }
 
-static void print_i32_impl(int32_t val) {
-  printf("%d\n", val);
-}
-
 static void print_i32(Operand* op) {
-  ir_ref addr = ir_CONST_ADDR(print_i32_impl);
-  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
-}
-
-static void print_bool_impl(uint8_t val) {
-  printf("%s\n", val ? "true" : "false");
+  SqRef val = operand_to_sqref_imm(op);
+  SqRef print_func = sq_ref_extern("printf");
+  SqRef fmt_str = sq_ref_for_symbol(parser.i32_print_fmt);
+  sq_i_call3(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str}, sq_varargs_begin,
+             (SqCallArg){sq_type_word, val});
 }
 
 static void print_bool(Operand* op) {
-  ir_ref addr = ir_CONST_ADDR(print_bool_impl);
-  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
-}
+  SqRef val = operand_to_sqref_imm(op);
+  SqRef print_func = sq_ref_extern("puts");
 
-static void print_float_impl(float val) {
-  printf("%f\n", val);
-}
+  SqBlock true_block = sq_block_declare();
+  SqBlock false_block = sq_block_declare();
+  SqBlock after_block = sq_block_declare();
 
-static void print_float(Operand* op) {
-  ir_ref addr = ir_CONST_ADDR(print_float_impl);
-  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
-}
+  sq_i_jnz(val, true_block, false_block);
 
-static void print_double_impl(double val) {
-  printf("%f\n", val);
-}
+  sq_block_start(true_block);
+  sq_i_call1(sq_type_void, print_func,
+             (SqCallArg){sq_type_long, sq_ref_for_symbol(parser.str_true)});
+  sq_i_jmp(after_block);
 
-static void print_double(Operand* op) {
-  ir_ref addr = ir_CONST_ADDR(print_double_impl);
-  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
-}
+  sq_block_start(false_block);
+  sq_i_call1(sq_type_void, print_func,
+             (SqCallArg){sq_type_long, sq_ref_for_symbol(parser.str_false)});
 
-static void print_str_impl(RuntimeStr str) {
-  printf("%.*s\n", (int)str.length, str.data);
+  sq_block_start(after_block);
 }
 
 static void print_str(Operand* op) {
-  // This is really !(AARCH64 || SYSV): 16 byte argument passed as pointer
-  // rather than two words.
-#if OS_WINDOWS
-  ir_ref addr = ir_CONST_ADDR(print_str_impl);
-  ir_CALL_1(IR_VOID, addr, operand_to_irref_imm(op));
-#else
-  ir_ref addr = ir_CONST_ADDR(print_str_impl);
-  ir_ref data = ir_LOAD(IR_ADDR, op->ref);
-  ir_ref size = ir_LOAD(IR_I64, ir_ADD_OFFSET(op->ref, 8));
-  ir_CALL_2(IR_VOID, addr, data, size);
-#endif
-}
-
-static void print_range_impl(RuntimeRange range) {
-  if (range.step == 1) {
-    printf("range(%" PRIi64 ", %" PRIi64 ")\n", range.start, range.stop);
-  } else {
-    printf("range(%" PRIi64 ", %" PRIi64 ", %" PRIi64 ")\n", range.start, range.stop, range.step);
-  }
+  SqRef obj = operand_to_sqref_imm(op);
+  SqRef print_func = sq_ref_extern("printf");
+  SqRef fmt_str = sq_ref_for_symbol(parser.str_print_fmt);
+  SqRef ptr = sq_i_load(sq_type_long, obj);
+  SqRef len = sq_i_load(sq_type_word, sq_i_add(sq_type_long, obj, sq_const_int(8)));
+  sq_i_call4(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str}, sq_varargs_begin,
+             (SqCallArg){sq_type_word, len}, (SqCallArg){sq_type_long, ptr});
 }
 
 static void print_range(Operand* op) {
-#if ARCH_X64 && OS_WINDOWS
-  ir_ref praddr = ir_CONST_ADDR(print_range_impl);
-  ir_CALL_1(IR_VOID, praddr, operand_to_irref_imm(op));
-#elif ARCH_X64
-  // I think these need to be exploded out into the stack but 'inline' on the
-  // stack, not pointed at. Soooo, not sure how to do that.
-  /*
-  ir_ref start = ir_LOAD(IR_ADDR, op->ref);
-  ir_ref stop = ir_LOAD(IR_I64, ir_ADD_OFFSET(op->ref, 8));
-  ir_ref step = ir_LOAD(IR_I64, ir_ADD_OFFSET(op->ref, 16));
-  ir_CALL_3(IR_VOID, praddr, start, stop, step);
-  */
-  (void)print_range_impl;
-#else
-#error port
-#endif
+  SqRef obj = operand_to_sqref_imm(op);
+  SqRef print_func = sq_ref_extern("printf");
+
+  SqBlock block_2 = sq_block_declare();
+  SqBlock block_3 = sq_block_declare();
+  SqBlock block_after = sq_block_declare();
+
+  SqRef start = sq_i_load(sq_type_long, obj);
+  SqRef stop = sq_i_load(sq_type_long, sq_i_add(sq_type_long, obj, sq_const_int(8)));
+  SqRef step = sq_i_load(sq_type_long, sq_i_add(sq_type_long, obj, sq_const_int(16)));
+  SqRef cmp = sq_i_ceql(sq_type_long, step, sq_const_int(1));
+  sq_i_jnz(cmp, block_2, block_3);
+
+  sq_block_start(block_2);
+  SqRef fmt_str_2 = sq_ref_for_symbol(parser.range2_print_fmt);
+  sq_i_call4(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str_2}, sq_varargs_begin,
+             (SqCallArg){sq_type_long, start}, (SqCallArg){sq_type_long, stop});
+  sq_i_jmp(block_after);
+
+  sq_block_start(block_3);
+  SqRef fmt_str_3 = sq_ref_for_symbol(parser.range3_print_fmt);
+  sq_i_call5(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str_3}, sq_varargs_begin,
+             (SqCallArg){sq_type_long, start}, (SqCallArg){sq_type_long, stop},
+             (SqCallArg){sq_type_long, step});
+
+  sq_block_start(block_after);
 }
 
-static void initialize_aggregate(ir_ref base_addr, Type type) {
+static void print_float(Operand* op) {
+  SqRef val = operand_to_sqref_imm(op);
+  SqRef vald = sq_i_exts(val);
+  SqRef print_func = sq_ref_extern("printf");
+  SqRef fmt_str = sq_ref_for_symbol(parser.float_print_fmt);
+  sq_i_call3(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str}, sq_varargs_begin,
+             (SqCallArg){sq_type_double, vald});
+}
+
+static void print_double(Operand* op) {
+  SqRef val = operand_to_sqref_imm(op);
+  SqRef print_func = sq_ref_extern("printf");
+  SqRef fmt_str = sq_ref_for_symbol(parser.float_print_fmt);
+  sq_i_call3(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str}, sq_varargs_begin,
+             (SqCallArg){sq_type_double, val});
+}
+
+static void initialize_aggregate(SqRef base_addr, Type type) {
   size_t size = type_size(type);
   if (type_kind(type) == TYPE_STRUCT && type_struct_has_initializer(type)) {
+    SqRef memcpy_func = sq_ref_extern("memcpy");
+    SqSymbol init_sym = type_struct_initializer_sym(type);
+    sq_i_call3(sq_type_void, memcpy_func, (SqCallArg){sq_type_long, base_addr},
+               (SqCallArg){sq_type_long, sq_ref_for_symbol(init_sym)},
+               (SqCallArg){sq_type_long, sq_const_int(size)});
+#if 0
     ir_ref memcpy_addr = ir_CONST_ADDR(memcpy);
     ir_ref default_blob = ir_CONST_ADDR(type_struct_initializer_blob(type));
     ir_CALL_3(IR_VOID, memcpy_addr, base_addr, default_blob, ir_CONST_U64(size));
+#endif
   } else {
-    ir_ref memset_addr = ir_CONST_ADDR(memset);
-    ir_CALL_3(IR_VOID, memset_addr, base_addr, ir_CONST_U8(0), ir_CONST_U64(size));
+    SqRef memset_func = sq_ref_extern("memset");
+    sq_i_call3(sq_type_void, memset_func, (SqCallArg){sq_type_long, base_addr},
+               (SqCallArg){sq_type_word, sq_const_int(0)},
+               (SqCallArg){sq_type_long, sq_const_int(size)});
   }
 }
 
 static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* initial_value) {
   Sym* new = sym_new(kind, name, type);
-  // TODO: figure out str/range
-  if (type_is_aggregate(type) && type_kind(type) != TYPE_STR && type_kind(type) != TYPE_RANGE) {
+  if (type_kind(type) == TYPE_STR) {
+    new->ref = sq_i_alloc8(sq_const_int(type_size(type)));
+    if (initial_value) {
+      SqRef init = operand_to_sqref_imm(initial_value);
+      sq_i_storel(sq_i_load(sq_type_long, init), new->ref);
+      sq_i_storel(sq_i_load(sq_type_long, sq_i_add(sq_type_long, init, sq_const_int(8))), new->ref);
+    } else {
+      sq_i_storel(sq_const_int(0), new->ref);
+      sq_i_storel(sq_const_int(0), sq_i_add(sq_type_long, new->ref, sq_const_int(8)));
+    }
+  } else if (type_kind(type) == TYPE_RANGE) {
+    ASSERT(false && "local alloc range");
+  } else if (type_is_aggregate(type)) {
     if (initial_value) {
       if (!type_eq(initial_value->type, type)) {
         errorf("Cannot initialize aggregate type %s with type %s.",
@@ -698,26 +864,18 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
       // they have to have been just created (?). Alternatively, memcpy to a new
       // alloca, but I think that probably won't be optimized away.
       new->ref = initial_value->ref;
-      initial_value->ref = 0;
+      initial_value->ref = (SqRef){0};
     } else {
       uint32_t size = type_size(type);
-      new->ref = ir_ALLOCA(ir_CONST_U64(size));
+      new->ref = sq_i_alloc8(sq_const_int(size));
       initialize_aggregate(new->ref, type);
     }
   } else {
-    new->ref = ir_VAR(type_to_ir_type(type),
-#if BUILD_DEBUG
-                      cstr_copy(parser.arena, name)
-#else
-                      ""
-#endif
-    );
+    new->ref = sq_i_alloc8(sq_const_int(type_size(type)));
     if (initial_value) {
-      ir_VSTORE(new->ref, operand_to_irref_imm(initial_value));
+      store_by_type_val_into(type, operand_to_sqref_imm(initial_value), new->ref);
     } else {
-      ir_val irval;
-      irval.u64 = 0;
-      ir_VSTORE(new->ref, ir_const(_ir_CTX, irval, type_to_ir_type(type)));
+      store_by_type_val_into(type, sq_const_int(0), new->ref);
     }
   }
   new->scope_decl = SSD_DECLARED_LOCAL;
@@ -726,52 +884,57 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
 
 static Sym* make_global(SymKind kind, Str name, Type type, Val initial_value) {
   Sym* new = sym_new(kind, name, type);
-  void* addr = arena_push(parser.arena, type_size(type), type_align(type));
+  sq_data_start(sq_linkage_default, cstr_copy(parser.arena, name));
   switch (type_kind(type)) {
     case TYPE_BOOL:
-      *(bool*)addr = initial_value.b;
+      sq_data_byte((uint8_t)initial_value.b);
       break;
     case TYPE_U8:
-      *(uint8_t*)addr = initial_value.u8;
+      sq_data_byte(initial_value.u8);
       break;
     case TYPE_I8:
-      *(int8_t*)addr = initial_value.i8;
+      sq_data_byte((uint8_t)initial_value.i8);
       break;
     case TYPE_U16:
-      *(uint16_t*)addr = initial_value.u16;
+      sq_data_half(initial_value.u16);
       break;
     case TYPE_I16:
-      *(int16_t*)addr = initial_value.i16;
+      sq_data_half((uint16_t)initial_value.i16);
       break;
     case TYPE_U32:
-      *(uint32_t*)addr = initial_value.u32;
+      sq_data_word(initial_value.u32);
       break;
     case TYPE_I32:
-      *(int32_t*)addr = initial_value.i32;
+      sq_data_word((uint32_t)initial_value.i32);
       break;
     case TYPE_U64:
-      *(uint64_t*)addr = initial_value.u64;
+      sq_data_long(initial_value.u64);
       break;
     case TYPE_I64:
-      *(int64_t*)addr = initial_value.i64;
+      sq_data_long((uint64_t)initial_value.i64);
       break;
     default:
       error("internal error: unexpected global const init.");
   }
-  new->addr = addr;
+  new->global = sq_data_end();
   new->scope_decl = SSD_DECLARED_GLOBAL;
+
+  if (parser.cur_scope->is_function) {
+    sq_itemctx_activate(parser.cur_scope->func_item_ctx);
+  }
+
   return new;
 }
 
 static Sym* make_param(Str name, Type type, int index) {
   Sym* new = sym_new(SYM_VAR, name, type);
-  new->ref = ir_PARAM(type_to_ir_type(type),
+  new->ref = sq_func_param_named(type_to_sqtype(type),
 #if BUILD_DEBUG
-                      cstr_copy(parser.arena, name),
+                                 cstr_copy(parser.arena, name)
 #else
-                      "",
+                                 NULL
 #endif
-                      index + 1);
+  );
   new->scope_decl = SSD_DECLARED_PARAMETER;
   return new;
 }
@@ -779,7 +942,7 @@ static Sym* make_param(Str name, Type type, int index) {
 static void enter_scope(bool is_module, bool is_function, Sym* funcsym) {
   parser.cur_scope = &parser.scopes[parser.num_scopes++];
   parser.cur_scope->func_sym = funcsym;
-  parser.cur_scope->arena_saved_pos = arena_pos(arena_ir);
+  //parser.cur_scope->arena_saved_pos = arena_pos(arena_ir);
   parser.cur_scope->upval_map.num_upvals = 0;
   parser.cur_scope->arena_pos = arena_pos(parser.var_scope_arena);
   parser.cur_scope->is_function = is_function;
@@ -815,23 +978,13 @@ static void enter_function(Sym* sym,
 
   enter_scope(/*is_module=*/false, /*is_function=*/true, sym);
 
-#if BUILD_DEBUG
-  ir_consistency_check();
-#endif
+  SqLinkage linkage =
+      str_eq(sym->name, parser.static_str_main) ? sq_linkage_export : sq_linkage_default;
 
-  uint32_t opts = parser.opt_level ? IR_OPT_FOLDING : 0;
-  if (parser.opt_level == 2) {
-    opts |= IR_OPT_MEM2SSA;
-  }
-  ir_init(_ir_CTX, IR_FUNCTION | opts, 4096, 4096);
-#if ARCH_X64 && OS_WINDOWS  // TODO: Reosetta doesn't support AVX, check SSE
-  parser.cur_scope->ctx.mflags = IR_X86_SSE2 | IR_X86_SSE3 | IR_X86_SSSE3 | IR_X86_SSE41 |
-                                 IR_X86_SSE42 | IR_X86_AVX | IR_X86_AVX2 | IR_X86_BMI1 |
-                                 IR_X86_CLDEMOTE;
-#endif
+  Type ret_type = type_func_return_type(sym->type);
 
-  parser.cur_scope->ctx.code_buffer = &parser.code_buffer;
-  ir_START();
+  parser.cur_scope->func_item_ctx =
+      sq_func_start(linkage, type_to_sqtype(ret_type), cstr_copy(parser.arena, sym->name));
 
   uint32_t num_params = type_func_num_params(sym->type);
   Sym* param_syms[MAX_FUNC_PARAMS];
@@ -839,16 +992,13 @@ static void enter_function(Sym* sym,
     param_syms[i] = make_param(param_names[i], type_func_param(sym->type, i), i);
   }
 
-  // Allocation of the VAR for return_slot must be after all PARAMs.
-  // https://github.com/dstogov/ir/issues/103.
-  Type ret_type = type_func_return_type(sym->type);
-  parser.cur_scope->ctx.ret_type = type_to_ir_type(ret_type);
   if (type_eq(ret_type, type_void)) {
     parser.cur_scope->return_slot = NULL;
   } else {
     parser.cur_scope->return_slot =
         make_local_and_alloc(SYM_VAR, parser.static_str_ret, ret_type, NULL);
   }
+  parser.cur_scope->return_block = sq_block_declare();
 
   if (is_nested) {
     ASSERT(str_eq(param_syms[0]->name, parser.static_str_up));
@@ -860,61 +1010,19 @@ static void enter_function(Sym* sym,
 
 static void leave_function(void) {
   Type ret_type = type_func_return_type(parser.cur_scope->func_sym->type);
+  sq_block_start(parser.cur_scope->return_block);
   if (type_eq(ret_type, type_void)) {
-    ir_RETURN(IR_UNUSED);
+    sq_i_ret_void();
   } else {
-    ir_RETURN(ir_VLOAD(type_to_ir_type(ret_type), parser.cur_scope->return_slot->ref));
-  }
-
-  if (parser.verbose) {
-    ir_save(_ir_CTX, -1, stderr);
-#if BUILD_DEBUG
-    FILE* f = fopen("tmp.dot", "wb");
-    ir_dump_dot(_ir_CTX, cstr_copy(parser.arena, parser.cur_scope->func_sym->name), f);
-    base_writef_stderr("Wrote tmp.dot\n");
-    fclose(f);
-#endif
-  }
-
-#if BUILD_DEBUG
-  if (!ir_check(_ir_CTX)) {
-    base_writef_stderr("ir_check failed, not compiling\n");
-    base_exit(1);
-  }
-#endif
-
-#if ENABLE_CODE_GEN
-  if (!parser.ir_only) {
-    size_t size = 0;
-    void* entry = ir_jit_compile(_ir_CTX, /*opt=*/parser.opt_level, &size);
-    if (entry) {
-      if (parser.verbose) {
-        base_writef_stderr("=> codegen to %zu bytes at %p for '%s'\n", size, entry,
-                           cstr_copy(parser.arena, parser.cur_scope->func_sym->name));
-#if BUILD_DEBUG
-        // ir_disasm uses capstone, but it makes the compiler binary about ~10x
-        // larger, so just save the code in verbose mode and use an external
-        // disassembler when we care.
-        FILE* f = fopen("code.raw", "wb");
-        fwrite(entry, 1, size, f);
-        fclose(f);
-        base_writef_stderr("Wrote code.raw\n");
-#endif
-      }
-      if (str_eq(parser.cur_scope->func_sym->name, parser.static_str_main)) {
-        parser.main_func_entry = entry;
-      }
+    if (type_is_aggregate(ret_type)) {
+      sq_i_ret(parser.cur_scope->return_slot->ref);
     } else {
-      base_writef_stderr("compilation failed '%s'\n",
-                         cstr_copy(parser.arena, parser.cur_scope->func_sym->name));
+      sq_i_ret(load_by_type_from(ret_type, parser.cur_scope->return_slot->ref));
     }
-    parser.cur_scope->func_sym->addr = entry;
   }
-#endif
 
-  ir_free(_ir_CTX);
-
-  arena_pop_to(arena_ir, parser.cur_scope->arena_saved_pos);
+  parser.cur_scope->func_sym->global = sq_func_end();
+  parser.cur_scope->func_item_ctx = (SqItemCtx){0};
 
   bool is_nested = parser.num_scopes > 2;  // Module, parent function, current function.
   if (is_nested) {
@@ -925,14 +1033,14 @@ static void leave_function(void) {
 
   if (is_nested) {
     // This is pointing to the nested one, but we have to set cur_scope to the
-    // parent one, so that codegen goes to it (via _ir_CTX).
+    // parent one, so that codegen goes to it.
     UpvalMap* inner_uvm = &parser.cur_scope->upval_map;
     Sym* child_func = parser.cur_scope->func_sym;
     parser.cur_scope = &parser.scopes[parser.num_scopes - 2];
     UpvalMap* parent_uvm = &parser.cur_scope->upval_map;
-    (void)parent_uvm;
+    sq_itemctx_activate(parser.cur_scope->func_item_ctx);
 
-    ir_ref upval_data = ir_ALLOCA(ir_CONST_U64(inner_uvm->alloc_size));
+    SqRef upval_data = sq_i_alloc8(sq_const_int(inner_uvm->alloc_size));
     child_func->ref2 = upval_data;
 
     for (int i = 0; i < inner_uvm->num_upvals; ++i) {
@@ -941,13 +1049,17 @@ static void leave_function(void) {
         case SCOPE_RESULT_GLOBAL:
         case SCOPE_RESULT_UNDEFINED:
           error("internal error, unexpected scope_result in upval capture");
-        case SCOPE_RESULT_LOCAL:
-          ir_STORE(ir_ADD_OFFSET(upval_data, uv->offset),
-                   ir_VLOAD(type_to_ir_type(uv->type), uv->ref));
+        case SCOPE_RESULT_LOCAL: {
+          SqRef val = load_by_type_from(uv->type, uv->ref);
+          store_by_type_val_into(uv->type, val,
+                                 sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
           break;
-        case SCOPE_RESULT_PARAMETER:
-          ir_STORE(ir_ADD_OFFSET(upval_data, uv->offset), uv->ref);
+        }
+        case SCOPE_RESULT_PARAMETER: {
+          store_by_type_val_into(uv->type, uv->ref,
+                                 sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
           break;
+        }
         case SCOPE_RESULT_UPVALUE: {
           // This case is that the upval we're trying to capture is itself an
           // upval in the current function.
@@ -962,10 +1074,12 @@ static void leave_function(void) {
                                  cstr_copy(parser.arena, uv->name),
                                  cstr_copy(parser.arena, child_func->name));
                                  */
-              ASSERT(parser.cur_scope->upval_base);
-              ir_STORE(ir_ADD_OFFSET(upval_data, uv->offset),
-                       ir_LOAD(type_to_ir_type(uv->type),
-                               ir_ADD_OFFSET(parser.cur_scope->upval_base, parent_uv->offset)));
+              ASSERT(parser.cur_scope->upval_base.u);
+              SqRef val =
+                  load_by_type_from(uv->type, sq_i_add(sq_type_long, parser.cur_scope->upval_base,
+                                                       sq_const_int(parent_uv->offset)));
+              store_by_type_val_into(uv->type, val,
+                                     sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
               break;
             }
           }
@@ -1158,7 +1272,7 @@ static bool is_convertible(Operand* operand, Type dest) {
     return true;
   } else if (type_kind(dest) == TYPE_VOID) {
     return true;
-  } else if (type_is_arithmetic(dest) && type_is_arithmetic(src)){
+  } else if (type_is_arithmetic(dest) && type_is_arithmetic(src)) {
     // TODO: This would make sense, but have to have small things work
     // automatically somehow, e.g.
     //   u64 u = 123
@@ -1287,25 +1401,44 @@ static bool cast_operand(Operand* operand, Type type) {
         }
       }
     } else {
-      ir_ref ref_to_adjust;
+      SqRef ref_to_adjust;
       if (op_is_local_addr(*operand)) {
-        ref_to_adjust = operand_to_irref_imm(operand);
+        ref_to_adjust = operand_to_sqref_imm(operand);
         operand->kind = OPK_REF_RVAL;
       } else {
         ref_to_adjust = operand->ref;
       }
 
       if (type_size(operand->type) > type_size(type)) {
-        operand->ref = ir_TRUNC(type_to_ir_type(type), ref_to_adjust);
+        //operand->ref = ir_TRUNC(type_to_ir_type(type), ref_to_adjust);
+        operand->ref = ref_to_adjust;
       } else if (type_size(operand->type) < type_size(type)) {
-        if (type_is_signed(type)) {
-          operand->ref = ir_SEXT(type_to_ir_type(type), ref_to_adjust);
+        // Source is strictly smaller than the target.
+        if (type_is_signed(type) && type_is_signed(operand->type)) {
+          // Both signed, sext.
+          ExtFunc func = sext_by_type(operand->type);
+          operand->ref = func(sqbasetype_from_type(type), ref_to_adjust);
+        } else if (!type_is_signed(type) && !type_is_signed(operand->type)) {
+          // Both unsigned, zext.
+          ExtFunc func = zext_by_type(operand->type);
+          operand->ref = func(sqbasetype_from_type(type), ref_to_adjust);
+        } else if (type_is_signed(type) && !type_is_signed(operand->type)) {
+          // unsigned extending into signed, zext.
+          ExtFunc func = zext_by_type(operand->type);
+          operand->ref = func(sqbasetype_from_type(type), ref_to_adjust);
         } else {
-          operand->ref = ir_ZEXT(type_to_ir_type(type), ref_to_adjust);
+          ASSERT(!type_is_signed(type) && type_is_signed(operand->type));
+          // signed extending into unsigned, error (?)
+          error("can't extend signed into larger unsigned");
+        }
+        if (type_is_signed(type)) {
+        } else {
+          ExtFunc func = zext_by_type(type);
+          operand->ref = func(sqbasetype_from_type(type), ref_to_adjust);
         }
       } else {
         // This is int-to-int, probably not necessary? Not sure.
-        operand->ref = ir_BITCAST(type_to_ir_type(type), ref_to_adjust);
+        operand->ref = ref_to_adjust; // ir_BITCAST(type_to_ir_type(type), ref_to_adjust);
       }
     }
   }
@@ -1442,7 +1575,7 @@ static bool is_floating_type(Type type) {
 // - allows arbitrary _ as separators
 // - uses StrView rather than nul termination
 // - extracts and returns u8, i16, etc. suffixes
-static uint64_t scan_int(StrView num, Type* suffix) {
+static uint64_t scan_int(StrView num, bool allow_suffix, Type* suffix) {
   static uint8_t char_to_digit[256] = {
       ['0'] = 0,               //
       ['1'] = 1,               //
@@ -1586,20 +1719,29 @@ static Operand parse_and(Operand left, bool can_assign, Type* expected) {
   if (!type_is_condition(left.type)) {
     errorf("Left-hand side of or cannot be type %s.", type_as_str(left.type));
   }
-  ir_ref lcond = ir_IF(operand_to_irref_imm(&left));
-  ir_IF_FALSE(lcond);
-  ir_ref if_false = ir_END();
-  ir_IF_TRUE(lcond);
 
+  SqBlock block_rval = sq_block_declare();
+  SqBlock block_true = sq_block_declare();
+  SqBlock block_done = sq_block_declare();
+
+  SqRef result = sq_i_alloc8(sq_const_int(type_size(type_bool)));
+  sq_i_storeb(sq_const_int(0), result);
+
+  sq_i_jnz(operand_to_sqref_imm(&left), block_rval, block_done);
+
+  sq_block_start(block_rval);
   Operand right = parse_precedence(PREC_OR, &type_bool);
   if (!type_is_condition(right.type)) {
     errorf("Right-hand side of or cannot be type %s.", type_as_str(right.type));
   }
-  ir_ref if_true = ir_END();
-  ir_ref rcond = operand_to_irref_imm(&right);
-  ir_MERGE_2(if_false, if_true);
-  ir_ref result = ir_PHI_2(IR_BOOL, ir_CONST_BOOL(false), rcond);
-  return operand_rvalue_imm(type_bool, result);
+  sq_i_jnz(operand_to_sqref_imm(&right), block_true, block_done);
+
+  sq_block_start(block_true);
+  sq_i_storeb(sq_const_int(1), result);
+
+  sq_block_start(block_done);
+
+  return operand_rvalue_imm(type_bool, sq_i_loadub(sq_type_word, result));
 }
 
 static void promote_small_integers(Operand* operand) {
@@ -1656,7 +1798,7 @@ static void unify_arithmetic_operands(Operand* left, Operand* right) {
   ASSERT(type_eq(left->type, right->type));
 }
 
-static unsigned long long eval_binary_op_ull(ir_op op,
+static unsigned long long eval_binary_op_ull(TokenKind op,
                                              unsigned long long left,
                                              unsigned long long right) {
   error("TODO: ull binary const eval");
@@ -1678,9 +1820,9 @@ static unsigned long highest_bit_set(long long val) {
 #endif
 }
 
-static long long eval_binary_op_ll(ir_op op, long long left, long long right) {
+static long long eval_binary_op_ll(TokenKind op, long long left, long long right) {
   switch (op) {
-    case IR_MUL: {
+    case TOK_STAR: {
       long long result;
       if (
 #if COMPILER_MSVC
@@ -1693,32 +1835,34 @@ static long long eval_binary_op_ll(ir_op op, long long left, long long right) {
       }
       return result;
     }
-    case IR_DIV:
+    case TOK_SLASH:
       if (right == 0) {
         error("Divide by zero.");
         return 0;
       }
       return left / right;
-    case IR_MOD:
+    case TOK_PERCENT:
       if (right == 0) {
         error("Divide by zero.");
         return 0;
       }
       return left % right;
-    case IR_AND:
+    case TOK_AMPERSAND:
       return left & right;
-    case IR_SHL: {
+    case TOK_LSHIFT: {
       long long required_bits = highest_bit_set(left) + right + 1;
       if (required_bits > 64) {
         errorf("%llu shifted left by %llu requires %llu bits.", left, right, required_bits);
       }
       return left << right;
     }
+#if 0  // TODO: signed bit passing
     case IR_SHR:
       error("internal error: SHR on signed.");
     case IR_SAR:
       return left >> right;
-    case IR_ADD: {
+#endif
+    case TOK_PLUS: {
       long long result;
       if (
 #if COMPILER_MSVC
@@ -1731,7 +1875,7 @@ static long long eval_binary_op_ll(ir_op op, long long left, long long right) {
       }
       return result;
     }
-    case IR_SUB: {
+    case TOK_MINUS: {
       long long result;
       if (
 #if COMPILER_MSVC
@@ -1744,28 +1888,28 @@ static long long eval_binary_op_ll(ir_op op, long long left, long long right) {
       }
       return result;
     }
-    case IR_OR:
+    case TOK_PIPE:
       return left | right;
-    case IR_XOR:
+    case TOK_CARET:
       return left ^ right;
-    case IR_EQ:
+    case TOK_EQEQ:
       return left == right;
-    case IR_NE:
+    case TOK_BANGEQ:
       return left != right;
-    case IR_LT:
+    case TOK_LT:
       return left < right;
-    case IR_LE:
+    case TOK_LEQ:
       return left <= right;
-    case IR_GT:
+    case TOK_GT:
       return left > right;
-    case IR_GE:
+    case TOK_GEQ:
       return left >= right;
     default:
-      error("internal error: unexpected const ir_op.");
+      error("internal error: unexpected const op.");
   }
 }
 
-static Val eval_binary_op(ir_op op, Type type, Val left, Val right) {
+static Val eval_binary_op(TokenKind op, Type type, Val left, Val right) {
   if (type_is_integer(type)) {
     Operand left_operand = operand_const(type, left);
     Operand right_operand = operand_const(type, right);
@@ -1790,7 +1934,13 @@ static Val eval_binary_op(ir_op op, Type type, Val left, Val right) {
   }
 }
 
-static Operand resolve_binary_op(ir_op op, Operand left, Operand right, uint32_t loc) {
+typedef SqRef (*BinOpFunc)(SqType, SqRef, SqRef);
+
+static Operand resolve_binary_op(TokenKind op,
+                                 BinOpFunc func,
+                                 Operand left,
+                                 Operand right,
+                                 uint32_t loc) {
   ASSERT(type_eq(left.type, right.type));
   // It didn't really seem worth doing constant eval, but it's needed for array
   // sizes in particular, so we do some constant propagation through is_const
@@ -1798,32 +1948,43 @@ static Operand resolve_binary_op(ir_op op, Operand left, Operand right, uint32_t
   if (op_is_const(left) && op_is_const(right)) {
     return operand_const(left.type, eval_binary_op(op, left.type, left.val, right.val));
   } else {
-    ir_type irt = type_to_ir_type(left.type);
-    ir_ref result =
-        ir_BINARY_OP(op, irt, operand_to_irref_imm(&left), operand_to_irref_imm(&right));
+    SqRef result = func(sqbasetype_from_type(left.type), operand_to_sqref_imm(&left),
+                        operand_to_sqref_imm(&right));
     return operand_rvalue_imm(left.type, result);
   }
 }
 
-static Operand resolve_cmp_op(ir_op op, Operand left, Operand right, uint32_t loc) {
+static Operand resolve_cmp_op(TokenKind op,
+                              BinOpFunc func,
+                              Operand left,
+                              Operand right,
+                              uint32_t loc) {
   ASSERT(type_eq(left.type, right.type));
   if (op_is_const(left) && op_is_const(right)) {
-    return operand_const(left.type, eval_binary_op(op, left.type, left.val, right.val));
+    return operand_const(type_bool, eval_binary_op(op, left.type, left.val, right.val));
   } else  {
-    ir_ref result =
-        ir_CMP_OP(op, operand_to_irref_imm(&left), operand_to_irref_imm(&right));
+    SqRef result = func(sqbasetype_from_type(left.type), operand_to_sqref_imm(&left),
+                        operand_to_sqref_imm(&right));
     return operand_rvalue_imm(type_bool, result);
   }
 }
 
-static Operand resolve_binary_arithmetic_op(ir_op op, Operand left, Operand right, uint32_t loc) {
+static Operand resolve_binary_arithmetic_op(TokenKind op,
+                                            BinOpFunc func,
+                                            Operand left,
+                                            Operand right,
+                                            uint32_t loc) {
   unify_arithmetic_operands(&left, &right);
-  return resolve_binary_op(op, left, right, loc);
+  return resolve_binary_op(op, func, left, right, loc);
 }
 
-static Operand resolve_binary_cmp_op(ir_op op, Operand left, Operand right, uint32_t loc) {
+static Operand resolve_binary_cmp_op(TokenKind op,
+                                     BinOpFunc func,
+                                     Operand left,
+                                     Operand right,
+                                     uint32_t loc) {
   unify_arithmetic_operands(&left, &right);
-  return resolve_cmp_op(op, left, right, loc);
+  return resolve_cmp_op(op, func, left, right, loc);
 }
 
 static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
@@ -1835,33 +1996,34 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
   Rule* rule = get_rule(op);
   Operand rhs = parse_precedence(rule->prec_for_infix + 1, expected);
 
-  typedef struct IrOpPair {
-    ir_op sign;
-    ir_op unsign;
-  } IrOpPair;
-  static IrOpPair tok_to_cmp_op[NUM_TOKEN_KINDS] = {
-      [TOK_EQEQ] = {IR_EQ, IR_EQ},
-      [TOK_BANGEQ] = {IR_NE, IR_NE},
-      [TOK_LEQ] = {IR_LE, IR_ULE},
-      [TOK_LT] = {IR_LT, IR_ULT},
-      [TOK_GEQ] = {IR_GE, IR_UGE},
-      [TOK_GT] = {IR_GT, IR_UGT},
+  typedef struct OpPair {
+    BinOpFunc sign;
+    BinOpFunc unsign;
+  } OpPair;
+  static OpPair tok_to_cmp_op[NUM_TOKEN_KINDS] = {
+      [TOK_EQEQ] = {sq_i_ceqw, sq_i_ceqw},
+      [TOK_BANGEQ] = {sq_i_cnew, sq_i_cnew},
+      [TOK_LEQ] = {sq_i_cslew, sq_i_culew},
+      [TOK_LT] = {sq_i_csltw, sq_i_cultw},
+      [TOK_GEQ] = {sq_i_csgew, sq_i_cugew},
+      [TOK_GT] = {sq_i_csgtw, sq_i_cugtw},
   };
   typedef struct IrOpAndErr {
-    ir_op op;
+    BinOpFunc func;
     const char* err_msg;
   } IrOpAndErr;
   static IrOpAndErr tok_to_bin_op[NUM_TOKEN_KINDS] = {
-      [TOK_PLUS] = {IR_ADD, "Cannot add %s to %s"},
-      [TOK_MINUS] = {IR_SUB, "TODO %s %s"},
-      [TOK_STAR] = {IR_MUL, "TODO %s %s"},
-      [TOK_SLASH] = {IR_DIV, "TODO %s %s"},
-      [TOK_PERCENT] = {IR_MOD, "TODO %s %s"},
+      [TOK_PLUS] = {sq_i_add, "Cannot add %s to %s"},
+      [TOK_MINUS] = {sq_i_sub, "TODO %s %s"},
+      [TOK_STAR] = {sq_i_mul, "TODO %s %s"},
+      [TOK_SLASH] = {sq_i_div, "TODO %s %s"},
+      [TOK_PERCENT] = {sq_i_rem, "TODO %s %s"},
+      // XXX wouldn't this be in unary?
       //[TOK_TILDE] = {IR_NOT,  // TODO
-      [TOK_PIPE] = {IR_OR, "TODO %s %s"},
-      [TOK_AMPERSAND] = {IR_AND, "TODO %s %s"},
-      [TOK_CARET] = {IR_XOR, "TODO %s %s"},
-      [TOK_LSHIFT] = {IR_SHL, "TODO %s %s"},
+      [TOK_PIPE] = {sq_i_or, "TODO %s %s"},
+      [TOK_AMPERSAND] = {sq_i_and, "TODO %s %s"},
+      [TOK_CARET] = {sq_i_xor, "TODO %s %s"},
+      [TOK_LSHIFT] = {sq_i_shl, "TODO %s %s"},
       // TOK_RSHIFT handled below to do SHR vs SAR
   };
   if (tok_to_cmp_op[op].sign /*anything nonzero in slot*/) {
@@ -1871,19 +2033,17 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
                       type_as_str(left.type), type_as_str(rhs.type));
       } else {
         bool is_signed = type_is_signed(left.type);
-        return resolve_binary_cmp_op(is_signed ? tok_to_cmp_op[op].sign : tok_to_cmp_op[op].unsign,
+        return resolve_binary_cmp_op(op,
+                                     is_signed ? tok_to_cmp_op[op].sign : tok_to_cmp_op[op].unsign,
                                      left, rhs, op_offset);
       }
     } else {
       errorf_offset(op_offset, "Cannot compare %s and %s.", type_as_str(left.type),
                     type_as_str(rhs.type));
     }
-    ir_op irop = type_is_unsigned(left.type) ? tok_to_cmp_op[op].unsign : tok_to_cmp_op[op].sign;
-    ir_ref cmp = ir_CMP_OP(irop, operand_to_irref_imm(&left), operand_to_irref_imm(&rhs));
-    return operand_rvalue_imm(type_bool, cmp);
   } else if (tok_to_bin_op[op].err_msg /* anything nonzero in slot*/) {
     if (type_is_arithmetic(left.type) && type_is_arithmetic(rhs.type)) {
-      return resolve_binary_arithmetic_op(tok_to_bin_op[op].op, left, rhs, op_offset);
+      return resolve_binary_arithmetic_op(op, tok_to_bin_op[op].func, left, rhs, op_offset);
     } else {
       // TODO: special case str here
 
@@ -1891,9 +2051,9 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
                     type_as_str(rhs.type));
     }
   } else if (op == TOK_RSHIFT) {
-    ir_op irop = type_is_unsigned(left.type) ? IR_SHR : IR_SAR;
-    ir_ref result = ir_BINARY_OP(irop, type_to_ir_type(left.type), operand_to_irref_imm(&left),
-                                 operand_to_irref_imm(&rhs));
+    BinOpFunc func = type_is_unsigned(left.type) ? sq_i_shr : sq_i_sar;
+    SqRef result = func(sqbasetype_from_type(left.type), operand_to_sqref_imm(&left),
+                        operand_to_sqref_imm(&rhs));
     return operand_rvalue_imm(left.type, result);
   } else {
     ASSERT(false && "todo");
@@ -1906,141 +2066,6 @@ static Operand parse_bool_literal(bool can_assign, Type* expected) {
   return operand_const(type_bool, (Val){.b = parser.cursor.prev_kind == TOK_FALSE ? 0 : 1});
 }
 
-#if OS_WINDOWS && ARCH_X64
-static bool is_aggregate_in_int_register_x64win(Type type) {
-  ASSERT(type_is_aggregate(type));
-  switch (type_size(type)) {
-    case 1:
-    case 2:
-    case 4:
-    case 8:
-      // Note that e.g. `struct {char x[3];}` is passed by pointer, even though
-      // it would otherwise "fit".
-      return true;
-    default:
-      return false;
-  }
-}
-#endif
-
-// For 'normal' arguments, this is roughly just using ir_CALL_N. But, because
-// structs aren't supported at the IR level, they need to be handled here
-// specially. This is different per ABI.
-static Operand lower_structs_and_call(Operand* func, uint32_t num_args, ir_ref* arg_values) {
-  // TODO: Other cases, mostly Linux+SysV.
-
-  // The complex case below would work without this, but bail to a simple CALL_N
-  // if we know the function type doesn't have any aggregates being passed.
-#if (OS_WINDOWS && ARCH_X64) || (OS_MAC && ARCH_ARM64)
-  if ((type_func_flags(func->type) & TFF_HAS_AGGREGATE_ARGS) == 0)
-#endif
-  {
-    Type ret_type = type_func_return_type(func->type);
-    return operand_rvalue_imm(
-        ret_type, ir_CALL_N(type_to_ir_type(ret_type), func->ref, num_args, arg_values));
-  }
-
-#if OS_WINDOWS && ARCH_X64
-  // Ref: https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention in
-  // particular, "Parameter passing" and "Return values". IR handles integer and
-  // floating point values in general, we just need to handle the cases of small
-  // (8/16/32/64) aggregates being passed in integer registers, and large
-  // aggregates being passed by pointer.
-  ir_ref new_arg_values[MAX_FUNC_PARAMS];
-  Type new_ret_type;
-  uint32_t num_new_args = 0;
-  Type ret_type = type_func_return_type(func->type);
-  ir_ref out_ret;
-  bool ret_type_packed_into_int = false;
-  if (type_is_aggregate(ret_type)) {
-    ret_type_packed_into_int = is_aggregate_in_int_register_x64win(ret_type);
-    if (ret_type_packed_into_int) {
-      new_ret_type = type_u64;
-    } else {
-      // Create a slot for the callee to write to, and pass that as the first
-      // arg. That same pointer will be returned by the callee.
-      out_ret = ir_ALLOCA(ir_CONST_U64(type_size(ret_type)));
-      new_ret_type = type_ptr(ret_type);
-      new_arg_values[num_new_args] = out_ret;
-      ++num_new_args;
-    }
-  } else {
-    new_ret_type = ret_type;
-  }
-
-  ASSERT(type_func_num_params(func->type) == num_args);
-  for (uint32_t i = 0; i < num_args; ++i) {
-    Type param = type_func_param(func->type, i);
-    if (type_is_aggregate(param)) {
-      ir_ref size = ir_CONST_U64(type_size(param));
-      if (is_aggregate_in_int_register_x64win(param)) {
-        ir_ref tmp_int = ir_VAR(IR_U64, "pack");
-        ir_ref memcpy_addr = ir_CONST_ADDR(memcpy);
-        ir_CALL_3(IR_VOID, memcpy_addr, ir_VADDR(tmp_int), arg_values[i], size);
-        new_arg_values[num_new_args] = ir_VLOAD(IR_U64, tmp_int);
-        ++num_new_args;
-      } else {
-        // Copy the argument by value to a new stack location (it can't be the one
-        // already on the stack because the callee might modify it), and then
-        // pass a pointer to that.
-        ir_ref copy = ir_ALLOCA(size);
-        ir_ref memcpy_addr = ir_CONST_ADDR(memcpy);
-        // TODO: maybe pass Operand so we can check the arg_values is an addr.
-        ir_CALL_3(IR_VOID, memcpy_addr, copy, arg_values[i], size);
-        new_arg_values[num_new_args] = copy;
-        ++num_new_args;
-      }
-    } else {
-      new_arg_values[num_new_args++] = arg_values[i];
-    }
-  }
-
-  ir_ref rv = ir_CALL_N(type_to_ir_type(new_ret_type), func->ref, num_new_args, new_arg_values);
-  ASSERT(!type_is_aggregate(new_ret_type));
-  if (ret_type_packed_into_int) {
-    ir_ref tmp_int = ir_VAR(IR_U64, "unpack");
-    ir_VSTORE(tmp_int, rv);
-    ir_ref size = ir_CONST_U64(type_size(ret_type));
-    ir_ref unpacked = ir_ALLOCA(size);
-    ir_ref memcpy_addr = ir_CONST_ADDR(memcpy);
-    ir_CALL_3(IR_VOID, memcpy_addr, unpacked, ir_VADDR(tmp_int), size);
-    return operand_rvalue_local_addr(ret_type, unpacked);
-  } else {
-    return operand_rvalue_imm(ret_type, rv);
-  }
-#elif OS_MAC && ARCH_ARM64
-
-  // aarch64 generally: https://github.com/ARM-software/abi-aa/blob/a82eef0433556b30539c0d4463768d9feb8cfd0b/aapcs64/aapcs64.rst#682parameter-passing-rules
-  // macOS: https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms#Pass-arguments-to-functions-correctly
-  // I don't think we need to do anything extra for Apple, as I think it only
-  // involves details that would be handled by IR lower down.
-  //
-  // Roughly for struct calling:
-  // - >16, copy to alloca, and replace with pointer.
-  // - <= 16, copy in 8 byte chunks to uint64 registers
-  //
-  // Struct return is more troublesome:
-  // - <= 16 into same registers used for passing, think we can only get out 8
-  // because there's no U128, so we can get x0, but not x1.
-  // - >16 pointer goes in x8, don't think this can be done without IR changes
-
-  Type ret_type = type_func_return_type(func->type);
-  if (type_is_aggregate(ret_type)) {
-    error("todo; cannot return aggregates on macOS yet");
-  }
-
-  ASSERT(type_func_num_params(func->type) == num_args);
-  for (uint32_t i = 0; i < num_args; ++i) {
-    Type param = type_func_param(func->type, i);
-    if (type_is_aggregate(param)) {
-      error("todo; cannot pass aggregates on macOS yet");
-    }
-  }
-
-  error("internal error; lower_structs_and_call");
-#endif
-}
-
 static Operand parse_call(Operand left, bool can_assign, Type* expected) {
   if (can_assign && match_assignment()) {
     CHECK(false && "todo; returning address i think");
@@ -2048,12 +2073,12 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
   if (type_kind(left.type) != TYPE_FUNC) {
     errorf("Expected function type, but type is %s.", type_as_str(left.type));
   }
-  ir_ref arg_values[MAX_FUNC_PARAMS];
+  SqCallArg arg_values[MAX_FUNC_PARAMS];
   uint32_t num_args = 0;
 
   if (type_func_flags(left.type) & (TFF_NESTED | TFF_MEMFN)) {
     ASSERT(op_has_ref2(left));
-    arg_values[0] = left.ref2;
+    arg_values[0] = (SqCallArg){sq_type_long, left.ref2};
     ++num_args;
   }
 
@@ -2070,7 +2095,8 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
         errorf_offset(arg_offset, "Call argument %d is type %s, but function expects type %s.",
                       num_args + 1, type_as_str(arg.type), type_as_str(param_type));
       }
-      arg_values[num_args] = operand_to_irref_imm(&arg);
+      arg_values[num_args].type = type_to_sqtype(arg.type);
+      arg_values[num_args].value = operand_to_sqref_imm(&arg);
       ++num_args;
       if (!match(TOK_COMMA)) {
         break;
@@ -2083,7 +2109,9 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
   }
 
   consume(TOK_RPAREN, "Expect ')' after arguments.");
-  return lower_structs_and_call(&left, num_args, arg_values);
+  Type ret_type = type_func_return_type(left.type);
+  return operand_rvalue_imm(ret_type,
+                            sq_i_calla(type_to_sqtype(ret_type), left.ref, num_args, arg_values));
 }
 
 static Operand parse_compound_literal(bool can_assign, Type* expected) {
@@ -2129,7 +2157,7 @@ static Operand parse_compound_literal(bool can_assign, Type* expected) {
   consume(TOK_RPAREN, "Expect ')' after compound literal.");
 
   size_t lit_size = type_size(lit_type);
-  ir_ref base_addr = ir_ALLOCA(ir_CONST_U64(lit_size));
+  SqRef base_addr = sq_i_alloc8(sq_const_int(lit_size));
   initialize_aggregate(base_addr, lit_type);
 
   uint32_t index = 0;
@@ -2146,7 +2174,8 @@ static Operand parse_compound_literal(bool can_assign, Type* expected) {
              type_as_str(field_values[i].type), type_as_str(field_type));
     }
     uint32_t field_offset = type_struct_field_offset(lit_type, index);
-    ir_STORE(ir_ADD_OFFSET(base_addr, field_offset), operand_to_irref_imm(&field_values[i]));
+    store_by_type_val_into(field_type, operand_to_sqref_imm(&field_values[i]),
+                           sq_i_add(sq_type_long, base_addr, sq_const_int(field_offset)));
   }
 
   return operand_rvalue_local_addr(lit_type, base_addr);
@@ -2158,7 +2187,7 @@ static Operand parse_dict_literal(bool can_assign, Type* expected) {
 }
 
 static Str memfn_name_from_type_name(Str type_name, Str func_name) {
-  return str_internf("%.*s:%.*s", str_len(type_name), str_raw_ptr(type_name), str_len(func_name),
+  return str_internf("%.*s$%.*s", str_len(type_name), str_raw_ptr(type_name), str_len(func_name),
                      str_raw_ptr(func_name));
 }
 
@@ -2186,7 +2215,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
 
   if (can_assign && match_assignment()) {
     while (type_kind(left.type) == TYPE_PTR) {
-      left = operand_lvalue_local(type_ptr_subtype(left.type), ir_LOAD(IR_ADDR, left.ref));
+      left = operand_lvalue_local(type_ptr_subtype(left.type), sq_i_load(sq_type_long, left.ref));
     }
 
     if (type_kind(left.type) == TYPE_STRUCT) {
@@ -2194,8 +2223,10 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       Type field_type;
       if (type_struct_find_field_by_name(left.type, name, &field_type, &field_offset)) {
         Operand rhs_value = parse_expression(expected);
-        ir_STORE(ir_ADD_OFFSET(operand_to_irref_imm(&left), field_offset),
-                              operand_to_irref_imm(&rhs_value));
+
+        store_by_type_val_into(
+            field_type, operand_to_sqref_imm(&rhs_value),
+            sq_i_add(sq_type_long, operand_to_sqref_imm(&left), sq_const_int(field_offset)));
         return operand_null;
       } else {
         errorf_offset(name_offset, "'%s' is not a field of type %s.",
@@ -2208,14 +2239,15 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
   } else {
     Type original_left_type = left.type;
     while (type_kind(left.type) == TYPE_PTR) {
-      left = operand_lvalue_local(type_ptr_subtype(left.type), ir_LOAD(IR_ADDR, left.ref));
+      left = operand_lvalue_local(type_ptr_subtype(left.type), sq_i_load(sq_type_long, left.ref));
     }
     if (type_kind(left.type) == TYPE_STRUCT) {
       uint32_t field_offset;
       Type field_type;
       if (type_struct_find_field_by_name(left.type, name, &field_type, &field_offset)) {
-        ir_ref ref = ir_LOAD(type_to_ir_type(field_type),
-                             ir_ADD_OFFSET(operand_to_irref_imm(&left), field_offset));
+        SqRef ref = load_by_type_from(
+            field_type,
+            sq_i_add(sq_type_long, operand_to_sqref_imm(&left), sq_const_int(field_offset)));
         return operand_rvalue_imm(field_type, ref);
       }
 
@@ -2256,20 +2288,26 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
     // The auto-deref would find Stuff for memfn lookup, and now left.type will
     // just be Stuff. The target memfn always just gets *Stuff, so we need to
     // build that from the left that we originally had.
-    ir_ref self_ptr;
-    if (type_kind(original_left_type) == TYPE_STRUCT || type_is_basic(original_left_type)) {
-      ir_ref addr = ir_VAR(IR_ADDR, "self*");
-      ir_VSTORE(addr, operand_to_irref_imm(&left));
-      self_ptr = ir_VADDR(addr);
+    SqRef self_ptr;
+    if (type_kind(original_left_type) == TYPE_STRUCT) {
+      SqRef addr = sq_i_alloc8(sq_const_int(8));
+      sq_i_storel(operand_to_sqref_imm(&left), addr);
+      self_ptr = addr;
+    } else if (type_is_basic(original_left_type)) {
+      SqRef addr = sq_i_alloc8(sq_const_int(8));
+      store_by_type_val_into(original_left_type, operand_to_sqref_imm(&left), addr);
+      self_ptr = addr;
     } else if (type_kind(original_left_type) == TYPE_PTR &&
                type_kind(type_ptr_subtype(original_left_type)) == TYPE_STRUCT) {
       self_ptr = left.ref;
     } else {
       error("TODO: self ptr");
     }
-    return operand_rvalue_global_addr_bound(func_sym->type, ir_CONST_ADDR(func_sym->addr),
-                                            self_ptr);
+    return operand_rvalue_global_addr_bound(func_sym->type, sqref_for_sym(func_sym), self_ptr);
   }
+
+  ASSERT(false && "todo");
+  return operand_null;
 }
 
 static Operand parse_grouping(bool can_assign, Type* expected) {
@@ -2289,7 +2327,8 @@ static Operand parse_len(bool can_assign, Type* expected) {
     case TYPE_ARRAY:
       return operand_const(type_u64, (Val){.u64 = type_array_count(len_of.type)});
     case TYPE_LIST:
-      return operand_rvalue_imm(type_u64, ir_LOAD_U64(ir_ADD_OFFSET(len_of.ref, 8)));
+      return operand_rvalue_imm(
+          type_u64, sq_i_load(sq_type_long, sq_i_add(sq_type_long, len_of.ref, sq_const_int(8))));
     case TYPE_DICT:
     case TYPE_STR:
       error("TODO: len impl");
@@ -2341,13 +2380,16 @@ typedef enum IterationKind {
 typedef struct IterationData {
   IterationKind kind;
   Sym* itsym;
+#if 0
   ir_ref loop;
   ir_ref cond;
   union {
     ir_ref index;
   } ARRAY;
+#endif
 } IterationData;
 
+#if 0
 static IterationData iteration_prolog(Str it, Operand* over) {
   Type it_type;
   if (type_kind(over->type) == TYPE_ARRAY) {
@@ -2384,14 +2426,19 @@ static void iteration_epilog(IterationData itd) {
     error("Unhandled iteration epilog.");
   }
 }
+#endif
 
 static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for, Type* expected) {
   parser.cursor = at_for;
   consume(TOK_FOR, "Expect 'for' to start list comprehension.");
+#if 0
   Str it = parse_name("Expect iterator name of list comprehension.");
+#endif
   // TODO: other forms for enumerate
   consume(TOK_IN, "Expect 'in'.");
+#if 0
   Operand over = parse_expression(NULL);
+#endif
   if (check(TOK_FOR)) {
     error("todo; multiple for in list compr");
   }
@@ -2410,6 +2457,7 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
   // non-function type of scope?
   // enter_scope(false, false, NULL);
 
+#if 0
   IterationData itd = iteration_prolog(it, &over);
 
   parser.cursor = original;
@@ -2418,6 +2466,7 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
   (void)elem;
 
   iteration_epilog(itd);
+#endif
 
   // leave_scope();
 
@@ -2459,16 +2508,16 @@ static Operand parse_list_literal(Type* expected) {
     // [1, 2, 0xffff_ffff_ffff_ffff] would pass without doing
     // [1u64, 2, 0xffff_ffff_ffff_ffff] instead.
     Operand first_item = opv_at(&elems, 0);
-    ir_ref arr_base = ir_ALLOCA(ir_CONST_U64(type_size(first_item.type) * elems.size));
-    ir_STORE(arr_base, operand_to_irref_imm(&first_item));
+    SqRef arr_base = sq_i_alloc8(sq_const_int(type_size(first_item.type) * elems.size));
+    sq_i_storel(operand_to_sqref_imm(&first_item), arr_base);
     for (int i = 1; i < elems.size; ++i) {
       Operand next_item = opv_at(&elems, i);
       if (!convert_operand(&next_item, first_item.type)) {
         errorf("List item %d is of type %s which does not match type %s of first element.", i + 1,
                type_as_str(next_item.type), type_as_str(first_item.type));
       }
-      ir_STORE(ir_ADD_OFFSET(arr_base, type_size(first_item.type) * i),
-               operand_to_irref_imm(&next_item));
+      sq_i_storel(operand_to_sqref_imm(&next_item),
+                  sq_i_add(sq_type_long, arr_base, sq_const_int(type_size(first_item.type) * i)));
     }
     return operand_rvalue_imm(type_array(first_item.type, elems.size), arr_base);
   }
@@ -2495,35 +2544,14 @@ static Operand parse_null_literal(bool can_assign, Type* expected) {
   return operand_null;
 }
 
-// Should probably write one that doesn't require nul termination instead.
-// We also don't support 'e' in the lexer, but this does, and probably other
-// minor variations. But this is OK for simple 1.0 type things for now.
-static double scan_double(StrView num) {
-  char* copy = arena_push(parser.arena, num.size + 1, 1);
-  memcpy(copy, num.data, num.size);
-  copy[num.size] = 0;
-  char* end;
-  *(char*)memchr(copy, '`', num.size) = '.';
-  return strtod(copy, &end);
-}
-
-static Operand parse_float_literal(bool can_assign, Type* expected) {
-  StrView view = get_strview_for_offsets(prev_offset(), cur_offset());
-  while (view.data[view.size - 1] == ' ') {
-    --view.size;
-  }
-  double val = scan_double(view);
-  return operand_const(type_double, (Val){.d = val});
-}
-
-static Operand parse_int_literal(bool can_assign, Type* expected) {
+static Operand parse_int_literal(bool allow_suffix) {
   Type suffix = {0};
   StrView view = get_strview_for_offsets(prev_offset(), cur_offset());
   ASSERT(view.size > 0);
   while (view.data[view.size - 1] == ' ') {
     --view.size;
   }
-  uint64_t val = scan_int(view, &suffix);
+  uint64_t val = scan_int(view, allow_suffix, &suffix);
   Operand operand = operand_const(type_u64, (Val){.u64 = val});
   Type type = type_u64;
   bool overflow = false;
@@ -2595,6 +2623,54 @@ static Operand parse_int_literal(bool can_assign, Type* expected) {
   return operand;
 }
 
+static double scan_fractional_part_of_double(StrView num) {
+  char* copy = arena_push(parser.arena, num.size + 2, 1);
+  copy[0] = '.';
+  memcpy(copy + 1, num.data, num.size);
+  copy[num.size + 1] = 0;
+  char* end;
+  return strtod(copy, &end);
+}
+
+// The simd lexer can't handle contextually distinguishing between '.' in the
+// context of separating field or package access vs. being the decimal point in
+// a floating point number. A previous version used '`' as the decimal separator
+// to avoid this problem, but it just felt too ugly to use in practice. Using
+// comma for a decimal separator also would have problems because of separating
+// function call arguments. A single quote would also be confusing (looks like
+// digit grouping). Semi-colon is maybe plausible as a separator (sort of a
+// combination of North American and European styles?) but still feels a bit
+// hokey to have to separate that way (in particular for us aged C-like-rs).
+//
+// So! Failing a way to properly lex floats, we defer the problem to the parser
+// and turn a sequence like [int dot int] into a double const instead of a u64.
+//
+// This is currently somewhat too flexible, and will allow things like
+// "0xabcu64.34" to be a float, but maybe something like that is useful (?)
+// especially if we we want a direct writing down of floats by writing IEEE-754
+// formatted hex value.
+//
+// This also sucks in that it'll accept "1 . 4". Hrm.
+static Operand parse_number(bool can_assign, Type* expected) {
+  Operand integer_part = parse_int_literal(true);
+  if (!check(TOK_DOT)) {
+    return integer_part;
+  }
+
+  // Some form of floating point number now.
+
+  advance();
+
+  double final = (double)integer_part.val.i64;
+  if (check(TOK_INT_LITERAL)) {
+    advance();
+    final += scan_fractional_part_of_double(get_strview_for_offsets(prev_offset(), cur_offset()));
+  } else {
+    // Just "1.", nothing to add fractionally.
+  }
+  return operand_const(type_double, (Val){.d = final});
+}
+
 static Operand parse_offsetof(bool can_assign, Type* expected) {
   consume(TOK_LPAREN, "Expect '(' after offsetof.");
   Type type = parse_type();
@@ -2623,20 +2699,29 @@ static Operand parse_or(Operand left, bool can_assign, Type* expected) {
   if (!type_is_condition(left.type)) {
     errorf("Left-hand side of or cannot be type %s.", type_as_str(left.type));
   }
-  ir_ref lcond = ir_IF(operand_to_irref_imm(&left));
-  ir_IF_TRUE(lcond);
-  ir_ref if_true = ir_END();
-  ir_IF_FALSE(lcond);
 
+  SqBlock block_rval = sq_block_declare();
+  SqBlock block_false = sq_block_declare();
+  SqBlock block_done = sq_block_declare();
+
+  SqRef result = sq_i_alloc8(sq_const_int(type_size(type_bool)));
+  sq_i_storeb(sq_const_int(1), result);
+
+  sq_i_jnz(operand_to_sqref_imm(&left), block_done, block_rval);
+
+  sq_block_start(block_rval);
   Operand right = parse_precedence(PREC_OR, &type_bool);
   if (!type_is_condition(right.type)) {
     errorf("Right-hand side of or cannot be type %s.", type_as_str(right.type));
   }
-  ir_ref if_false = ir_END();
-  ir_ref rcond = operand_to_irref_imm(&right);
-  ir_MERGE_2(if_true, if_false);
-  ir_ref result = ir_PHI_2(IR_BOOL, ir_CONST_BOOL(true), rcond);
-  return operand_rvalue_imm(type_bool, result);
+  sq_i_jnz(operand_to_sqref_imm(&right), block_done, block_false);
+
+  sq_block_start(block_false);
+  sq_i_storeb(sq_const_int(0), result);
+
+  sq_block_start(block_done);
+
+  return operand_rvalue_imm(type_bool, sq_i_loadub(sq_type_word, result));
 }
 
 static Operand parse_range_literal(bool can_assign, Type* expected) {
@@ -2662,23 +2747,23 @@ static Operand parse_range_literal(bool can_assign, Type* expected) {
   }
   consume(TOK_RPAREN, "Expect ')' after range.");
 
-  ir_ref range = ir_ALLOCA(ir_CONST_U64(sizeof(RuntimeRange)));
-  ir_ref astart = range;
-  ir_ref astop = ir_ADD_A(range, ir_CONST_ADDR(sizeof(int64_t)));
-  ir_ref astep = ir_ADD_A(range, ir_CONST_ADDR(2 * sizeof(int64_t)));
+  SqRef range = sq_i_alloc8(sq_const_int(24));
+  SqRef astart = range;
+  SqRef astop = sq_i_add(sq_type_long, range, sq_const_int(8));
+  SqRef astep = sq_i_add(sq_type_long, range, sq_const_int(16));
   if (type_is_none(second.type)) {
     // range(0, first, 1)
-    ir_STORE(astart, ir_CONST_I64(0));
-    ir_STORE(astop, operand_to_irref_imm(&first));
-    ir_STORE(astep, ir_CONST_I64(1));
+    sq_i_storel(sq_const_int(0), astart);
+    sq_i_storel(operand_to_sqref_imm(&first), astop);
+    sq_i_storel(sq_const_int(1), astep);
   } else {
     // range(first, second, third || 1)
-    ir_STORE(astart, operand_to_irref_imm(&first));
-    ir_STORE(astop, operand_to_irref_imm(&second));
+    sq_i_storel(operand_to_sqref_imm(&first), astart);
+    sq_i_storel(operand_to_sqref_imm(&second), astop);
     if (type_is_none(third.type)) {
-      ir_STORE(astep, ir_CONST_I64(1));
+      sq_i_storel(sq_const_int(1), astep);
     } else {
-      ir_STORE(astep, operand_to_irref_imm(&third));
+      sq_i_storel(operand_to_sqref_imm(&third), astep);
     }
   }
   return operand_rvalue_local_addr(type_range, range);
@@ -2689,23 +2774,32 @@ static Operand parse_sizeof(bool can_assign, Type* expected) {
   return operand_null;
 }
 
-static ir_ref emit_string_obj(StrView str) {
-  // TODO: I think IR doesn't do much with data? So the str bytes can go into
-  // the intern table, and then the Str object probably needs a data segment
-  // that lives with the code segment that we shove all these into.
-  RuntimeStr* p = arena_push(parser.arena, sizeof(RuntimeStr) + str.size + 1, _Alignof(RuntimeStr));
-  uint8_t* strp = (uint8_t*)(((RuntimeStr*)p) + 1);
-  p->data = strp;
-  memcpy(strp, str.data, str.size);
-  p->length = str.size;
-  return ir_CONST_ADDR(p);
+static SqRef emit_string_obj(StrView str) {
+  ++parser.str_counter;
+
+  sq_data_start(sq_linkage_default,
+                cstr_copy(parser.arena, str_internf("strdat_%d", parser.str_counter)));
+  for (uint32_t i = 0; i < str.size; ++i) {
+    sq_data_byte(str.data[i]);
+  }
+  sq_data_byte(0);
+  SqSymbol string_data = sq_data_end();
+
+  sq_data_start(sq_linkage_default,
+                cstr_copy(parser.arena, str_internf("strobj_%d", parser.str_counter)));
+  sq_data_ref(string_data, 0);
+  sq_data_long(str.size);
+  SqSymbol string_obj = sq_data_end();
+
+  sq_itemctx_activate(parser.cur_scope->func_item_ctx);
+  return sq_ref_for_symbol(string_obj);
 }
 
 static Operand parse_string(bool can_assign, Type* expected) {
   StrView strview = get_strview_for_offsets(prev_offset(), cur_offset());
   StrView inside_quotes = {strview.data + 1, strview.size - 2};
   if (memchr(strview.data, '\\', strview.size) != NULL) {  // worthwhile?
-    // Mutates sourcse buffer!
+    // Mutates source buffer!
     uint32_t new_len = str_process_escapes((char*)inside_quotes.data, inside_quotes.size);
     if (new_len == 0) {
       error("Invalid string escape.");
@@ -2723,16 +2817,16 @@ static Operand parse_string_interpolate(bool can_assign, Type* expected) {
 }
 
 static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
-  ir_ref target_addr;
+  SqRef target_addr;
   Type subtype;
 
   if (match(TOK_COLON)) {
     if (check(TOK_RSQUARE)) {  // [:]
       // slice(left, NULL, NULL);
-        error("TODO: [:]");
+      error("TODO: [:]");
     } else {  // [:x]
       // slice(left, NULL, parse_expression())
-        error("TODO: [:x]");
+      error("TODO: [:x]");
     }
   } else {
     Operand subscript = parse_expression(NULL);
@@ -2758,13 +2852,15 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
           if (left_type_kind == TYPE_ARRAY) {
             ASSERT(op_is_local_addr(left));
             subtype = type_array_subtype(left.type);
-            target_addr = ir_ADD_A(left.ref, ir_MUL_U64(ir_CONST_U64(type_size(subtype)),
-                                                        operand_to_irref_imm(&subscript)));
+            target_addr = sq_i_add(sq_type_long, left.ref,
+                                   sq_i_mul(sq_type_long, sq_const_int(type_size(subtype)),
+                                            operand_to_sqref_imm(&subscript)));
           } else if (left_type_kind == TYPE_PTR) {
             subtype = type_ptr_subtype(left.type);
-            target_addr = ir_ADD_A(
-                op_is_local_addr(left) ? ir_VLOAD(IR_ADDR, left.ref) : left.ref,
-                ir_MUL_U64(ir_CONST_U64(type_size(subtype)), operand_to_irref_imm(&subscript)));
+            target_addr = sq_i_add(
+                sq_type_long, op_is_local_addr(left) ? sq_i_load(sq_type_long, left.ref) : left.ref,
+                sq_i_mul(sq_type_long, sq_const_int(type_size(subtype)),
+                         operand_to_sqref_imm(&subscript)));
           } else {
             error("TODO: subscript impl");
           }
@@ -2777,17 +2873,16 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
   }
   consume(TOK_RSQUARE, "Expect ']' to complete subscript.");
 
-  ASSERT(target_addr);
   ASSERT(!type_is_none(subtype));
   if (can_assign && match_assignment()) {
     Operand rhs = parse_expression(NULL); // TODO: do type here
     if (!convert_operand(&rhs, subtype)) {
       errorf("Cannot store type %s into %s.", type_as_str(rhs.type), type_as_str(left.type));
     }
-    ir_STORE(target_addr, operand_to_irref_imm(&rhs));
+    store_by_type_val_into(rhs.type, operand_to_sqref_imm(&rhs), target_addr);
     return operand_null;
   } else {
-    return operand_rvalue_imm(subtype, ir_LOAD(type_to_ir_type(subtype), target_addr));
+    return operand_rvalue_imm(subtype, sq_i_load(sqbasetype_from_type(subtype), target_addr));
   }
 }
 
@@ -2841,19 +2936,26 @@ static Operand parse_unary(bool can_assign, Type* expected) {
     if (op_is_const(expr)) {
       return operand_const(expr.type, eval_unary_op(op_kind, expr.type, expr.val));
     } else {
+      ASSERT(false && "todo");
+      return operand_null;
+#if 0
       return operand_rvalue_imm(expr.type,
                                 ir_NEG(type_to_ir_type(expr.type), operand_to_irref_imm(&expr)));
+#endif
     }
   } else if (op_kind == TOK_NOT) {
     // TODO: const eval
     if (type_is_condition(expr.type)) {
-      return operand_rvalue_imm(
-          expr.type, ir_NOT(type_to_ir_type(expr.type), operand_to_irref_imm(&expr)));
+      return operand_rvalue_imm(expr.type, sq_i_ceqw(sqbasetype_from_type(expr.type),
+                                                     operand_to_sqref_imm(&expr), sq_const_int(0)));
     } else {
       errorf("Type %s cannot be used in a boolean not.", type_as_str(expr.type));
     }
   } else if (op_kind == TOK_AMPERSAND) {
+#if 0
     return operand_rvalue_imm(type_ptr(expr.type), ir_VADDR(expr.ref));
+#endif
+    return operand_rvalue_imm(type_ptr(expr.type), expr.ref);
   } else {
     error("unary operator not implemented");
   }
@@ -2968,7 +3070,7 @@ static int create_upval(Scope* scope, Str name, Sym* sym) {
 
   ASSERT(scope >= &parser.scopes[1] && scope <= &parser.scopes[parser.num_scopes - 1]);
   Scope* parent_scope = scope - 1;
-  if (parent_scope->upval_base) {
+  if (parent_scope->upval_base.u) {
     Sym* parent_sym;
     ScopeResult parent_scope_result = scope_lookup_single(parent_scope, name, false, &parent_sym);
     switch (parent_scope_result) {
@@ -3029,9 +3131,9 @@ static Operand find_or_create_upval(Scope* scope, Str name, Sym* sym) {
   }
 
   Type type = sym->type;
-  return operand_rvalue_imm(
-      type, ir_LOAD(type_to_ir_type(type),
-                    ir_ADD_OFFSET(scope->upval_base, uvm->upvals[upval_index].offset)));
+  SqRef val = load_by_type_from(type, sq_i_add(sq_type_long, scope->upval_base,
+                                               sq_const_int(uvm->upvals[upval_index].offset)));
+  return operand_rvalue_imm(type, val);
 }
 
 static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
@@ -3039,13 +3141,13 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
     case SCOPE_RESULT_LOCAL:
       if (type_kind(sym->type) == TYPE_FUNC) {
         if (type_func_is_nested(sym->type)) {
-          return operand_bound_local_function(sym->type, ir_CONST_ADDR(sym->addr), sym->ref2);
+          return operand_bound_local_function(sym->type, sqref_for_sym(sym), sym->ref2);
         } else {
-          return operand_rvalue_global_addr(sym->type, ir_CONST_ADDR(sym->addr));
+          return operand_rvalue_global_addr(sym->type, sqref_for_sym(sym));
         }
       } else {
         if (sym->scope_decl == SSD_DECLARED_GLOBAL) {
-          return operand_lvalue_global_addr(sym->type, ir_CONST_ADDR(sym->addr));
+          return operand_lvalue_global_addr(sym->type, sqref_for_sym(sym));
         } else {
           return operand_lvalue_local(sym->type, sym->ref);
         }
@@ -3056,9 +3158,9 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
     case SCOPE_RESULT_GLOBAL: {
       if (type_kind(sym->type) == TYPE_FUNC) {
         // Doesn't make sense in our use for GLOBAL to be bound I don't think.
-        return operand_rvalue_global_addr(sym->type, ir_CONST_ADDR(sym->addr));
+        return operand_rvalue_global_addr(sym->type, sqref_for_sym(sym));
       } else {
-        return operand_lvalue_global_addr(sym->type, ir_CONST_ADDR(sym->addr));
+        return operand_lvalue_global_addr(sym->type, sqref_for_sym(sym));
       }
     }
     case SCOPE_RESULT_UPVALUE: {
@@ -3089,7 +3191,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
           errorf("Cannot assign type %s to type %s.", type_as_str(op.type), type_as_str(sym->type));
         }
         if (eq_kind == TOK_EQ) {
-          ir_VSTORE(sym->ref, operand_to_irref_imm(&op));
+          store_by_type_val_into(op.type, operand_to_sqref_imm(&op), sym->ref);
           return operand_null;
         } else {
           error_offset(eq_offset, "Unhandled assignment type.");
@@ -3132,15 +3234,17 @@ static Operand parse_variable(bool can_assign, Type* expected) {
           ASSERT(!parser.cur_scope->is_function);
           ASSERT(eq_kind == TOK_EQ);
           if (scope_result == SCOPE_RESULT_UNDEFINED) {
-            // Global variable declaration without a type. TODO: need to be more
-            // careful about const eval vs in-function eval as this can easily
-            // crash if it starts to emit ir_INSTRs on the RHS.
+            // Global variable declaration without a type.
             Operand op = const_expression();
             if (!op_is_const(op)) {
               error("Global initializers must be constants.");
             }
             make_global(SYM_VAR, target, op.type, op.val);
             return operand_null;
+#if 0
+            Sym* new_global = make_global(SYM_VAR, target, op.type, op.val);
+            return operand_lvalue_global_addr(op.type, sq_ref_for_symbol(new_global->global));
+#endif
           } else {
             ASSERT(scope_result == SCOPE_RESULT_GLOBAL);
             error("Cannot re-initialize an existing global.");
@@ -3206,7 +3310,7 @@ static Rule rules[NUM_TOKEN_KINDS] = {
     {NULL, parse_binary, PREC_EQUALITY},                        // TOK_EQEQ
     {NULL, NULL, PREC_NONE},                                    // TOK_ERROR
     {parse_bool_literal, NULL, PREC_NONE},                      // TOK_FALSE
-    {parse_float_literal, NULL, PREC_NONE},                     // TOK_FLOAT_LITERAL
+    {NULL, NULL, PREC_NONE},                                    // TOK_FLOAT_LITERAL
     {NULL, NULL, PREC_NONE},                                    // TOK_FOR
     {NULL, NULL, PREC_NONE},                                    // TOK_FOREIGN
     {NULL, parse_binary, PREC_COMPARISON},                      // TOK_GEQ
@@ -3219,7 +3323,7 @@ static Rule rules[NUM_TOKEN_KINDS] = {
     {NULL, NULL, PREC_NONE},                                    // TOK_IF
     {NULL, NULL, PREC_NONE},                                    // TOK_IMPORT
     {NULL, parse_in_or_not_in, PREC_COMPARISON},                // TOK_IN
-    {parse_int_literal, NULL, PREC_NONE},                       // TOK_INT_LITERAL
+    {parse_number, NULL, PREC_NONE},                            // TOK_INT_LITERAL
     {parse_dict_literal, NULL, PREC_NONE},                      // TOK_LBRACE
     {parse_len, NULL, PREC_NONE},                               // TOK_LEN
     {NULL, parse_binary, PREC_COMPARISON},                      // TOK_LEQ
@@ -3340,37 +3444,36 @@ static void if_statement(void) {
   do {
     Operand opcond = if_statement_cond_helper();
     ASSERT(type_kind(opcond.type) == TYPE_BOOL && "todo, other types");
-    ir_ref cond = ir_IF(operand_to_irref_imm(&opcond));
-    ir_IF_TRUE(cond);
+
+    SqBlock true_block = sq_block_declare();
+    SqBlock false_block = sq_block_declare();
+    SqBlock after_block = sq_block_declare();
+
+    sq_i_jnz(operand_to_sqref_imm(&opcond), true_block, false_block);
+
+    sq_block_start(true_block);
     LastStatementType lst = parse_block();
-    ir_ref iftrue = ir_END();
-    if (lst == LST_RETURN_VALUE || lst == LST_RETURN_VOID) {
-      ir_IF_FALSE(cond);
-      // Push that we're in the FALSE block, with END of iftrue
-      // When we get to the end of the outer block, END this false
-      // and the MERGE iftrue, iffalse
-      ASSERT(parser.cur_scope->num_pending_conds < COUNTOFI(parser.cur_scope->pending_conds));
-      parser.cur_scope->pending_conds[parser.cur_scope->num_pending_conds++] =
-          (PendingCond){iftrue};
+    if (lst != LST_NON_RETURN) {
+      sq_i_jmp(parser.cur_scope->return_block);
     } else {
-      bool no_more = false;
-      ir_IF_FALSE(cond);
-      if (match(TOK_ELSE)) {
-        consume(TOK_COLON, "Expect ':' to start else.");
-        consume(TOK_NEWLINE, "Expect newline after ':' to start else.");
-        consume(TOK_INDENT, "Expect indent to start else.");
-        LastStatementType lst = parse_block();
-        if (lst == LST_RETURN_VALUE || lst == LST_RETURN_VOID) {
-          ASSERT(false && "todo: return in else");
-        }
-        no_more = true;
-      }
-      ir_ref otherwise = ir_END();
-      ir_MERGE_2(iftrue, otherwise);
-      if (no_more) {
-        break;
-      }
+      sq_i_jmp(after_block);
     }
+
+    sq_block_start(false_block);
+    if (match(TOK_ELSE)) {
+      consume(TOK_COLON, "Expect ':' to start else.");
+      consume(TOK_NEWLINE, "Expect newline after ':' to start else.");
+      consume(TOK_INDENT, "Expect indent to start else.");
+      LastStatementType lst = parse_block();
+      if (lst != LST_NON_RETURN) {
+        sq_i_jmp(parser.cur_scope->return_block);
+      }
+      sq_block_start(after_block);
+      break;  // No more elifs.
+    } else {
+      sq_block_start(after_block);
+    }
+
   } while (match(TOK_ELIF));
 }
 
@@ -3392,27 +3495,40 @@ static void for_statement(void) {
     Operand expr = parse_expression(NULL);
     if (type_eq(expr.type, type_range)) {
       ASSERT(op_is_local_addr(expr));
-      ir_ref astart = expr.ref;
-      ir_ref astop = ir_ADD_A(expr.ref, ir_CONST_ADDR(sizeof(int64_t)));
-      ir_ref astep = ir_ADD_A(expr.ref, ir_CONST_ADDR(2 * sizeof(int64_t)));
+      SqRef astart = expr.ref;
+      SqRef astop = sq_i_add(sq_type_long, expr.ref, sq_const_int(8));
+      SqRef astep = sq_i_add(sq_type_long, expr.ref, sq_const_int(16));
 
-      ir_ref start = ir_LOAD_I64(astart);
-      ir_ref stop = ir_LOAD_I64(astop);
-      ir_ref step = ir_LOAD_I64(astep);
+      SqRef start = sq_i_load(sq_type_long, astart);
+      SqRef stop = sq_i_load(sq_type_long, astop);
+      SqRef step = sq_i_load(sq_type_long, astep);
 
-      ir_ref is_neg = ir_LT(step, ir_CONST_I64(0));
+      SqRef is_neg = sq_i_csltl(sq_type_long, step, sq_const_int(0));
 
       // TODO: This probably needs work if the Range isn't trivial, start
       // should be using the Operand expr or something maybe
       Sym* it = make_local_and_alloc(SYM_VAR, it_name, type_i64, NULL);
-      ir_VSTORE(it->ref, start);
+      sq_i_storel(start, it->ref);
 
-      ir_ref loop = ir_LOOP_BEGIN(ir_END());
+      SqBlock loop = sq_block_declare_and_start();
 
-      ir_ref cur = ir_VLOAD(IR_I64, it->ref);
+      SqRef cur = sq_i_load(sq_type_long, it->ref);
+
+      SqBlock block_neg_step = sq_block_declare();
+      SqBlock block_pos_step = sq_block_declare();
+      SqBlock block_cont = sq_block_declare();
+      SqBlock block_after = sq_block_declare();
+
       // (is_neg ? cur > stop : cur < stop)
-      ir_ref cond = ir_IF(ir_COND(IR_BOOL, is_neg, ir_GT(cur, stop), ir_LT(cur, stop)));
-      ir_IF_TRUE(cond);
+      sq_i_jnz(is_neg, block_neg_step, block_pos_step);
+
+      sq_block_start(block_neg_step);
+      sq_i_jnz(sq_i_csgtl(sq_type_long, cur, stop), block_cont, block_after);
+
+      sq_block_start(block_pos_step);
+      sq_i_jnz(sq_i_csltl(sq_type_long, cur, stop), block_cont, block_after);
+
+      sq_block_start(block_cont);
 
       consume(TOK_COLON, "Expect ':' to start for.");
       consume(TOK_NEWLINE, "Expect newline after ':' to start for.");
@@ -3420,12 +3536,13 @@ static void for_statement(void) {
       LastStatementType lst = parse_block();
       ASSERT(lst == LST_NON_RETURN && "todo; return from loop");
 
-      ir_ref itval = ir_VLOAD(IR_I64, it->ref);
-      ir_ref inc = ir_ADD_I64(itval, step);
-      ir_VSTORE(it->ref, inc);
+      SqRef it_val = sq_i_load(sq_type_long, it->ref);
+      SqRef inc = sq_i_add(sq_type_long, it_val, step);
+      sq_i_storel(inc, it->ref);
 
-      ir_MERGE_SET_OP(loop, 2, ir_LOOP_END());
-      ir_IF_FALSE(cond);
+      sq_i_jmp(loop);
+
+      sq_block_start(block_after);
     } else {
       errorf("Unhandled for/in over type %s.", type_as_str(expr.type));
     }
@@ -3438,16 +3555,19 @@ static void print_statement(void) {
   // If __repr__ exists for the type, call it, and then use print_str.
   Sym* sym = lookup_memfn(val.type, parser.static_str_repr);
   if (sym) {
+    ASSERT(false && "todo");
+#if 0
     ir_ref str = ir_CALL_1(IR_I32, ir_CONST_ADDR(sym->addr), addr_for_operand(&val));
     ir_ref addr = ir_CONST_ADDR(print_i32_impl);
     ir_CALL_1(IR_VOID, addr, str);
+#endif
   } else {
     if (type_eq(val.type, type_str)) {
       print_str(&val);
-    } else if (type_eq(val.type, type_range)) {
-      print_range(&val);
     } else if (type_eq(val.type, type_bool)) {
       print_bool(&val);
+    } else if (type_eq(val.type, type_range)) {
+      print_range(&val);
     } else if (type_eq(val.type, type_float)) {
       print_float(&val);
     } else if (type_eq(val.type, type_double)) {
@@ -3466,12 +3586,6 @@ static LastStatementType parse_block(void) {
   while (!check(TOK_DEDENT)) {
     lst = parse_statement(/*toplevel=*/false);
     skip_newlines();
-  }
-
-  if (parser.cur_scope->num_pending_conds) {
-    PendingCond cond = parser.cur_scope->pending_conds[--parser.cur_scope->num_pending_conds];
-    ir_ref other = ir_END();
-    ir_MERGE_2(cond.iftrue, other);
   }
 
   consume(TOK_DEDENT, "Expect end of block.");
@@ -3537,8 +3651,6 @@ static void foreign_statement(void) {
       type_function(param_types, num_params, return_type, TFF_FOREIGN);
   Sym* funcsym = sym_new(SYM_FUNC, name, functype);
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
-
-  funcsym->addr = parser.get_extern((StrView){str_raw_ptr(name), str_len(name)});
 }
 
 static void on_statement(void) {
@@ -3624,6 +3736,8 @@ static void struct_statement() {
   consume(TOK_NEWLINE, "Expect newline to start struct.");
   consume(TOK_INDENT, "Expect indented struct body.");
 
+  sq_type_struct_start(cstr_copy(parser.arena, name), 0);
+
   Str field_names[MAX_STRUCT_FIELDS];
   Type field_types[MAX_STRUCT_FIELDS];
   Operand field_initializers[MAX_STRUCT_FIELDS];
@@ -3639,6 +3753,8 @@ static void struct_statement() {
       error("Expect struct field type.");
     }
     field_types[num_fields] = field_type;
+
+    sq_type_add_field(type_to_sqtype(field_type));
 
     Str field_name = parse_name("Expect struct field name.");
     for (uint32_t i = 0; i < num_fields; ++i) {
@@ -3664,8 +3780,15 @@ static void struct_statement() {
   }
   consume(TOK_DEDENT, "Expecting dedent after struct definition.");
 
+  SqType sqtype = sq_type_struct_end();
+
   Type strukt = type_new_struct(name, num_fields, field_names, field_types, have_initializers);
+  type_struct_set_sqtype(strukt, sqtype);
+
   if (have_initializers) {
+    // Because we need to zero init fields, build this as if it was jitting into
+    // a memory structure, and then use byte emission to build the data object.
+
     uint8_t* blob = arena_push(parser.arena, type_size(strukt), type_align(strukt));
     memset(blob, 0, type_size(strukt));
     for (uint32_t i = 0; i < num_fields; ++i) {
@@ -3684,7 +3807,16 @@ static void struct_statement() {
                type_size(field_type));
       }
     }
-    type_struct_set_initializer_blob(strukt, blob);
+
+    sq_data_start(sq_linkage_default, cstr_copy(parser.arena, name));  // "_init"+name?
+    for (uint32_t i = 0; i < type_size(strukt); ++i) {
+      sq_data_byte(blob[i]);
+    }
+    SqSymbol init_sym = sq_data_end();
+
+    type_struct_set_initializer_symbol(strukt, init_sym);
+
+    ASSERT(!parser.cur_scope->is_function);
   }
   Sym* new = sym_new(SYM_TYPE, name, strukt);
   new->scope_decl = SSD_DECLARED_GLOBAL;
@@ -3742,7 +3874,7 @@ static LastStatementType return_statement(void) {
       errorf("Cannot convert type %s to expected return type %s.", type_as_str(op.type),
              type_as_str(func_ret));
     }
-    ir_VSTORE(parser.cur_scope->return_slot->ref, operand_to_irref_imm(&op));
+    store_by_type_val_into(op.type, operand_to_sqref_imm(&op), parser.cur_scope->return_slot->ref);
     return LST_RETURN_VALUE;
   } else {
     consume(TOK_NEWLINE, "Expected newline after return in function with no return type.");
@@ -3760,7 +3892,7 @@ static void global_statement(void) {
   }
   Sym* new = sym_new(SYM_VAR, name, sym->type);
   new->scope_decl = SSD_DECLARED_GLOBAL;
-  new->addr = sym->addr;
+  new->global = sym->global;
 }
 
 static LastStatementType parse_statement(bool toplevel) {
@@ -3840,18 +3972,21 @@ static LastStatementType parse_statement(bool toplevel) {
   return lst;
 }
 
-static void* always_fail_get_extern(StrView name) {
-  errorf("Unresolved external '%.*s'.", name.size, name.data);
+static int sqbe_callback_output_function(const char* fmt, va_list ap) {
+  const char* prefix = "SQBE INTERNAL ERROR: ";
+  size_t n = 1 + vsnprintf(NULL, 0, fmt, ap) + strlen(prefix);
+  char* str = malloc(n);  // just a simple malloc because we're going to base_exit() momentarily.
+  strcpy(str, prefix);
+  vsnprintf(str + strlen(prefix), n, fmt, ap);
+  error(str);
 }
 
-static void* parse_impl(Arena* main_arena,
-                   Arena* temp_arena,
-                   const char* filename,
-                   ReadFileResult file,
-                   void* (*get_extern)(StrView),
-                   int verbose,
-                   bool ir_only,
-                   int opt_level) {
+static void parse_impl(Arena* main_arena,
+                       Arena* temp_arena,
+                       const char* filename,
+                       ReadFileResult file,
+                       int verbose,
+                       FILE* out_file) {
   type_init(main_arena);
 
   parser.arena = main_arena;
@@ -3867,24 +4002,67 @@ static void* parse_impl(Arena* main_arena,
   parser.indent_levels[0] = 0;
   parser.num_indents = 1;
   parser.num_buffered_tokens = 0;
-  parser.main_func_entry = NULL;
-  parser.get_extern = get_extern ? get_extern : always_fail_get_extern;
   parser.verbose = verbose;
-  parser.ir_only = ir_only;
-  parser.opt_level = opt_level;
   parser.static_str_main = str_intern_len("main", 4);
   parser.static_str_repr = str_intern_len("__repr__", 8);
   parser.static_str_ret = str_intern_len("$ret", 4);
   parser.static_str_up = str_intern_len("$up", 3);
+  parser.str_counter = 0;
 
-#if ENABLE_CODE_GEN
-  size_t code_buffer_size = MiB(512);
-  parser.code_buffer.start = ir_mem_mmap(code_buffer_size);
-  ASSERT(parser.code_buffer.start);
-  ir_mem_unprotect(parser.code_buffer.start, code_buffer_size);
-  parser.code_buffer.end = (uint8_t*)parser.code_buffer.start + code_buffer_size;
-  parser.code_buffer.pos = parser.code_buffer.start;
-#endif
+  SqConfiguration config = SQ_CONFIGURATION_DEFAULT;
+  config.output = out_file;
+  config.output_function = sqbe_callback_output_function;
+  if (verbose) {
+    config.debug_flags = "P";
+    // config.debug_flags = "PMNCFAILSRT";
+  }
+  sq_init(&config);
+
+  sq_data_start(sq_linkage_default, "i32_print_fmt");
+  sq_data_string("%d\n");
+  sq_data_byte(0);
+  parser.i32_print_fmt = sq_data_end();
+
+  sq_data_start(sq_linkage_default, "float_print_fmt");
+  sq_data_string("%f\n");
+  sq_data_byte(0);
+  parser.float_print_fmt = sq_data_end();
+
+  sq_data_start(sq_linkage_default, "str_print_fmt");
+  sq_data_string("%.*s\n");
+  sq_data_byte(0);
+  parser.str_print_fmt = sq_data_end();
+
+  sq_data_start(sq_linkage_default, "range2_print_fmt");
+  sq_data_string("range(%lld, %lld)\n");
+  sq_data_byte(0);
+  parser.range2_print_fmt = sq_data_end();
+
+  sq_data_start(sq_linkage_default, "range3_print_fmt");
+  sq_data_string("range(%lld, %lld, %lld)\n");
+  sq_data_byte(0);
+  parser.range3_print_fmt = sq_data_end();
+
+  sq_data_start(sq_linkage_default, "str_true");
+  sq_data_string("true");
+  sq_data_byte(0);
+  parser.str_true = sq_data_end();
+
+  sq_data_start(sq_linkage_default, "str_false");
+  sq_data_string("false");
+  sq_data_byte(0);
+  parser.str_false = sq_data_end();
+
+  sq_type_struct_start("str", 8);
+  sq_type_add_field(sq_type_long); // data
+  sq_type_add_field(sq_type_long); // len
+  parser.sq_type_str = sq_type_struct_end();
+
+  sq_type_struct_start("range", 8);
+  sq_type_add_field(sq_type_long); // start
+  sq_type_add_field(sq_type_long); // stop
+  sq_type_add_field(sq_type_long); // step
+  parser.sq_type_range = sq_type_struct_end();
 
   enter_scope(/*is_module=*/true, /*is_function=*/false, NULL);
 
@@ -3901,9 +4079,5 @@ static void* parse_impl(Arena* main_arena,
 
   leave_scope();
 
-#if ENABLE_CODE_GEN
-  ir_mem_protect(parser.code_buffer.start, code_buffer_size);
-#endif
-
-  return parser.main_func_entry;
+  sq_shutdown();
 }

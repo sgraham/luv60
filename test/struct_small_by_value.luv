@@ -1,5 +1,4 @@
-# DISABLED_MAC aggregates
-# RUN: {self} --internal-register-test-helpers
+# CLANGRUN: CLANG_BIN -g OUT_DIR/{self}.s test/test_helper_struct.c -o OUT_DIR/{self}.exe
 # OUT: 123
 # OUT: 3.140000
 # OUT: ls.x: 10
@@ -34,12 +33,12 @@ def int main():
     print ret0.x
     print ret0.y
 
-    to_pass0 = LittleStuff(10, 2`718281)
+    to_pass0 = LittleStuff(10, 2.718281)
     testhelper_takes_littlestuff(to_pass0)
 
-    l0 = LittleStuff(111, 222`5)
+    l0 = LittleStuff(111, 222.5)
     b1 = Stuff4(20000, 2000, 200, 20)
-    l2 = LittleStuff(222, 30`4)
+    l2 = LittleStuff(222, 30.4)
     res = testhelper_takes_and_returns_little_and_big(l0, b1, l2)
     print res.x
     print res.y

@@ -1,4 +1,3 @@
-# RUN: {self} --main-rc
 # RET: 21
 def int main():
     return 84 / 4

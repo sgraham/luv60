@@ -9,18 +9,7 @@ ROOT_DIR = os.path.normpath(
 )
 
 COMMON_FILELIST = [
-    "../third_party/ir/ir.c",
-    "../third_party/ir/ir_cfg.c",
-    "../third_party/ir/ir_check.c",
-    "../third_party/ir/ir_dump.c",
-    "../third_party/ir/ir_emit.c",
-    "../third_party/ir/ir_gcm.c",
-    "../third_party/ir/ir_mem2ssa.c",
-    "../third_party/ir/ir_patch.c",
-    "../third_party/ir/ir_ra.c",
-    "../third_party/ir/ir_save.c",
-    "../third_party/ir/ir_sccp.c",
-    "../third_party/ir/ir_strtab.c",
+    "../third_party/sqbe/sqbe.c",
     "arena.c",
     "base_mac.c",
     "base_win.c",
@@ -34,10 +23,6 @@ COMMON_FILELIST = [
 
 LUVC_FILELIST = [
     "luvc_main.c",
-]
-
-GEN_IR_FOLD_HASH_FILELIST = [
-    "../third_party/ir/gen_ir_fold_hash.c",
 ]
 
 UNITTEST_FILELIST = [
@@ -92,16 +77,15 @@ CONFIGS = {
         },
     },
     "m": {
-        # Temporarily using Rosetta until aarch64 aggregate passing can be resolved.
         "d": {
-            "COMPILE": f"{CLANG} -MMD -MF $out.d -arch x86_64 -O0 -g {DEBUG_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
-            "LINK": CLANG + " -arch x86_64 -g $in -o $out",
-            "ML": CLANG + " -arch x86_64 $in -o $out",
+            "COMPILE": f"{CLANG} -MMD -MF $out.d -O0 -g {DEBUG_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            "LINK": CLANG + " -g $in -o $out",
+            "ML": CLANG + " $in -o $out",
         },
         "r": {
-            "COMPILE": f"{CLANG} -MMD -MF $out.d -arch x86_64 -flto -O3 -g {RELEASE_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
-            "LINK": CLANG + " -arch x86_64 -g $in -o $out",
-            "ML": CLANG + " -arch x86_64 $in -o $out",
+            "COMPILE": f"{CLANG} -MMD -MF $out.d -flto -O3 -g {RELEASE_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            "LINK": CLANG + " -g $in -o $out",
+            "ML": CLANG + " $in -o $out",
         },
         "__": {
             "exe_ext": "",
@@ -118,32 +102,46 @@ def get_tests():
     )
     for test in files:
         test = test.replace("\\", "/")
-        run = "{self}"
+        crun = "LUVC_BIN {self} -o OUT_DIR/{self}.s"
+        cret = "0"
+        cerr = ""
+        clangrun = "CLANG_BIN -g OUT_DIR/{self}.s -o OUT_DIR/{self}.exe"
+        run = "OUT_DIR/{self}.exe"
         ret = "0"
         out = ""
-        err = ""
         disabled = []
+        crun_prefix = "# CRUN: "
+        cret_prefix = "# CRET: "
+        cerr_prefix = "# CERR: "
         run_prefix = "# RUN: "
         ret_prefix = "# RET: "
-        err_prefix = "# ERR: "
         out_prefix = "# OUT: "
         disabled_linux_prefix = "# DISABLED_LINUX"
         disabled_win_prefix = "# DISABLED_WIN"
         disabled_mac_prefix = "# DISABLED_MAC"
         disabled_prefix = "# DISABLED"
         imported_prefix = "# IMPORTED"
+        clangrun_prefix = "# CLANGRUN: "
         ret_set = False
+        cret_set = False
         with open(test, "r", encoding="utf-8") as f:
             for l in f.readlines():
                 if l.startswith(run_prefix):
                     run = l[len(run_prefix) :].rstrip()
+                elif l.startswith(crun_prefix):
+                    crun = l[len(crun_prefix) :].rstrip()
                 elif l.startswith(ret_prefix):
                     ret = l[len(ret_prefix) :].rstrip()
                     ret_set = True
-                elif l.startswith(err_prefix):
-                    err += l[len(err_prefix) :].rstrip() + "\n"
+                elif l.startswith(cret_prefix):
+                    cret = l[len(cret_prefix) :].rstrip()
+                    cret_set = True
+                elif l.startswith(cerr_prefix):
+                    cerr += l[len(cerr_prefix) :].rstrip() + "\n"
                 elif l.startswith(out_prefix):
                     out += l[len(out_prefix) :].rstrip() + "\n"
+                elif l.startswith(clangrun_prefix):
+                    clangrun = l[len(clangrun_prefix) :].rstrip()
                 elif l.startswith(disabled_linux_prefix):
                     disabled.append('linux')
                 elif l.startswith(disabled_win_prefix):
@@ -158,14 +156,17 @@ def get_tests():
                 spaces = len(test) * " "
                 return t.replace("{ssss}", spaces)
 
-            if not disabled and not ret_set and not out and not err:
+            if not disabled and not cret_set and not ret_set and not out and not cerr:
                 print("Nothing being tested in %s?" % test)
                 sys.exit(1)
             tests[test] = {
                 "run": sub(run),
+                "crun": sub(crun),
+                "cret": int(cret),
                 "ret": int(ret),
                 "out": sub(out),
-                "err": sub(err),
+                "cerr": sub(cerr),
+                "clangrun": sub(clangrun),
                 "disabled": disabled
             }
 
@@ -182,7 +183,6 @@ def generate(platform, config, settings, cmdlines, tests):
 
     luvcexe = "luvc" + exe_ext
     miniluaexe = "minilua" + exe_ext
-    gen_ir_fold_hash_exe = "gen_ir_fold_hash" + exe_ext
 
     with open(os.path.join(root_dir, "build.ninja"), "w", newline="\n") as f:
         f.write("src = ../../src\n")
@@ -202,36 +202,9 @@ def generate(platform, config, settings, cmdlines, tests):
         f.write("  command = " + cmdlines["ML"] + "\n")
         f.write("  description = CC $out\n")
         f.write("\n")
-        f.write("rule dynasm_w\n")
-        f.write(
-            "  command = ./minilua"
-            + exe_ext
-            + " $src/../third_party/ir/dynasm/dynasm.lua -D WIN=1 -D X64=1 -D X64WIN=1 -o $out $in\n"
-        )
-        f.write("  description = DYNASM $out\n")
-        f.write("\n")
-        f.write("rule dynasm\n")
-        f.write(
-            "  command = ./minilua $src/../third_party/ir/dynasm/dynasm.lua -o $out $in\n"
-        )
-        f.write("  description = DYNASM $out\n")
-        f.write("\n")
         f.write("rule ripsnip\n")
         f.write("  command = %s $src/clang_rip.py\n" % sys.executable)
         f.write("  description = SNIPRIP $out\n")
-        f.write("\n")
-        f.write("rule gen_ir_fold_hash\n")
-        if platform == "w":
-            f.write(
-                "  command = cmd /c %s < $src/../third_party/ir/ir_fold.h > ir_fold_hash.h\n"
-                % gen_ir_fold_hash_exe
-            )
-        else:
-            f.write(
-                "  command = ./%s < $src/../third_party/ir/ir_fold.h > ir_fold_hash.h\n"
-                % gen_ir_fold_hash_exe
-            )
-        f.write("  description = GEN_IR_FOLD_HASH\n")
         f.write("\n")
         f.write("rule gendumbbench\n")
         f.write("  command = %s $src/gen_dumbbench.py\n" % sys.executable)
@@ -264,12 +237,6 @@ def generate(platform, config, settings, cmdlines, tests):
         def getobj(src):
             return os.path.splitext(src)[0].replace("..", "__") + obj_ext
 
-        def get_extra(src):
-            if platform == "w":
-                return " /FI $src/force_include.h"
-            else:
-                return " -include $src/force_include.h"
-
         common_objs = []
         for src in COMMON_FILELIST:
             if sys.platform == "darwin" and "_win." in src:
@@ -281,16 +248,7 @@ def generate(platform, config, settings, cmdlines, tests):
             extra_deps = ""
             extra_deps = " | snippets.c" if src == "gen.c" else extra_deps
             extra_deps = " | categorizer.c" if src == "token.c" else extra_deps
-            extra_deps = (
-                " | ir_emit_x86.h ir_emit_aarch64.h"
-                if src == "../third_party/ir/ir_emit.c"
-                else extra_deps
-            )
-            extra_deps = (
-                " | ir_fold_hash.h" if src == "../third_party/ir/ir.c" else extra_deps
-            )
             f.write("build %s: cc $src/%s%s\n" % (obj, src, extra_deps))
-            f.write("  extra=%s\n" % get_extra(src))
 
         if config == "p":
             tracy_cpp = "../third_party/tracy/public/TracyClient.cpp"
@@ -306,20 +264,11 @@ def generate(platform, config, settings, cmdlines, tests):
             obj = getobj(src)
             luvc_objs.append(obj)
             f.write("build %s: cc $src/%s\n" % (obj, src))
-            f.write("  extra=%s\n" % get_extra(src))
 
         unittest_objs = []
         for src in UNITTEST_FILELIST:
             obj = getobj(src)
             unittest_objs.append(obj)
-            f.write("build %s: cc $src/%s\n" % (obj, src))
-            f.write("  extra=%s\n" % get_extra(src))
-
-        gen_ir_fold_hash_objs = []
-        for src in GEN_IR_FOLD_HASH_FILELIST:
-            obj = getobj(src)
-            gen_ir_fold_hash_objs.append(obj)
-            # No force_include.h here.
             f.write("build %s: cc $src/%s\n" % (obj, src))
 
         lexbench_objs = []
@@ -329,9 +278,9 @@ def generate(platform, config, settings, cmdlines, tests):
             f.write("build %s: cc $src/%s\n" % (obj, src))
             fn = os.path.join(root_dir, "dumbbench.luv").replace("\\", "/")
             if sys.platform == "win32":
-                f.write('  extra=-DFILENAME="""%s""" %s\n' % (fn, get_extra(src)))
+                f.write('  extra=-DFILENAME="""%s"""\n' % fn)
             else:
-                f.write('  extra=-DFILENAME=\\"%s\\" %s\n' % (fn, get_extra(src)))
+                f.write('  extra=-DFILENAME=\\"%s\\"\n' % fn)
 
         alltests = []
         for testf, cmds in tests.items():
@@ -343,24 +292,6 @@ def generate(platform, config, settings, cmdlines, tests):
             alltests.append(testf)
 
         f.write("build %s: link %s\n" % (luvcexe, " ".join(common_objs + luvc_objs)))
-        f.write(
-            "build %s: link %s\n"
-            % (gen_ir_fold_hash_exe, " ".join(gen_ir_fold_hash_objs))
-        )
-        f.write(
-            "build %s: mlbuild $src/../third_party/ir/dynasm/minilua.c\n" % miniluaexe
-        )
-
-        f.write(
-            "build ir_emit_x86.h: dynasm_w $src/../third_party/ir/ir_x86.dasc | %s\n"
-            % miniluaexe
-        )
-        f.write(
-            "build ir_emit_aarch64.h: dynasm $src/../third_party/ir/ir_aarch64.dasc | %s\n"
-            % miniluaexe
-        )
-
-        f.write("build ir_fold_hash.h: gen_ir_fold_hash | %s\n" % gen_ir_fold_hash_exe)
 
         f.write(
             "build %s: link %s\n"

@@ -1,5 +1,4 @@
-# DISABLED_MAC aggregates
-# RUN: {self} --internal-register-test-helpers
+# CLANGRUN: CLANG_BIN -g OUT_DIR/{self}.s test/test_helper_struct.c -o OUT_DIR/{self}.exe
 # OUT: 99
 # OUT: 97
 # OUT: 87

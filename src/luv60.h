@@ -3,6 +3,8 @@
 #include "base_config.h"
 #include "base_core.h"
 
+#include "../third_party/sqbe/sqbe.h"
+
 #if OS_WINDOWS && ARCH_X64
 #include <intrin.h>
 #endif
@@ -33,8 +35,6 @@ void arena_destroy(Arena* arena);
 void* arena_push(Arena* arena, uint64_t size, uint64_t align);
 uint64_t arena_pos(Arena* arena);
 void arena_pop_to(Arena* arena, uint64_t pos);
-
-extern Arena* arena_ir;
 
 
 // base_{win,mac}.c
@@ -214,7 +214,8 @@ Type type_new_struct(Str name,
                      Str* field_names,
                      Type* field_types,
                      bool has_initializer);
-void type_struct_set_initializer_blob(Type type, void* blob);
+void type_struct_set_initializer_symbol(Type type, SqSymbol init_sym);
+void type_struct_set_sqtype(Type type, SqType sqtype);
 
 static inline FORCE_INLINE bool type_is_none(Type a) { return a.u == 0; }
 static inline FORCE_INLINE bool type_eq(Type a, Type b) { return a.u == b.u; }
@@ -244,7 +245,8 @@ uint32_t type_array_count(Type type);
 uint32_t type_struct_num_fields(Type type);
 Str type_struct_decl_name(Type type);
 bool type_struct_has_initializer(Type type);
-void* type_struct_initializer_blob(Type type);
+SqSymbol type_struct_initializer_sym(Type type);
+SqType type_struct_sqtype(Type type);
 Str type_struct_field_name(Type type, uint32_t i);
 Type type_struct_field_type(Type type, uint32_t i);
 uint32_t type_struct_field_offset(Type type, uint32_t i);
@@ -254,19 +256,14 @@ bool type_struct_find_field_by_name(Type type, Str name, Type* out_type, uint32_
 
 // parse.c
 
-void* parse_code_gen(Arena* arena,
+void parse_code_gen(Arena* arena,
                      Arena* temp_arena,
                      const char* filename,
                      ReadFileResult file,
-                     void* (*get_extern)(StrView),
                      int verbose,
-                     bool ir_only,
-                     int opt_level);
-void* parse_syntax_check(Arena* arena,
-                         Arena* temp_arena,
-                         const char* filename,
-                         ReadFileResult file,
-                         void* (*get_extern)(StrView),
-                         int verbose,
-                         bool ir_only,
-                         int opt_level);
+                     FILE* out_file);
+void parse_syntax_check(Arena* arena,
+                        Arena* temp_arena,
+                        const char* filename,
+                        ReadFileResult file,
+                        int verbose);

@@ -1,6 +1,6 @@
-# RET: 1
-# ERR: {self}:6:13:    print x["stuff"]
-# ERR: {ssss}                  ^ error: Cannot subscript using type str.
+# CRET: 1
+# CERR: {self}:6:13:    print x["stuff"]
+# CERR: {ssss}                  ^ error: Cannot subscript using type str.
 def int main():
     x = [1,2,3]
     print x["stuff"]

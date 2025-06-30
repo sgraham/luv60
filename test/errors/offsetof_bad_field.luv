@@ -1,6 +1,6 @@
-# RET: 1
-# ERR: {self}:9:27:    print offsetof(Stuff, q)
-# ERR: {ssss}                                ^ error: 'q' is not a field of type Stuff.
+# CRET: 1
+# CERR: {self}:9:27:    print offsetof(Stuff, q)
+# CERR: {ssss}                                ^ error: 'q' is not a field of type Stuff.
 struct Stuff:
     int x
     int y

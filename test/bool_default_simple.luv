@@ -1,0 +1,7 @@
+# OUT: false
+# OUT: true
+def int main():
+    bool x
+    print x
+    print not x
+    return 0

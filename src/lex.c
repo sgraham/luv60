@@ -39,7 +39,7 @@ typedef struct Simd64 {
 typedef struct Classes {
   uint64_t space;
   uint64_t punct;
-  uint64_t backtick;
+  //uint64_t digit;
 } Classes;
 
 #  define EQ_CHAR(name, ch)                                                                        \
@@ -76,8 +76,8 @@ EQ_CHAR(bang, '!')
       return backslash_bitmask;                                                    \
     }
 
-HAS_BIT(0)
 HAS_BIT(1)
+//HAS_BIT(3)
 
 // "cumulative bitwise xor," flipping bits each time a 1 is encountered.
 //
@@ -106,14 +106,14 @@ static FORCE_INLINE uint64_t prefix_xor(const uint64_t bitmask) {
 // location.
 //
 //          hi    lo
-// bit 0:    6     0    '`'
+// bit 0:  unused
 // bit 1:    2     0    <SPACE>
 // bit 2:    5     F    '_'
 // bit 3:    3   0-9    '0'..'9'
 // bit 4:  4,6   1-F    'A'..'O', 'a'..'o',
 // bit 5:  5,7   0-A    'P'..'Z', 'p'..'z'
 // bit 6:    4     0    '@'
-// bit 7:  not used yet
+// bit 7:  unused
 //
 // Expanded out into a full table to get the LUTs for the vpshufb instruction,
 // they look like this:
@@ -121,7 +121,7 @@ static FORCE_INLINE uint64_t prefix_xor(const uint64_t bitmask) {
 //     low    |
 //     nibble |  0   1   2   3   4   5   6   7   8   9   a   b   c   d   e   f
 // high       |
-// nibble     | 47  56  56  56  56  56  56  56  56  56  48  16  16  16  16  20
+// nibble     | 46  56  56  56  56  56  56  56  56  56  48  16  16  16  16  20
 // ---------------------------------------------------------------------------
 //   0      0 |
 //   1      0 |
@@ -129,7 +129,7 @@ static FORCE_INLINE uint64_t prefix_xor(const uint64_t bitmask) {
 //   3      8 |  8   8   8   8   8   8   8   8   8   8
 //   4     20 |  4  16  16  16  16  16  16  16  16  16  16  16  16  16  16  16
 //   5     36 | 32  32  32  32  32  32  32  32  32  32  32                   4
-//   6     17 |  1  16  16  16  16  16  16  16  16  16  16  16  16  16  16  16
+//   6     16 |     16  16  16  16  16  16  16  16  16  16  16  16  16  16  16
 //   7     32 |     32  32  32  32  32  32  32  32  32  32
 //   8      0 |
 //   9      0 |
@@ -142,11 +142,11 @@ static FORCE_INLINE uint64_t prefix_xor(const uint64_t bitmask) {
 
 static FORCE_INLINE Classes classify(const Simd64* __restrict in) {
   const __m256i low_lut =
-      _mm256_setr_epi8(47, 56, 56, 56, 56, 56, 56, 56, 56, 56, 48, 16, 16, 16, 16, 20,  //
-                       47, 56, 56, 56, 56, 56, 56, 56, 56, 56, 48, 16, 16, 16, 16, 20   //
+      _mm256_setr_epi8(46, 56, 56, 56, 56, 56, 56, 56, 56, 56, 48, 16, 16, 16, 16, 20,  //
+                       46, 56, 56, 56, 56, 56, 56, 56, 56, 56, 48, 16, 16, 16, 16, 20   //
       );
-  const __m256i high_lut = _mm256_setr_epi8(0, 0, 2, 8, 20, 36, 17, 32, 0, 0, 0, 0, 0, 0, 0, 0,  //
-                                            0, 0, 2, 8, 20, 36, 17, 32, 0, 0, 0, 0, 0, 0, 0, 0   //
+  const __m256i high_lut = _mm256_setr_epi8(0, 0, 2, 8, 20, 36, 16, 32, 0, 0, 0, 0, 0, 0, 0, 0,  //
+                                            0, 0, 2, 8, 20, 36, 16, 32, 0, 0, 0, 0, 0, 0, 0, 0   //
   );
 
   const Simd64 low_mask = {_mm256_shuffle_epi8(low_lut, in->chunks[0]),
@@ -162,8 +162,7 @@ static FORCE_INLINE Classes classify(const Simd64* __restrict in) {
   const Simd64 mask = {_mm256_and_si256(low_mask.chunks[0], high_mask.chunks[0]),
                        _mm256_and_si256(low_mask.chunks[1], high_mask.chunks[1])};
 
-  return (Classes){
-      .space = has_bit_1(&mask), .punct = eq_zero(&mask), .backtick = has_bit_0(&mask)};
+  return (Classes){.space = has_bit_1(&mask), .punct = eq_zero(&mask)};
 }
 
 static const uint64_t ODD_BITS = 0xAAAAAAAAAAAAAAAAull;
@@ -375,18 +374,22 @@ uint32_t lex_indexer_simd(const uint8_t* buf,
     const uint64_t gtesc = escapes_next_block(gt, &state_first_is_gt_escaped);
     const uint64_t eqesc = escapes_next_block(eq, &state_first_is_eq_escaped);
     const uint64_t bangesc = escapes_next_block(bang, &state_first_is_bang_escaped);
-    const uint64_t double_mask =
-        (ltesc & (lt | eq)) | (gtesc & (gt | eq)) | (eqesc & eq) | (bangesc & eq);
+    const uint64_t double_mask = (ltesc & (lt | eq)) | (gtesc & (gt | eq)) | (eqesc & eq) |
+                                 (bangesc & eq);
+#  if DO_PRINTS
+    print_with_coloured_bits("digit", classes.digit, "");
+    print_with_coloured_bits("digitesc", digitesc, "");
+#  endif
 
-    // TODO: Handling '.' seems quite troublesome. In `a.b`, it's a separator, so
-    // there's indexes at each of those characters. In `1.00`, it's not, so
-    // there should only be an index on the '1'. This can't be handled like
-    // double character tokens because the "skipping" needs to continue so
-    // there's also not an index on either of the '0's. So, it's more like
-    // skipping a string or comment. For now, the mantissa and fraction are
-    // separated by '`' (ick!).
+    // Handling '.' is troublesome. In `a.b`, it's a separator, so there's
+    // indexes at each of those characters. In `1.00`, it's not, so there should
+    // only be an index on the '1'. The current attempt means with digits
+    // escaping '.' almost works, but then "a2.a" fails because that dot gets
+    // escaped. It seems hard to do given the current approach.
+    // ... So, just let it ride, and split it into '1', '.', and '00', and
+    // force the parser to deal with it. :/
 
-    uint64_t S = classes.punct & ~(quotes_mask | comments_mask) & ~classes.backtick;
+    uint64_t S = classes.punct & ~(quotes_mask | comments_mask);
 #  if DO_PRINTS
     print_with_coloured_bits("S", S, "");
 #  endif
@@ -394,6 +397,9 @@ uint32_t lex_indexer_simd(const uint8_t* buf,
     S = S | quotes;
 
     uint64_t P = S | classes.space;
+#  if DO_PRINTS
+    print_with_coloured_bits("P", P, "");
+#  endif
 
     const uint64_t structural_start_shoved = P >> 63;
     P = (P << 1) | state_structural_start;
@@ -402,6 +408,10 @@ uint32_t lex_indexer_simd(const uint8_t* buf,
     P &= ~classes.space & ~(quotes_mask | comments_mask);
 
     S = S | P;
+
+#  if DO_PRINTS
+    print_with_coloured_bits("double_mask", double_mask, "");
+#  endif
 
     uint64_t indexes = S & ~(quotes & ~quotes_mask) & ~double_mask;
 

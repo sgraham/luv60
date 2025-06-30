@@ -41,4 +41,3 @@ def int main():
     print s7.b
 
     return 0
-
