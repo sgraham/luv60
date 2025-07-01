@@ -1,4 +1,4 @@
-# DISABLED
+# DISABLED __len__, __repr__ not impl, str + doesn't have meaning yet
 # OUT: 0
 # OUT: []
 # OUT: 3
