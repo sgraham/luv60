@@ -53,9 +53,6 @@ int main(int argc, char** argv) {
   Arena* main_arena = arena_create(MiB(256), KiB(128));
   Arena* parse_temp_arena = arena_create(MiB(256), KiB(128));
   Arena* str_arena = arena_create(MiB(256), KiB(128));
-#if 0
-  arena_ir = arena_create(MiB(256), KiB(128));
-#endif
 
   char* input;
   char* output;
