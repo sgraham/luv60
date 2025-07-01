@@ -6,16 +6,12 @@ static void parse_commandline(int argc,
                               char** input,
                               char** output,
                               int* verbose,
-                              bool* syntax_only,
-                              bool* ir_only,
-                              int* opt_level) {
+                              bool* syntax_only) {
   int i = 1;
   *verbose = 0;
   *syntax_only = false;
-  *ir_only = false;
   *input = NULL;
   *output = NULL;
-  *opt_level = 1;
   while (i < argc) {
     if (strcmp(argv[i], "-v") == 0) {
       *verbose = 1;
@@ -43,16 +39,11 @@ static void parse_commandline(int argc,
     }
   }
 
-  if (*ir_only && *syntax_only) {
-    base_writef_stderr("--ir-only and --syntax-only don't make sense together.\n");
-    base_exit(1);
-  }
-
   if (!*input) {
     base_writef_stderr("No input file specified.\n");
     base_exit(1);
   }
-  if (!*output) {
+  if (!*output && !*syntax_only) {
     base_writef_stderr("No output file specified.\n");
     base_exit(1);
   }
@@ -70,9 +61,7 @@ int main(int argc, char** argv) {
   char* output;
   int verbose;
   bool syntax_only;
-  bool ir_only;
-  int opt_level;
-  parse_commandline(argc, argv, &input, &output, &verbose, &syntax_only, &ir_only, &opt_level);
+  parse_commandline(argc, argv, &input, &output, &verbose, &syntax_only);
 
   ReadFileResult file = base_read_file(input);
   if (!file.buffer) {
