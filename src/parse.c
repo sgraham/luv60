@@ -165,6 +165,7 @@ typedef struct Parser {
   SqSymbol str_false;
 
   SqType sq_type_str;
+  SqType sq_type_list;
   SqType sq_type_range;
 
   int str_counter;
@@ -316,6 +317,9 @@ static SqType type_to_sqtype(Type type) {
   }
   if (type_kind(type) == TYPE_RANGE) {
     return parser.sq_type_range;
+  }
+  if (type_kind(type) == TYPE_LIST) {
+    return parser.sq_type_list;
   }
   if (type_is_aggregate(type)) {
     return type_struct_sqtype(type);
@@ -2523,17 +2527,25 @@ static Operand parse_list_literal(Type* expected) {
     // [1u64, 2, 0xffff_ffff_ffff_ffff] instead.
     Operand first_item = opv_at(&elems, 0);
     SqRef arr_base = sq_i_alloc8(sq_const_int(type_size(first_item.type) * elems.size));
-    sq_i_storel(operand_to_sqref_imm(&first_item), arr_base);
+    store_by_type_val_into(first_item.type, operand_to_sqref_imm(&first_item), arr_base);
     for (int i = 1; i < elems.size; ++i) {
       Operand next_item = opv_at(&elems, i);
       if (!convert_operand(&next_item, first_item.type)) {
         errorf("List item %d is of type %s which does not match type %s of first element.", i + 1,
                type_as_str(next_item.type), type_as_str(first_item.type));
       }
-      sq_i_storel(operand_to_sqref_imm(&next_item),
-                  sq_i_add(sq_type_long, arr_base, sq_const_int(type_size(first_item.type) * i)));
+      store_by_type_val_into(
+          first_item.type, operand_to_sqref_imm(&next_item),
+          sq_i_add(sq_type_long, arr_base, sq_const_int(type_size(first_item.type) * i)));
     }
-    return operand_rvalue_imm(type_array(first_item.type, elems.size), arr_base);
+    if (expected && type_kind(*expected) == TYPE_LIST) {
+      SqRef list_obj = sq_i_alloc8(sq_const_int(type_size(*expected)));
+      sq_i_storel(arr_base, list_obj);
+      sq_i_storel(sq_const_int(elems.size), sq_i_add(sq_type_long, list_obj, sq_const_int(8)));
+      return operand_rvalue_imm(type_list(first_item.type), list_obj);
+    } else {
+      return operand_rvalue_imm(type_array(first_item.type, elems.size), arr_base);
+    }
   }
 }
 
@@ -2867,6 +2879,13 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
             ASSERT(op_is_local_addr(left));
             subtype = type_array_subtype(left.type);
             target_addr = sq_i_add(sq_type_long, left.ref,
+                                   sq_i_mul(sq_type_long, sq_const_int(type_size(subtype)),
+                                            operand_to_sqref_imm(&subscript)));
+          } else if (left_type_kind == TYPE_LIST) {
+            ASSERT(op_is_local_addr(left));
+            subtype = type_list_subtype(left.type);
+            SqRef arr_base = sq_i_load(sq_type_long, left.ref);
+            target_addr = sq_i_add(sq_type_long, arr_base,
                                    sq_i_mul(sq_type_long, sq_const_int(type_size(subtype)),
                                             operand_to_sqref_imm(&subscript)));
           } else if (left_type_kind == TYPE_PTR) {
@@ -4024,11 +4043,13 @@ static void parse_impl(Arena* main_arena,
   parser.str_counter = 0;
 
   SqConfiguration config = SQ_CONFIGURATION_DEFAULT;
+  //config.target = SQ_TARGET_AMD64_WIN;
   config.output = out_file;
   config.output_function = sqbe_callback_output_function;
-  if (verbose) {
+  if (verbose == 1) {
     config.debug_flags = "P";
-    // config.debug_flags = "PMNCFAILSRT";
+  } else if (verbose > 1) {
+    config.debug_flags = "PMNCFAILSRT";
   }
   sq_init(&config);
 
@@ -4071,6 +4092,11 @@ static void parse_impl(Arena* main_arena,
   sq_type_add_field(sq_type_long); // data
   sq_type_add_field(sq_type_long); // len
   parser.sq_type_str = sq_type_struct_end();
+
+  sq_type_struct_start("list", 8);
+  sq_type_add_field(sq_type_long); // data
+  sq_type_add_field(sq_type_long); // count
+  parser.sq_type_list = sq_type_struct_end();
 
   sq_type_struct_start("range", 8);
   sq_type_add_field(sq_type_long); // start

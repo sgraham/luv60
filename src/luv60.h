@@ -242,6 +242,8 @@ Type type_ptr_subtype(Type type);
 Type type_array_subtype(Type type);
 uint32_t type_array_count(Type type);
 
+Type type_list_subtype(Type type);
+
 uint32_t type_struct_num_fields(Type type);
 Str type_struct_decl_name(Type type);
 bool type_struct_has_initializer(Type type);

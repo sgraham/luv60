@@ -415,6 +415,9 @@ const char* type_as_str(Type type) {
       return cstr_copy(arena_, str_internf("[%d]%s", type_array_count(type),
                                            type_as_str(type_array_subtype(type))));
     }
+    case TYPE_LIST: {
+      return cstr_copy(arena_, str_internf("[]%s", type_as_str(type_list_subtype(type))));
+    }
     case TYPE_STRUCT: {
       return "TODO: STRUCT";
     }
@@ -585,6 +588,12 @@ uint32_t type_array_count(Type type) {
   ASSERT(type_kind(type) == TYPE_ARRAY);
   TypeData* td = type_td(type);
   return td->ARRAY.count;
+}
+
+Type type_list_subtype(Type type) {
+  ASSERT(type_kind(type) == TYPE_LIST);
+  TypeData* td = type_td(type);
+  return td->LIST.subtype;
 }
 
 uint32_t type_struct_num_fields(Type type) {
