@@ -3577,20 +3577,37 @@ static void for_statement(void) {
       sq_i_jmp(loop);
 
       sq_block_start(block_after);
-    } else if (type_kind(expr.type) == TYPE_ARRAY) {
+    } else if (type_kind(expr.type) == TYPE_ARRAY || type_kind(expr.type) == TYPE_LIST) {
       ASSERT(op_is_local_addr(expr));
 
-      Type elem_type = type_array_subtype(expr.type);
+      bool is_arr = type_kind(expr.type) == TYPE_ARRAY;
+      ASSERT(is_arr || (!is_arr && type_kind(expr.type) == TYPE_LIST));
 
-      // Save the base and end pointer of the array (TODO: everything but ~this
-      // shared with the LIST case)
+      Type elem_type;
+
+      // Save the base and end pointer of the array or data of the list.
       Sym* ptr = make_local_and_alloc(SYM_VAR, (Str){0}, type_i64, NULL);
-      sq_i_storel(operand_to_sqref_imm(&expr), ptr->ref);
-
       Sym* end = make_local_and_alloc(SYM_VAR, (Str){0}, type_i64, NULL);
-      sq_i_storel(sq_i_add(sq_type_long, sq_i_load(sq_type_long, ptr->ref),
-                           sq_const_int(type_size(elem_type) * type_array_count(expr.type))),
-                  end->ref);
+      if (is_arr) {
+        elem_type = type_array_subtype(expr.type);
+
+        sq_i_storel(operand_to_sqref_imm(&expr), ptr->ref);
+        sq_i_storel(sq_i_add(sq_type_long, sq_i_load(sq_type_long, ptr->ref),
+                             sq_const_int(type_size(elem_type) * type_array_count(expr.type))),
+                    end->ref);
+      } else {
+        elem_type = type_list_subtype(expr.type);
+
+        SqRef data_field = sq_i_load(sq_type_long, operand_to_sqref_imm(&expr));
+        sq_i_storel(data_field, ptr->ref);
+
+        SqRef count_field = sq_i_load(
+            sq_type_long, sq_i_add(sq_type_long, operand_to_sqref_imm(&expr), sq_const_int(8)));
+        sq_i_storel(
+            sq_i_add(sq_type_long, sq_i_load(sq_type_long, ptr->ref),
+                     sq_i_mul(sq_type_long, count_field, sq_const_int(type_size(elem_type)))),
+            end->ref);
+      }
 
       Sym* it = make_local_and_alloc(SYM_VAR, it_name, elem_type, NULL);
 

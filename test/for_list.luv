@@ -1,0 +1,14 @@
+# OUT: 3
+# OUT: 44
+# OUT: 555
+# OUT: 6666
+# OUT: 77777
+# OUT: done
+
+def int main():
+    []int arr = [3, 44, 555, 6666, 77777]
+    for x in arr:
+        print x
+    print "done"
+    return 0
+
