@@ -1,0 +1,12 @@
+# OUT: Stuff(a=2)
+struct Stuff:
+    int a
+
+# XXX TODO: this crashes SQ_TARGET_AMD64_WIN
+on Stuff def str __str__(self):
+    return "Stuff(a=2)"
+
+def int main():
+    s = Stuff(a=2)
+    print s
+    return 0

@@ -152,7 +152,8 @@ typedef struct Parser {
   int verbose;
 
   Str static_str_main;
-  Str static_str_repr;
+  Str static_str___str__;
+  Str static_str___repr__;
   Str static_str_ret;
   Str static_str_up;
 
@@ -3585,15 +3586,20 @@ static void for_statement(void) {
 static void print_statement(void) {
   Operand val = parse_expression(NULL);
 
-  // If __repr__ exists for the type, call it, and then use print_str.
-  Sym* sym = lookup_memfn(val.type, parser.static_str_repr);
+  // If __str__/__repr__ exists for the type, call it, and then use print_str.
+  Sym* sym = lookup_memfn(val.type, parser.static_str___str__);
   if (sym) {
-    ASSERT(false && "todo");
-#if 0
-    ir_ref str = ir_CALL_1(IR_I32, ir_CONST_ADDR(sym->addr), addr_for_operand(&val));
-    ir_ref addr = ir_CONST_ADDR(print_i32_impl);
-    ir_CALL_1(IR_VOID, addr, str);
-#endif
+    Operand as_str = operand_rvalue_imm(
+        type_str, sq_i_call1(parser.sq_type_str, sq_ref_for_symbol(sym->global),
+                             (SqCallArg){sq_type_long, operand_to_sqref_imm(&val)}));
+
+    SqRef print_func = sq_ref_extern("printf");
+    SqRef fmt_str = sq_ref_for_symbol(parser.str_print_fmt);
+    SqRef ptr = sq_i_load(sq_type_long, operand_to_sqref_imm(&as_str));
+    SqRef len = sq_i_load(sq_type_word,
+                          sq_i_add(sq_type_long, operand_to_sqref_imm(&as_str), sq_const_int(8)));
+    sq_i_call4(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str}, sq_varargs_begin,
+               (SqCallArg){sq_type_word, len}, (SqCallArg){sq_type_long, ptr});
   } else {
     if (type_eq(val.type, type_str)) {
       print_str(&val);
@@ -3612,7 +3618,7 @@ static void print_statement(void) {
     }
   }
   expect_end_of_statement("print");
-}
+  }
 
 static LastStatementType parse_block(void) {
   LastStatementType lst = LST_NON_RETURN;
@@ -4037,13 +4043,14 @@ static void parse_impl(Arena* main_arena,
   parser.num_buffered_tokens = 0;
   parser.verbose = verbose;
   parser.static_str_main = str_intern_len("main", 4);
-  parser.static_str_repr = str_intern_len("__repr__", 8);
+  parser.static_str___str__ = str_intern_len("__str__", 7);
+  parser.static_str___repr__ = str_intern_len("__repr__", 8);
   parser.static_str_ret = str_intern_len("$ret", 4);
   parser.static_str_up = str_intern_len("$up", 3);
   parser.str_counter = 0;
 
   SqConfiguration config = SQ_CONFIGURATION_DEFAULT;
-  //config.target = SQ_TARGET_AMD64_WIN;
+  //config.target = SQ_TARGET_AMD64_SYSV;
   config.output = out_file;
   config.output_function = sqbe_callback_output_function;
   if (verbose == 1) {

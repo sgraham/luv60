@@ -1,0 +1,6 @@
+# DISABLED: probably should go though memfn dispatch rather than being hardcoded, not sure about monomorphization yet
+# OUT: [1, 2, 3]
+def int main():
+    x = [1, 2, 3]
+    print x
+    return 0
