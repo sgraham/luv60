@@ -11,6 +11,7 @@
 extern "C" {
 #endif
 
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -2719,11 +2720,14 @@ emitfnlnk(char *n, Lnk *l, FILE *f)
 void
 emitdat(Dat *d, FILE *f)
 {
-	static char *dtoa[] = {
-		[DB] = "\t.byte",
-		[DH] = "\t.short",
-		[DW] = "\t.int",
-		[DL] = "\t.quad"
+	static struct {
+		char decl[8];
+		int64_t mask;
+	} di[] = {
+		[DB] = {"\t.byte", 0xffL},
+		[DH] = {"\t.short", 0xffffL},
+		[DW] = {"\t.int", 0xffffffffL},
+		[DL] = {"\t.quad", -1L},
 	};
 	char *p;
 
@@ -2768,12 +2772,13 @@ emitdat(Dat *d, FILE *f)
 		else if (d->isref) {
 			p = d->u.ref.name[0] == '"' ? "" : GC(T).assym;
 			fprintf(f, "%s %s%s%+"PRId64"\n",
-				dtoa[d->type], p, d->u.ref.name,
+				di[d->type].decl, p, d->u.ref.name,
 				d->u.ref.off);
 		}
 		else {
 			fprintf(f, "%s %"PRId64"\n",
-				dtoa[d->type], d->u.num);
+				di[d->type].decl,
+				d->u.num & di[d->type].mask);
 		}
 		break;
 	}
@@ -3854,7 +3859,6 @@ qbe_gvn_assoccon(Fn *fn, Blk *b, Ins *i1)
 	|| (i1->cls == Kw && (int32_t)c.bits.i < 0)) {
 		fail = qbe_gvn_negcon(i1->cls, &c);
 		SQ_ASSERT(fail == 0);
-		(void)fail;
 		op = Osub;
 	}
 
@@ -6240,7 +6244,6 @@ qbe_rega_move(int r, Ref to, RMap *m)
 	if (bshas(m->b, r)) {
 		/* r is used and not by to */
 		SQ_ASSERT(r1 != r);
-		(void)r1;
 		for (n=0; m->r[n] != r; n++)
 			SQ_ASSERT(n+1 < m->n);
 		t = m->t[n];
@@ -11746,6 +11749,7 @@ static QBE_AMD64_WINABI_RegisterUsage lower_func_parameters(Fn* func) {
   // when adding to it.
   GC(curi) = &GC(insb)[NIns];
 
+  int reg_counter = 0;
   QBE_AMD64_WINABI_RegisterUsage reg_usage = {0};
   if (func->retty >= 0) {
     bool by_copy = type_is_by_copy(&GC(typ)[func->retty]);
@@ -11755,6 +11759,7 @@ static QBE_AMD64_WINABI_RegisterUsage lower_func_parameters(Fn* func) {
       Ref ret_ref = newtmp("abi.ret", Kl, func);
       emit(Ocopy, Kl, ret_ref, TMP(QBE_AMD64_RCX), NULL_R);
       func->retr = ret_ref;
+      ++reg_counter;
     }
   }
   Ref env = NULL_R;
@@ -11766,7 +11771,6 @@ static QBE_AMD64_WINABI_RegisterUsage lower_func_parameters(Fn* func) {
   // Copy from the registers or stack slots into the named parameters. Depending
   // on how they're passed, they either need to be copied or loaded.
   QBE_AMD64_WINABI_ArgClass* arg = arg_classes;
-  int reg_counter = 0;
   uint slot_offset = SHADOW_SPACE_SIZE / 4 + 4;
   for (Ins* instr = start_of_params; instr < end_of_params; ++instr, ++arg) {
     switch (arg->style) {
@@ -12315,7 +12319,7 @@ qbe_arm64_abi_selcall(Fn *fn, Ins *i0, Ins *i1, QBE_ARM64_ABI_Insl **ilp)
 	for (i=i0, c=ca; i<i1; i++, c++) {
 		if ((c->class & QBE_ARM64_ABI_Cstk) != 0)
 			continue;
-		if (i->op == Oarg || i->op == Oarge)
+		if (i->op == Oarg || i->op == Oarge || isargbh(i->op))
 			emit(Ocopy, *c->cls, TMP(*c->reg), i->arg[0], NULL_R);
 		if (i->op == Oargc)
 			qbe_arm64_abi_ldregs(c->reg, c->cls, c->nreg, i->arg[1], fn);
@@ -12854,6 +12858,10 @@ static struct {
 	{ NOp, 0, 0 }
 };
 
+enum {
+	V31 = 0x1fffffff,  /* local name for V31 */
+};
+ 
 static char* w_regs[] = {
     "w0",  "w1",  "w2",  "w3",  "w4",  "w5",  "w6",  "w7",  "w8",  "w9",  "w10",
     "w11", "w12", "w13", "w14", "w15", "w16", "w17", "w18", "w19", "w20", "w21",
@@ -12899,6 +12907,12 @@ qbe_arm64_emit_rname(int r, int k)
 		case Kx:
 		case Kd: return d_regs[r-QBE_ARM64_V0]; break;
 		}
+	else if (r == V31)
+		switch (k) {
+		default: die("invalid class");
+		case Ks: return "s31";
+		case Kd: return "d31";
+		}
 	else
 		die("invalid register");
 }
@@ -12938,7 +12952,7 @@ qbe_arm64_emit_emitf(char *s, Ins *i, QBE_ARM64_EMIT_E *e)
 			if (c == ' ' && !sp) {
 				fputc('\t', e->f);
 				sp = 1;
-			} else if ( !c) {
+			} else if (!c) {
 				fputc('\n', e->f);
 				return;
 			} else
@@ -12963,12 +12977,12 @@ qbe_arm64_emit_emitf(char *s, Ins *i, QBE_ARM64_EMIT_E *e)
 			if (KBASE(k) == 0)
 				fputs(qbe_arm64_emit_rname(QBE_ARM64_IP1, k), e->f);
 			else
-				fputs(k==Ks ? "s31" : "d31", e->f);
+				fputs(qbe_arm64_emit_rname(V31, k), e->f);
 			break;
 		case '=':
 		case '0':
 			r = c == '=' ? i->to : i->arg[0];
-			SQ_ASSERT(isreg(r));
+			SQ_ASSERT(isreg(r) || req(r, TMP(V31)));
 			fputs(qbe_arm64_emit_rname(r.val, k), e->f);
 			break;
 		case '1':
@@ -13101,8 +13115,8 @@ qbe_arm64_emit_loadcon(Con *c, int r, int k, QBE_ARM64_EMIT_E *e)
 
 static void qbe_arm64_emit_emitins(Ins *, QBE_ARM64_EMIT_E *);
 
-static void
-qbe_arm64_emit_fixarg(Ref *pr, int sz, QBE_ARM64_EMIT_E *e)
+static int
+qbe_arm64_emit_fixarg(Ref *pr, int sz, int t, QBE_ARM64_EMIT_E *e)
 {
 	Ins *i;
 	Ref r;
@@ -13112,11 +13126,14 @@ qbe_arm64_emit_fixarg(Ref *pr, int sz, QBE_ARM64_EMIT_E *e)
 	if (rtype(r) == RSlot) {
 		s = qbe_arm64_emit_slot(r, e);
 		if (s > sz * 4095u) {
-			i = &(Ins){Oaddr, Kl, TMP(QBE_ARM64_IP1), {r}};
+			if (t < 0)
+				return 1;
+			i = &(Ins){Oaddr, Kl, TMP(t), {r}};
 			qbe_arm64_emit_emitins(i, e);
-			*pr = TMP(QBE_ARM64_IP1);
+			*pr = TMP(t);
 		}
 	}
+	return 0;
 }
 
 static void
@@ -13124,16 +13141,28 @@ qbe_arm64_emit_emitins(Ins *i, QBE_ARM64_EMIT_E *e)
 {
 	char *l, *p, *rn;
 	uint64_t s;
-	int o;
+	int o, t;
 	Ref r;
 	Con *c;
 
 	switch (i->op) {
 	default:
 		if (isload(i->op))
-			qbe_arm64_emit_fixarg(&i->arg[0], loadsz(i), e);
-		if (isstore(i->op))
-			qbe_arm64_emit_fixarg(&i->arg[1], storesz(i), e);
+			qbe_arm64_emit_fixarg(&i->arg[0], loadsz(i), QBE_ARM64_IP1, e);
+		if (isstore(i->op)) {
+			t = GC(T).apple ? -1 : QBE_ARM64_R18;
+			if (qbe_arm64_emit_fixarg(&i->arg[1], storesz(i), t, e)) {
+				if (req(i->arg[0], TMP(QBE_ARM64_IP1))) {
+					fprintf(e->f,
+						"\tfmov\t%c31, %c17\n",
+						"ds"[i->cls == Kw],
+						"xw"[i->cls == Kw]);
+					i->arg[0] = TMP(V31);
+					i->op = Ostores + (i->cls-Kw);
+				}
+				qbe_arm64_emit_fixarg(&i->arg[1], storesz(i), QBE_ARM64_IP1, e);
+			}
+		}
 	Table:
 		/* most instructions are just pulled out of
 		 * the table qbe_arm64_emit_omap[], some special cases are
@@ -15079,6 +15108,7 @@ qbe_rv64_isel_fixarg(Ref *r, int k, Ins *i, Fn *fn)
 		c = &fn->con[r0.val];
 		if (c->type == CAddr && qbe_rv64_isel_memarg(r, op, i))
 			break;
+		if (KBASE(k) == 0)
 		if (c->type == CBits && qbe_rv64_isel_immarg(r, op, i))
 		if (-2048 <= c->bits.i && c->bits.i < 2048)
 			break;
@@ -15575,6 +15605,7 @@ MAKESURE(rclob_size_ok, sizeof rv64_rclob == (QBE_RV64_NCLR+1) * sizeof(int));
 #if defined(_WIN32)
 #include <windows.h>
 #else
+#include <alloca.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #endif  // _WIN32
