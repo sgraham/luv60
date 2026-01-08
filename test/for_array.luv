@@ -1,0 +1,12 @@
+# OUT: 1
+# OUT: 2
+# OUT: 3
+# OUT: 4
+# OUT: done
+
+def int main():
+    arr = [1, 2, 3, 4]
+    for x in arr:
+        print x
+    print "done"
+    return 0

@@ -3577,6 +3577,51 @@ static void for_statement(void) {
       sq_i_jmp(loop);
 
       sq_block_start(block_after);
+    } else if (type_kind(expr.type) == TYPE_ARRAY) {
+      ASSERT(op_is_local_addr(expr));
+
+      Type elem_type = type_array_subtype(expr.type);
+
+      // Save the base and end pointer of the array (TODO: everything but ~this
+      // shared with the LIST case)
+      Sym* ptr = make_local_and_alloc(SYM_VAR, (Str){0}, type_i64, NULL);
+      sq_i_storel(operand_to_sqref_imm(&expr), ptr->ref);
+
+      Sym* end = make_local_and_alloc(SYM_VAR, (Str){0}, type_i64, NULL);
+      sq_i_storel(sq_i_add(sq_type_long, sq_i_load(sq_type_long, ptr->ref),
+                           sq_const_int(type_size(elem_type) * type_array_count(expr.type))),
+                  end->ref);
+
+      Sym* it = make_local_and_alloc(SYM_VAR, it_name, elem_type, NULL);
+
+      SqBlock block_after = sq_block_declare();
+      SqBlock block_body = sq_block_declare();
+      SqBlock loop = sq_block_declare_and_start();
+
+      SqRef is_done = sq_i_cugel(sq_type_long, sq_i_load(sq_type_long, ptr->ref),
+                                 sq_i_load(sq_type_long, end->ref));
+      sq_i_jnz(is_done, block_after, block_body);
+
+      sq_block_start(block_body);
+
+      SqRef ptr_to_cur_item = sq_i_load(sq_type_long, ptr->ref);
+      SqRef cur = load_by_type_from(elem_type, ptr_to_cur_item);
+      store_by_type_val_into(elem_type, cur, it->ref);
+
+      sq_i_storel(sq_i_add(sq_type_long, ptr_to_cur_item, sq_const_int(type_size(elem_type))),
+                  ptr->ref);
+
+      consume(TOK_COLON, "Expect ':' to start for.");
+      consume(TOK_NEWLINE, "Expect newline after ':' to start for.");
+      consume(TOK_INDENT, "Expect indent to start for.");
+      LastStatementType lst = parse_block();
+
+      sq_i_jmp(loop);
+
+      ASSERT(lst == LST_NON_RETURN && "todo; return from loop");
+
+      sq_block_start(block_after);
+
     } else {
       errorf("Unhandled for/in over type %s.", type_as_str(expr.type));
     }
@@ -4050,7 +4095,7 @@ static void parse_impl(Arena* main_arena,
   parser.str_counter = 0;
 
   SqConfiguration config = SQ_CONFIGURATION_DEFAULT;
-  //config.target = SQ_TARGET_AMD64_SYSV;
+  //config.target = SQ_TARGET_AMD64_APPLE;
   config.output = out_file;
   config.output_function = sqbe_callback_output_function;
   if (verbose == 1) {
