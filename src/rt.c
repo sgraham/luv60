@@ -1,7 +1,12 @@
 #include <stdint.h>
 
+#if _WIN32
+void* memcpy(void* dest, const void* src, unsigned long long count);
+extern void* realloc(void* ptr, unsigned long long new_size);
+#else
 void* memcpy(void* dest, const void* src, unsigned long count);
 extern void* realloc(void* ptr, unsigned long new_size);
+#endif
 
 typedef struct List {
   unsigned char* data;
