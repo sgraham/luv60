@@ -482,6 +482,7 @@ uint32_t lex_indexer_fallback(const uint8_t* buf,
 #endif
 
   uint32_t i = 0;
+  bool at_nl = true;
   for (;;) {
     char c = buf[i];
 
@@ -490,15 +491,22 @@ uint32_t lex_indexer_fallback(const uint8_t* buf,
       case 0:
         goto done;
       case '#':
+        if (!at_nl) {
+          *to++ = i++;
+        }
         for (;;) {
           c = buf[++i];
-          if (c == '\n') break;
+          if (c == '\n') {
+            at_nl = true;
+            break;
+          }
         }
         // We don't want the comment indexed, but we do want the newline that
         // terminates the comment as its own thing.
         *to++ = i++;
         break;
       case '"':
+        at_nl = false;
         *to++ = i;
         for (;;) {
           c = buf[++i];
@@ -510,10 +518,15 @@ uint32_t lex_indexer_fallback(const uint8_t* buf,
         }
         ++i;
         break;
+      case '\n':
+        at_nl = true;
+        *to++ = i++;
+        break;
       case ' ':
         ++i;
         break;
       default:
+        at_nl = false;
 #if 0
         // Just 'identifierish' handled idents and ints (including bin/hex
         // prefixes). But because '.' is a separator in `a.b`, but just part

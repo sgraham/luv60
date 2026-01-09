@@ -135,6 +135,9 @@ decorator = '@' [a-z_][a-zA-Z0-9_]*;
   varname     { return TOK_IDENT_VAR; }
   typename    { return TOK_IDENT_TYPE; }
   constname   { return TOK_IDENT_CONST; }
+  // Hash marks for comments will not be indexed if they're in a correct
+  // location, so only trailing comments will appear here, which are invalid.
+  "#"         { return TOK_INVALID_TRAILING_COMMENT; }
   nul         { return TOK_EOF; }
   [^]         { return TOK_INVALID; }
   *           { return TOK_INVALID; }

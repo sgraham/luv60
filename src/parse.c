@@ -457,6 +457,10 @@ NORETURN static void error(const char* message) {
   error_offset(prev_offset(), message);
 }
 
+NORETURN static void error_cur(const char* message) {
+  error_offset(cur_offset(), message);
+}
+
 NORETURN static void errorf(const char* fmt, ...) {
   va_list args;
   va_start(args, fmt);
@@ -467,6 +471,18 @@ NORETURN static void errorf(const char* fmt, ...) {
   vsnprintf(str, n, fmt, args);
   va_end(args);
   error(str);
+}
+
+NORETURN static void errorf_cur(const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  size_t n = 1 + vsnprintf(NULL, 0, fmt, args);
+  va_end(args);
+  char* str = malloc(n);  // just a simple malloc because we're going to base_exit() momentarily.
+  va_start(args, fmt);
+  vsnprintf(str, n, fmt, args);
+  va_end(args);
+  error_cur(str);
 }
 
 NORETURN static void errorf_offset(uint32_t offset, const char* fmt, ...) {
@@ -1713,6 +1729,11 @@ typedef struct Rule {
 
 static Rule* get_rule(TokenKind tok_kind);
 static Operand parse_precedence(Precedence precedence, Type* expected);
+
+static Operand parse_invalid_trailing_comment(bool can_assign, Type* expected) {
+  error("Trailing comments not allowed.");
+  return operand_null;
+}
 
 static Operand parse_alignof(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
@@ -3422,6 +3443,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
 // Has to match the order in tokens.inc.
 static Rule rules[NUM_TOKEN_KINDS] = {
     {NULL, NULL, PREC_NONE},  // TOK_INVALID
+    {parse_invalid_trailing_comment, NULL, PREC_NONE},  // TOK_INVALID_TRAILING_COMMENT
     {NULL, NULL, PREC_NONE},  // TOK_EOF
     {NULL, NULL, PREC_NONE},  // TOK_INDENT
     {NULL, NULL, PREC_NONE},  // TOK_DEDENT
@@ -3579,7 +3601,7 @@ static Operand parse_expression(Type* expected) {
 
 static void expect_end_of_statement(const char* after_what) {
   if (!match(TOK_NEWLINE)) {
-    errorf("Expect newline after %s statement.", after_what);
+    errorf_cur("Expect newline after %s statement.", after_what);
   }
 }
 

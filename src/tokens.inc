@@ -1,5 +1,6 @@
 // The rules[] table in parser.c has to match this one.
 TOKEN(INVALID)
+TOKEN(INVALID_TRAILING_COMMENT)
 TOKEN(EOF)
 
 TOKEN(INDENT)
