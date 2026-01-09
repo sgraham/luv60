@@ -1,0 +1,7 @@
+# DISABLED
+# OUT: 0
+def int main():
+    for a in range(10):
+        print a
+        return 0
+    return 1

@@ -1,0 +1,11 @@
+# OUT: 0
+# OUT: 1
+# OUT: 2
+# OUT: 3
+# OUT: 4
+def int main():
+    for a in range(10):
+        print a
+        if a == 4:
+            return 0
+    return 1
