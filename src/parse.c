@@ -2380,6 +2380,7 @@ static bool scan_to_determine_if_comprehension(TokenCursor* original, TokenCurso
 typedef enum IterationKind {
   ITK_UNKNOWN = 0,
   ITK_ARRAY,
+  ITK_LIST,
 } IterationKind;
 
 typedef struct IterationData {
@@ -2387,55 +2388,61 @@ typedef struct IterationData {
   Sym* itsym;
   SqBlock loop_start;
   SqBlock loop_done;
-  union {
-    struct {
-      Type it_type;
-      SqRef index;
-    } ARRAY;
-  };
+  Type it_type;
+  SqRef ptr;
+  SqRef end;
 } IterationData;
 
 static IterationData iteration_prolog(Str it, Operand* over) {
   Type it_type;
+  IterationData itd = {0};
+  itd.ptr = sq_i_alloc8(sq_const_int(8));
+  itd.end = sq_i_alloc8(sq_const_int(8));
   if (type_kind(over->type) == TYPE_ARRAY) {
     it_type = type_array_subtype(over->type);
+    itd.kind = ITK_ARRAY;
+    sq_i_storel(over->ref, itd.ptr);
+    sq_i_storel(sq_i_add(sq_type_long, over->ref,
+                         sq_const_int(type_array_count(over->type) * type_size(it_type))),
+                itd.end);
+  } else if (type_kind(over->type) == TYPE_LIST) {
+    it_type = type_list_subtype(over->type);
+    itd.kind = ITK_LIST;
+    SqRef base = sq_i_load(sq_type_long, over->ref);
+    sq_i_storel(base, itd.ptr);
+    SqRef count = sq_i_load(sq_type_long, sq_i_add(sq_type_long, over->ref, sq_const_int(8)));
+    sq_i_storel(sq_i_add(sq_type_long, base,
+                         sq_i_mul(sq_type_long, sq_const_int(type_size(it_type)), count)),
+                itd.end);
   } else {
     errorf("Can't iterate over type %s.", type_as_str(over->type));
   }
 
-  IterationData itd = {.kind = ITK_ARRAY };
+  itd.it_type = it_type;
   itd.itsym = make_local_and_alloc(SYM_VAR, it, it_type, NULL);
-  itd.ARRAY.it_type = it_type;
-  itd.ARRAY.index = sq_i_alloc8(sq_const_int(8));
-  sq_i_storel(sq_const_int(0), itd.ARRAY.index);
-
   itd.loop_start = sq_block_declare_and_start();
 
   SqBlock block_body = sq_block_declare();
   itd.loop_done = sq_block_declare();
 
-  SqRef cur = sq_i_load(sq_type_long, itd.ARRAY.index);
-  SqRef cmp = sq_i_csltl(sq_type_long, cur, sq_const_int(type_array_count(over->type)));
+  SqRef cur = sq_i_load(sq_type_long, itd.ptr);
+  SqRef end = sq_i_load(sq_type_long, itd.end);
+  SqRef cmp = sq_i_csltl(sq_type_long, cur, end);
   sq_i_jnz(cmp, block_body, itd.loop_done);
+
   sq_block_start(block_body);
 
-  SqRef arr_load_addr = sq_i_add(sq_type_long, over->ref,
-                                 sq_i_mul(sq_type_long, sq_const_int(type_size(it_type)),
-                                          sq_i_load(sq_type_long, itd.ARRAY.index)));
-  store_by_type_val_into(it_type, load_by_type_from(it_type, arr_load_addr), itd.itsym->ref);
+  store_by_type_val_into(it_type, load_by_type_from(it_type, cur), itd.itsym->ref);
 
   return itd;
 }
 
 static void iteration_epilog(IterationData itd) {
-  if (itd.kind == ITK_ARRAY) {
-    sq_i_storel(sq_i_add(sq_type_long, sq_i_load(sq_type_long, itd.ARRAY.index), sq_const_int(1)),
-                itd.ARRAY.index);
-    sq_i_jmp(itd.loop_start);
-    sq_block_start(itd.loop_done);
-  } else {
-    error("Unhandled iteration epilog.");
-  }
+  sq_i_storel(sq_i_add(sq_type_long, sq_i_load(sq_type_long, itd.ptr),
+                       sq_const_int(type_size(itd.it_type))),
+              itd.ptr);
+  sq_i_jmp(itd.loop_start);
+  sq_block_start(itd.loop_done);
 }
 
 static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for, Type* expected) {
@@ -2449,6 +2456,7 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
     error("todo; multiple for in list compr");
   }
   if (check(TOK_IF)) {
+    // TODO: downgrade array to slice below if any
     error("todo; conditional in list compr");
   }
   TokenCursor after_clauses = parser.cursor;
@@ -2457,41 +2465,48 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
   // over an array, it could be filtered, so we can't know the number of
   // outputs. So this only creates an array if |expected| is provided
   // explicitly.
-  // TODO: implement this once there's slices!
+  if (expected && type_kind(*expected) == TYPE_ARRAY &&
+      type_array_count(*expected) == type_array_count(over.type) /* TODO: && no ifs */) {
 
-  // TODO: enter a full function scope here? or some third non-module,
-  // non-function type of scope?
-  // I think it has to be equivalent to a nested function, because the iterator
-  // shadows.
-  enter_scope(/*is_module=*/false, /*is_function=*/true, NULL);
+    // TODO: enter a full function scope here? or some third non-module,
+    // non-function type of scope?
+    // I think it has to be equivalent to a nested function, because the iterator
+    // shadows.
+    enter_scope(/*is_module=*/false, /*is_function=*/true, NULL);
 
-  ASSERT(expected);
-  Type subtype = type_array_subtype(*expected);
-  ASSERT(type_array_count(over.type) == type_array_count(*expected));
-  SqRef arr_base = sq_i_alloc8(sq_const_int(type_size(subtype) * type_array_count(over.type)));
+    Type subtype = type_array_subtype(*expected);
+    SqRef arr_base = sq_i_alloc8(sq_const_int(type_size(subtype) * type_array_count(over.type)));
+    SqRef store_ptr = sq_i_alloc8(sq_const_int(8));
+    sq_i_storel(arr_base, store_ptr);
 
-  IterationData itd = iteration_prolog(it, &over);
-  ASSERT(type_eq(itd.ARRAY.it_type, subtype));
+    IterationData itd = iteration_prolog(it, &over);
+    ASSERT(type_eq(itd.it_type, subtype));
 
-  parser.cursor = original;
+    parser.cursor = original;
 
-  Operand elem = parse_expression(NULL);
+    Operand elem = parse_expression(NULL);
 
-  // Store elem into created array.
-  // This only works because we're assuming it's an array, and no filter; just
-  // assign to the same index in the created array as in the source array.
-  SqRef arr_store_addr = sq_i_add(sq_type_long, arr_base,
-                                  sq_i_mul(sq_type_long, sq_const_int(type_size(subtype)),
-                                           sq_i_load(sq_type_long, itd.ARRAY.index)));
-  store_by_type_val_into(subtype, operand_to_sqref_imm(&elem), arr_store_addr);
+    // Store elem into created array.
+    // This only works because we're assuming it's an array, and no filter; just
+    // assign to the same index in the created array as in the source array.
+    store_by_type_val_into(subtype, operand_to_sqref_imm(&elem),
+                           sq_i_load(sq_type_long, store_ptr));
+    sq_i_storel(sq_i_add(sq_type_long, sq_i_load(sq_type_long, store_ptr),
+                         sq_const_int(type_size(subtype))),
+                store_ptr);
 
-  iteration_epilog(itd);
+    iteration_epilog(itd);
 
-  leave_scope();
+    leave_scope();
 
-  parser.cursor = after_clauses;
+    parser.cursor = after_clauses;
 
-  return operand_rvalue_imm(type_array(subtype, type_array_count(over.type)), arr_base);
+    return operand_rvalue_imm(type_array(subtype, type_array_count(over.type)), arr_base);
+  } else {
+    // General slice case.
+    errorf("compr slice");
+    // TODO: need append
+  }
 }
 
 static Operand parse_list_literal(Type* expected) {
@@ -3583,62 +3598,16 @@ static void for_statement(void) {
       bool is_arr = type_kind(expr.type) == TYPE_ARRAY;
       ASSERT(is_arr || (!is_arr && type_kind(expr.type) == TYPE_LIST));
 
-      Type elem_type;
-
-      // Save the base and end pointer of the array or data of the list.
-      Sym* ptr = make_local_and_alloc(SYM_VAR, (Str){0}, type_i64, NULL);
-      Sym* end = make_local_and_alloc(SYM_VAR, (Str){0}, type_i64, NULL);
-      if (is_arr) {
-        elem_type = type_array_subtype(expr.type);
-
-        sq_i_storel(operand_to_sqref_imm(&expr), ptr->ref);
-        sq_i_storel(sq_i_add(sq_type_long, sq_i_load(sq_type_long, ptr->ref),
-                             sq_const_int(type_size(elem_type) * type_array_count(expr.type))),
-                    end->ref);
-      } else {
-        elem_type = type_list_subtype(expr.type);
-
-        SqRef data_field = sq_i_load(sq_type_long, operand_to_sqref_imm(&expr));
-        sq_i_storel(data_field, ptr->ref);
-
-        SqRef count_field = sq_i_load(
-            sq_type_long, sq_i_add(sq_type_long, operand_to_sqref_imm(&expr), sq_const_int(8)));
-        sq_i_storel(
-            sq_i_add(sq_type_long, sq_i_load(sq_type_long, ptr->ref),
-                     sq_i_mul(sq_type_long, count_field, sq_const_int(type_size(elem_type)))),
-            end->ref);
-      }
-
-      Sym* it = make_local_and_alloc(SYM_VAR, it_name, elem_type, NULL);
-
-      SqBlock block_after = sq_block_declare();
-      SqBlock block_body = sq_block_declare();
-      SqBlock loop = sq_block_declare_and_start();
-
-      SqRef is_done = sq_i_cugel(sq_type_long, sq_i_load(sq_type_long, ptr->ref),
-                                 sq_i_load(sq_type_long, end->ref));
-      sq_i_jnz(is_done, block_after, block_body);
-
-      sq_block_start(block_body);
-
-      SqRef ptr_to_cur_item = sq_i_load(sq_type_long, ptr->ref);
-      SqRef cur = load_by_type_from(elem_type, ptr_to_cur_item);
-      store_by_type_val_into(elem_type, cur, it->ref);
-
-      sq_i_storel(sq_i_add(sq_type_long, ptr_to_cur_item, sq_const_int(type_size(elem_type))),
-                  ptr->ref);
+      IterationData itd = iteration_prolog(it_name, &expr);
 
       consume(TOK_COLON, "Expect ':' to start for.");
       consume(TOK_NEWLINE, "Expect newline after ':' to start for.");
       consume(TOK_INDENT, "Expect indent to start for.");
       LastStatementType lst = parse_block();
 
-      sq_i_jmp(loop);
+      iteration_epilog(itd);
 
       ASSERT(lst == LST_NON_RETURN && "todo; return from loop");
-
-      sq_block_start(block_after);
-
     } else {
       errorf("Unhandled for/in over type %s.", type_as_str(expr.type));
     }
