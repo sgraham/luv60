@@ -2504,8 +2504,46 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
     return operand_rvalue_imm(type_array(subtype, type_array_count(over.type)), arr_base);
   } else {
     // General slice case.
-    errorf("compr slice");
-    // TODO: need append
+
+    // TODO: same question as above
+    enter_scope(/*is_module=*/false, /*is_function=*/true, NULL);
+
+    // Ugly: We haven't parsed the iteration expression yet, so we don't know
+    // the result type, so we just allocate a zero-initialized block of the
+    // correct size for a List object, which will work with appending because by
+    // the type we actually have an element to append we'll know the type of the
+    // element.
+    // 'i32' isn't important, as all list objs are the same size.
+    size_t untyped_list_size = type_size(type_list(type_i32));
+    SqRef untyped_list = sq_i_alloc8(sq_const_int(untyped_list_size));
+    SqRef memset_func = sq_ref_extern("memset");
+    sq_i_call3(sq_type_void, memset_func, (SqCallArg){sq_type_long, untyped_list},
+               (SqCallArg){sq_type_word, sq_const_int(0)},
+               (SqCallArg){sq_type_long, sq_const_int(untyped_list_size)});
+
+    IterationData itd = iteration_prolog(it, &over);
+
+    parser.cursor = original;
+
+    Operand elem = parse_expression(NULL);
+
+    // TODO: This is very bad, being inside the loop.
+    Sym* lval = make_local_and_alloc(SYM_VAR, (Str){0}, elem.type, NULL);
+    sq_i_storew(operand_to_sqref_imm(&elem), lval->ref);
+
+    SqRef list_append_func = sq_ref_extern("List_append");
+    sq_i_call3(sq_type_void, list_append_func, (SqCallArg){sq_type_long, untyped_list},
+               (SqCallArg){sq_type_long, sq_const_int(type_size(elem.type))},
+              // (SqCallArg){sq_type_long, operand_to_sqref_imm(&elem)}
+               (SqCallArg){sq_type_long, lval->ref});
+
+    iteration_epilog(itd);
+
+    leave_scope();
+
+    parser.cursor = after_clauses;
+
+    return operand_rvalue_imm(type_list(elem.type), untyped_list);
   }
 }
 
@@ -4134,6 +4172,7 @@ static void parse_impl(Arena* main_arena,
   sq_type_struct_start("list", 8);
   sq_type_add_field(sq_type_long); // data
   sq_type_add_field(sq_type_long); // count
+  sq_type_add_field(sq_type_long); // capacity;
   parser.sq_type_list = sq_type_struct_end();
 
   sq_type_struct_start("range", 8);

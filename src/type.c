@@ -372,7 +372,7 @@ Type type_list(Type subtype) {
   uint32_t rewind_location;
   Type list = type_alloc(TYPE_LIST, 0, &rewind_location);
   TypeData* td = type_td(list);
-  td->LIST.size = 16;
+  td->LIST.size = 24;
   td->LIST.align = type_align(subtype);
   td->LIST.subtype = subtype;
 

@@ -1,0 +1,19 @@
+#include <stdint.h>
+
+void* memcpy(void* dest, const void* src, unsigned long count);
+extern void* realloc(void* ptr, unsigned long new_size);
+
+typedef struct List {
+  unsigned char* data;
+  uint64_t count;
+  uint64_t capacity;
+} List;
+
+void List_append(List* list, uint64_t item_size, void* item) {
+  if (list->count >= list->capacity) {
+    list->capacity = list->capacity > 0 ? list->capacity * 2 : 16;
+    list->data = realloc(list->data, list->capacity * item_size);
+  }
+  memcpy(&list->data[list->count * item_size], item, item_size);
+  list->count++;
+}

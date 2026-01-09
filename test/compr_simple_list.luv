@@ -1,0 +1,26 @@
+# OUT: 4
+# OUT: 1
+# OUT: 2
+# OUT: 3
+# OUT: 4
+# OUT: 4
+# OUT: 3
+# OUT: 6
+# OUT: 9
+# OUT: 12
+def int main():
+    []int nums = [1, 2, 3, 4]
+    print len(nums)
+    print nums[0]
+    print nums[1]
+    print nums[2]
+    print nums[3]
+
+    []int scaled = [x*3 for x in nums]
+    print len(scaled)
+    print scaled[0]
+    print scaled[1]
+    print scaled[2]
+    print scaled[3]
+
+    return 0

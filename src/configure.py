@@ -105,7 +105,7 @@ def get_tests():
         crun = "LUVC_BIN {self} -o OUT_DIR/{self}.s"
         cret = "0"
         cerr = ""
-        clangrun = "CLANG_BIN -g OUT_DIR/{self}.s -o OUT_DIR/{self}.exe"
+        clangrun = "CLANG_BIN -g OUT_DIR/{self}.s src/rt.c -o OUT_DIR/{self}.exe"
         run = "OUT_DIR/{self}.exe"
         ret = "0"
         out = ""
