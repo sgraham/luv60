@@ -26,7 +26,7 @@ decorator = '@' [a-z_][a-zA-Z0-9_]*;
   "byte"      { return TOK_BYTE; }
   "cast"      { return TOK_CAST; }
   "check"     { return TOK_CHECK; }
-  "codept"    { return TOK_CODEPOINT; }
+  "codept"    { return TOK_CODEPT; }
   "const"     { return TOK_CONST; }
   "c_char"    { return TOK_CONST_CHAR; }
   "c_opaque"  { return TOK_CONST_OPAQUE; }

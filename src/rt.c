@@ -17,3 +17,6 @@ void List_append(List* list, uint64_t item_size, void* item) {
   memcpy(&list->data[list->count * item_size], item, item_size);
   list->count++;
 }
+
+void List_print(List* list, void (*subtype_repr)(void*)) {
+}

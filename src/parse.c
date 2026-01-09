@@ -1216,7 +1216,7 @@ static Operand const_expression(void) {
 static Type basic_tok_to_type[NUM_TOKEN_KINDS] = {
     [TOK_BOOL] = type_bool,      //
     [TOK_BYTE] = type_u8,        //
-    [TOK_CODEPOINT] = type_i32,  //
+    [TOK_CODEPT] = type_i32,  //
     [TOK_DOUBLE] = type_double,  //
     [TOK_F32] = type_float,      //
     [TOK_F64] = type_double,     //
@@ -2262,8 +2262,12 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
     Sym* func_sym = {0};
     switch (type_kind(left.type)) {
       case TYPE_ARRAY:
-      case TYPE_LIST:
-        error("TODO: polymorphic array/list memfns");
+        error("TODO: polymorphic array memfns");
+
+      case TYPE_LIST: {
+        //MemfnsForType memfns = ensure_generic_impl(left.type);
+        error("TODO: polymorphic list memfns");
+      }
 
       case TYPE_DICT:
         error("TODO: polymorphic dict memfns");
@@ -2908,8 +2912,13 @@ static Operand parse_range_literal(bool can_assign, Type* expected) {
 }
 
 static Operand parse_sizeof(bool can_assign, Type* expected) {
-  ASSERT(false && "not implemented");
-  return operand_null;
+  consume(TOK_LPAREN, "Expecting '(' after sizeof.");
+  Type type = parse_type();
+  if (type_is_none(type)) {
+    error("TODO: sizeof expr");
+  }
+  consume(TOK_RPAREN, "Expect ')' after sizeof.");
+  return operand_rvalue_imm(type_u64, sq_const_int(type_size(type)));
 }
 
 static SqRef emit_string_obj(StrView str) {
@@ -3510,7 +3519,7 @@ static Rule rules[NUM_TOKEN_KINDS] = {
 
     {NULL, NULL, PREC_NONE},  // TOK_BOOL
     {NULL, NULL, PREC_NONE},  // TOK_BYTE
-    {NULL, NULL, PREC_NONE},  // TOK_CODEPOINT
+    {NULL, NULL, PREC_NONE},  // TOK_CODEPT
     {NULL, NULL, PREC_NONE},  // TOK_CONST_CHAR
     {NULL, NULL, PREC_NONE},  // TOK_CONST_OPAQUE
     {NULL, NULL, PREC_NONE},  // TOK_DOUBLE
@@ -3713,7 +3722,7 @@ static void print_statement(void) {
     }
   }
   expect_end_of_statement("print");
-  }
+}
 
 static LastStatementType parse_block(void) {
   LastStatementType lst = LST_NON_RETURN;

@@ -63,7 +63,7 @@ syn match       luvConstVar '\<_*[A-Z][A-Z0-9_]*'
 hi def link     luvConstVar Preproc
 
 " Basic type declarations
-syn keyword     luvType bool byte codepoint int float double
+syn keyword     luvType bool byte codept int float double
 syn keyword     luvType u8 u16 u32 u64 i8 i16 i32 i64
 syn keyword     luvType f16 f32 f64
 syn keyword     luvType str
