@@ -1,6 +1,6 @@
 # DISABLED_WIN: need to update lexer
 # CRET: 1
-# CERR: {self}:6:15:    x = x + 1 # huh
+# CERR: {self}:7:15:    x = x + 1 # huh
 # CERR: {ssss}                    ^ error: Expect newline after top level statement.
 def int main():
     int x
