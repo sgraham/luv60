@@ -2381,6 +2381,7 @@ typedef enum IterationKind {
   ITK_UNKNOWN = 0,
   ITK_ARRAY,
   ITK_LIST,
+  ITK_RANGE,
 } IterationKind;
 
 typedef struct IterationData {
@@ -2389,58 +2390,115 @@ typedef struct IterationData {
   SqBlock loop_start;
   SqBlock loop_done;
   Type it_type;
-  SqRef ptr;
-  SqRef end;
+  union {
+    struct {
+      SqRef ptr;
+      SqRef end;
+    } CONTIG;
+    struct {
+      SqRef stop;
+      SqRef step;
+      SqRef is_neg;
+    } RANGE;
+  };
 } IterationData;
 
 static IterationData iteration_prolog(Str it, Operand* over) {
-  Type it_type;
   IterationData itd = {0};
-  itd.ptr = sq_i_alloc8(sq_const_int(8));
-  itd.end = sq_i_alloc8(sq_const_int(8));
   if (type_kind(over->type) == TYPE_ARRAY) {
-    it_type = type_array_subtype(over->type);
     itd.kind = ITK_ARRAY;
-    sq_i_storel(over->ref, itd.ptr);
+    itd.it_type = type_array_subtype(over->type);
+    itd.itsym = make_local_and_alloc(SYM_VAR, it, itd.it_type, NULL);
+    itd.CONTIG.ptr = sq_i_alloc8(sq_const_int(8));
+    itd.CONTIG.end = sq_i_alloc8(sq_const_int(8));
+    sq_i_storel(over->ref, itd.CONTIG.ptr);
     sq_i_storel(sq_i_add(sq_type_long, over->ref,
-                         sq_const_int(type_array_count(over->type) * type_size(it_type))),
-                itd.end);
+                         sq_const_int(type_array_count(over->type) * type_size(itd.it_type))),
+                itd.CONTIG.end);
   } else if (type_kind(over->type) == TYPE_LIST) {
-    it_type = type_list_subtype(over->type);
     itd.kind = ITK_LIST;
+    itd.it_type = type_list_subtype(over->type);
+    itd.itsym = make_local_and_alloc(SYM_VAR, it, itd.it_type, NULL);
+    itd.CONTIG.ptr = sq_i_alloc8(sq_const_int(8));
+    itd.CONTIG.end = sq_i_alloc8(sq_const_int(8));
     SqRef base = sq_i_load(sq_type_long, over->ref);
-    sq_i_storel(base, itd.ptr);
+    sq_i_storel(base, itd.CONTIG.ptr);
     SqRef count = sq_i_load(sq_type_long, sq_i_add(sq_type_long, over->ref, sq_const_int(8)));
     sq_i_storel(sq_i_add(sq_type_long, base,
-                         sq_i_mul(sq_type_long, sq_const_int(type_size(it_type)), count)),
-                itd.end);
+                         sq_i_mul(sq_type_long, sq_const_int(type_size(itd.it_type)), count)),
+                itd.CONTIG.end);
+  } else if (type_eq(over->type, type_range)) {
+    itd.kind = ITK_RANGE;
+    itd.it_type = type_i64;
+    itd.itsym = make_local_and_alloc(SYM_VAR, it, itd.it_type, NULL);
+
+    SqRef astart = over->ref;
+    SqRef astop = sq_i_add(sq_type_long, over->ref, sq_const_int(8));
+    SqRef astep = sq_i_add(sq_type_long, over->ref, sq_const_int(16));
+
+    SqRef start = sq_i_load(sq_type_long, astart);
+    itd.RANGE.stop = sq_i_load(sq_type_long, astop);
+    itd.RANGE.step = sq_i_load(sq_type_long, astep);
+
+    itd.RANGE.is_neg = sq_i_csltl(sq_type_long, itd.RANGE.step, sq_const_int(0));
+
+    // TODO: This probably needs work if the Range isn't trivial, start
+    // should be using the Operand expr or something maybe
+    sq_i_storel(start, itd.itsym->ref);
   } else {
     errorf("Can't iterate over type %s.", type_as_str(over->type));
   }
 
-  itd.it_type = it_type;
-  itd.itsym = make_local_and_alloc(SYM_VAR, it, it_type, NULL);
   itd.loop_start = sq_block_declare_and_start();
 
   SqBlock block_body = sq_block_declare();
   itd.loop_done = sq_block_declare();
 
-  SqRef cur = sq_i_load(sq_type_long, itd.ptr);
-  SqRef end = sq_i_load(sq_type_long, itd.end);
-  SqRef cmp = sq_i_csltl(sq_type_long, cur, end);
-  sq_i_jnz(cmp, block_body, itd.loop_done);
+  if (itd.kind == ITK_ARRAY || itd.kind == ITK_LIST) {
+    SqRef cur = sq_i_load(sq_type_long, itd.CONTIG.ptr);
+    SqRef end = sq_i_load(sq_type_long, itd.CONTIG.end);
+    SqRef cmp = sq_i_csltl(sq_type_long, cur, end);
+    sq_i_jnz(cmp, block_body, itd.loop_done);
+    sq_block_start(block_body);
 
-  sq_block_start(block_body);
+    store_by_type_val_into(itd.it_type, load_by_type_from(itd.it_type, cur), itd.itsym->ref);
+  } else if (itd.kind == ITK_RANGE) {
+    SqRef cur = sq_i_load(sq_type_long, itd.itsym->ref);
 
-  store_by_type_val_into(it_type, load_by_type_from(it_type, cur), itd.itsym->ref);
+    SqBlock block_neg_step = sq_block_declare();
+    SqBlock block_pos_step = sq_block_declare();
+    SqBlock block_cont = sq_block_declare();
+
+    // (is_neg ? cur > stop : cur < stop)
+    sq_i_jnz(itd.RANGE.is_neg, block_neg_step, block_pos_step);
+
+    sq_block_start(block_neg_step);
+    sq_i_jnz(sq_i_csgtl(sq_type_long, cur, itd.RANGE.stop), block_cont, itd.loop_done);
+
+    sq_block_start(block_pos_step);
+    sq_i_jnz(sq_i_csltl(sq_type_long, cur, itd.RANGE.stop), block_cont, itd.loop_done);
+
+    sq_block_start(block_cont);
+  } else {
+    error("internal error: unhandled case in iter");
+  }
 
   return itd;
 }
 
 static void iteration_epilog(IterationData itd) {
-  sq_i_storel(sq_i_add(sq_type_long, sq_i_load(sq_type_long, itd.ptr),
-                       sq_const_int(type_size(itd.it_type))),
-              itd.ptr);
+  if (itd.kind == ITK_ARRAY || itd.kind == ITK_LIST) {
+    sq_i_storel(sq_i_add(sq_type_long, sq_i_load(sq_type_long, itd.CONTIG.ptr),
+                         sq_const_int(type_size(itd.it_type))),
+                itd.CONTIG.ptr);
+  } else if (itd.kind == ITK_RANGE) {
+    SqRef it_val = sq_i_load(sq_type_long, itd.itsym->ref);
+    SqRef inc = sq_i_add(sq_type_long, it_val, itd.RANGE.step);
+    sq_i_storel(inc, itd.itsym->ref);
+  } else {
+    error("internal error: unhandled case in iter");
+  }
+
   sq_i_jmp(itd.loop_start);
   sq_block_start(itd.loop_done);
 }
@@ -3582,40 +3640,8 @@ static void for_statement(void) {
     Operand expr = parse_expression(NULL);
     if (type_eq(expr.type, type_range)) {
       ASSERT(op_is_local_addr(expr));
-      SqRef astart = expr.ref;
-      SqRef astop = sq_i_add(sq_type_long, expr.ref, sq_const_int(8));
-      SqRef astep = sq_i_add(sq_type_long, expr.ref, sq_const_int(16));
 
-      SqRef start = sq_i_load(sq_type_long, astart);
-      SqRef stop = sq_i_load(sq_type_long, astop);
-      SqRef step = sq_i_load(sq_type_long, astep);
-
-      SqRef is_neg = sq_i_csltl(sq_type_long, step, sq_const_int(0));
-
-      // TODO: This probably needs work if the Range isn't trivial, start
-      // should be using the Operand expr or something maybe
-      Sym* it = make_local_and_alloc(SYM_VAR, it_name, type_i64, NULL);
-      sq_i_storel(start, it->ref);
-
-      SqBlock loop = sq_block_declare_and_start();
-
-      SqRef cur = sq_i_load(sq_type_long, it->ref);
-
-      SqBlock block_neg_step = sq_block_declare();
-      SqBlock block_pos_step = sq_block_declare();
-      SqBlock block_cont = sq_block_declare();
-      SqBlock block_after = sq_block_declare();
-
-      // (is_neg ? cur > stop : cur < stop)
-      sq_i_jnz(is_neg, block_neg_step, block_pos_step);
-
-      sq_block_start(block_neg_step);
-      sq_i_jnz(sq_i_csgtl(sq_type_long, cur, stop), block_cont, block_after);
-
-      sq_block_start(block_pos_step);
-      sq_i_jnz(sq_i_csltl(sq_type_long, cur, stop), block_cont, block_after);
-
-      sq_block_start(block_cont);
+      IterationData itd = iteration_prolog(it_name, &expr);
 
       consume(TOK_COLON, "Expect ':' to start for.");
       consume(TOK_NEWLINE, "Expect newline after ':' to start for.");
@@ -3623,13 +3649,7 @@ static void for_statement(void) {
       LastStatementType lst = parse_block();
       ASSERT(lst == LST_NON_RETURN && "todo; return from loop");
 
-      SqRef it_val = sq_i_load(sq_type_long, it->ref);
-      SqRef inc = sq_i_add(sq_type_long, it_val, step);
-      sq_i_storel(inc, it->ref);
-
-      sq_i_jmp(loop);
-
-      sq_block_start(block_after);
+      iteration_epilog(itd);
     } else if (type_kind(expr.type) == TYPE_ARRAY || type_kind(expr.type) == TYPE_LIST) {
       ASSERT(op_is_local_addr(expr));
 
@@ -3642,10 +3662,10 @@ static void for_statement(void) {
       consume(TOK_NEWLINE, "Expect newline after ':' to start for.");
       consume(TOK_INDENT, "Expect indent to start for.");
       LastStatementType lst = parse_block();
+      ASSERT(lst == LST_NON_RETURN && "todo; return from loop");
 
       iteration_epilog(itd);
 
-      ASSERT(lst == LST_NON_RETURN && "todo; return from loop");
     } else {
       errorf("Unhandled for/in over type %s.", type_as_str(expr.type));
     }
