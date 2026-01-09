@@ -1,12 +1,12 @@
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-#if _WIN32
-void* memcpy(void* dest, const void* src, unsigned long long count);
-extern void* realloc(void* ptr, unsigned long long new_size);
-#else
-void* memcpy(void* dest, const void* src, unsigned long count);
-extern void* realloc(void* ptr, unsigned long new_size);
-#endif
+void $CheckFailed(void) {
+  fprintf(stderr, "check failed!\n");
+  exit(127);
+}
 
 typedef struct List {
   unsigned char* data;
@@ -14,7 +14,7 @@ typedef struct List {
   uint64_t capacity;
 } List;
 
-void List_append(List* list, uint64_t item_size, void* item) {
+void $List_append(List* list, uint64_t item_size, void* item) {
   if (list->count >= list->capacity) {
     list->capacity = list->capacity > 0 ? list->capacity * 2 : 16;
     list->data = realloc(list->data, list->capacity * item_size);
@@ -23,5 +23,5 @@ void List_append(List* list, uint64_t item_size, void* item) {
   list->count++;
 }
 
-void List_print(List* list, void (*subtype_repr)(void*)) {
+void $List_print(List* list, void (*subtype_repr)(void*)) {
 }

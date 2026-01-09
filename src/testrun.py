@@ -114,7 +114,7 @@ def main():
         clang_cmd[0] = "clang"
     subprocess.run(clang_cmd, check=True)
 
-    if cmds["out"]:
+    if cmds["out"] or cmds["err"]:
         res = subprocess.run(
             late_expansion(cmds["run"], late_vars).split(" "),
             cwd=root,
@@ -130,6 +130,15 @@ def main():
             print("but expected:\n")
             print(cmds["out"])
             print(hexdump(cmds["out"].encode("utf-8")))
+            return 1
+        err = res.stderr
+        if err != cmds["err"]:
+            print("got stderr:\n")
+            print(err)
+            print(hexdump(err.encode("utf-8")))
+            print("but expected:\n")
+            print(cmds["err"])
+            print(hexdump(cmds["err"].encode("utf-8")))
             return 1
     else:
         res = subprocess.run(

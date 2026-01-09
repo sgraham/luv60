@@ -2614,7 +2614,7 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
     Sym* lval = make_local_and_alloc(SYM_VAR, (Str){0}, elem.type, NULL);
     sq_i_storew(operand_to_sqref_imm(&elem), lval->ref);
 
-    SqRef list_append_func = sq_ref_extern("List_append");
+    SqRef list_append_func = sq_ref_extern("$List_append");
     sq_i_call3(sq_type_void, list_append_func, (SqCallArg){sq_type_long, untyped_list},
                (SqCallArg){sq_type_long, sq_const_int(type_size(elem.type))},
               // (SqCallArg){sq_type_long, operand_to_sqref_imm(&elem)}
@@ -3442,12 +3442,12 @@ static Operand parse_variable(bool can_assign, Type* expected) {
 
 // Has to match the order in tokens.inc.
 static Rule rules[NUM_TOKEN_KINDS] = {
-    {NULL, NULL, PREC_NONE},  // TOK_INVALID
+    {NULL, NULL, PREC_NONE},                            // TOK_INVALID
     {parse_invalid_trailing_comment, NULL, PREC_NONE},  // TOK_INVALID_TRAILING_COMMENT
-    {NULL, NULL, PREC_NONE},  // TOK_EOF
-    {NULL, NULL, PREC_NONE},  // TOK_INDENT
-    {NULL, NULL, PREC_NONE},  // TOK_DEDENT
-    {NULL, NULL, PREC_NONE},  // TOK_NEWLINE
+    {NULL, NULL, PREC_NONE},                            // TOK_EOF
+    {NULL, NULL, PREC_NONE},                            // TOK_INDENT
+    {NULL, NULL, PREC_NONE},                            // TOK_DEDENT
+    {NULL, NULL, PREC_NONE},                            // TOK_NEWLINE
 
     {NULL, NULL, PREC_NONE},  // TOK_NEWLINE_BLANK
     {NULL, NULL, PREC_NONE},  // TOK_NEWLINE_INDENT_0
@@ -3744,6 +3744,26 @@ static void print_statement(void) {
     }
   }
   expect_end_of_statement("print");
+}
+
+static void check_statement(void) {
+  Operand cond = parse_expression(NULL);
+  if (!type_is_condition(cond.type)) {
+    errorf("Result of check expression cannot be type %s.", type_as_str(cond.type));
+  }
+  ASSERT(type_kind(cond.type) == TYPE_BOOL && "todo, other types");
+
+  SqBlock fail_block = sq_block_declare();
+  SqBlock after_block = sq_block_declare();
+
+  sq_i_jnz(operand_to_sqref_imm(&cond), after_block, fail_block);
+
+  sq_block_start(fail_block);
+  // TODO: file/line would be nice!
+  sq_i_call0(sq_type_void, sq_ref_extern("$CheckFailed"));
+
+  sq_block_start(after_block);
+  expect_end_of_statement("check");
 }
 
 static LastStatementType parse_block(void) {
@@ -4109,6 +4129,11 @@ static LastStatementType parse_statement(bool toplevel) {
       advance();
       if (toplevel) error("pass statement not allowed at top level.");
       expect_end_of_statement("pass");
+      break;
+    case TOK_CHECK:
+      advance();
+      if (toplevel) error("todo; check statement at top level should be valid for consts.");
+      check_statement();
       break;
     case TOK_RETURN:
       advance();

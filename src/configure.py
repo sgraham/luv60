@@ -109,6 +109,7 @@ def get_tests():
         run = "OUT_DIR/{self}.exe"
         ret = "0"
         out = ""
+        err = ""
         disabled = []
         crun_prefix = "# CRUN: "
         cret_prefix = "# CRET: "
@@ -116,6 +117,7 @@ def get_tests():
         run_prefix = "# RUN: "
         ret_prefix = "# RET: "
         out_prefix = "# OUT: "
+        err_prefix = "# ERR: "
         disabled_linux_prefix = "# DISABLED_LINUX"
         disabled_win_prefix = "# DISABLED_WIN"
         disabled_mac_prefix = "# DISABLED_MAC"
@@ -138,6 +140,8 @@ def get_tests():
                     cret_set = True
                 elif l.startswith(cerr_prefix):
                     cerr += l[len(cerr_prefix) :].rstrip() + "\n"
+                elif l.startswith(err_prefix):
+                    err += l[len(err_prefix) :].rstrip() + "\n"
                 elif l.startswith(out_prefix):
                     out += l[len(out_prefix) :].rstrip() + "\n"
                 elif l.startswith(clangrun_prefix):
@@ -156,7 +160,7 @@ def get_tests():
                 spaces = len(test) * " "
                 return t.replace("{ssss}", spaces)
 
-            if not disabled and not cret_set and not ret_set and not out and not cerr:
+            if not disabled and not cret_set and not ret_set and not out and not err and not cerr:
                 print("Nothing being tested in %s?" % test)
                 sys.exit(1)
             tests[test] = {
@@ -165,6 +169,7 @@ def get_tests():
                 "cret": int(cret),
                 "ret": int(ret),
                 "out": sub(out),
+                "err": sub(err),
                 "cerr": sub(cerr),
                 "clangrun": sub(clangrun),
                 "disabled": disabled

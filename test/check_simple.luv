@@ -1,0 +1,9 @@
+# RET: 0
+def int main():
+    x = 5
+    y = 7
+    z = 5
+    check true
+    check x < y
+    check x <= z
+    return 0

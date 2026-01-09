@@ -1,0 +1,7 @@
+# ERR: check failed!
+# RET: 127
+def int main():
+    x = 1
+    y = 2
+    check y < x
+    return 0
