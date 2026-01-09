@@ -3647,7 +3647,10 @@ static void for_statement(void) {
       consume(TOK_NEWLINE, "Expect newline after ':' to start for.");
       consume(TOK_INDENT, "Expect indent to start for.");
       LastStatementType lst = parse_block();
-      ASSERT(lst == LST_NON_RETURN && "todo; return from loop");
+      if (lst != LST_NON_RETURN) {
+        sq_i_jmp(parser.cur_scope->return_block);
+        sq_block_declare_and_start();
+      }
 
       iteration_epilog(itd);
     } else if (type_kind(expr.type) == TYPE_ARRAY || type_kind(expr.type) == TYPE_LIST) {
@@ -3662,7 +3665,10 @@ static void for_statement(void) {
       consume(TOK_NEWLINE, "Expect newline after ':' to start for.");
       consume(TOK_INDENT, "Expect indent to start for.");
       LastStatementType lst = parse_block();
-      ASSERT(lst == LST_NON_RETURN && "todo; return from loop");
+      if (lst != LST_NON_RETURN) {
+        sq_i_jmp(parser.cur_scope->return_block);
+        sq_block_declare_and_start();
+      }
 
       iteration_epilog(itd);
 
@@ -4139,7 +4145,7 @@ static void parse_impl(Arena* main_arena,
   parser.str_counter = 0;
 
   SqConfiguration config = SQ_CONFIGURATION_DEFAULT;
-  //config.target = SQ_TARGET_AMD64_APPLE;
+  //config.target = SQ_TARGET_AMD64_WIN;
   config.output = out_file;
   config.output_function = sqbe_callback_output_function;
   if (verbose == 1) {

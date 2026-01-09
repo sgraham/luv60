@@ -1,0 +1,7 @@
+# OUT: 3
+def int main():
+    arr = [3, 4, 5]
+    for x in arr:
+        print x
+        return 0
+    return 1
