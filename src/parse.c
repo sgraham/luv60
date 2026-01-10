@@ -1230,24 +1230,24 @@ static Operand const_expression(void) {
 }
 
 static Type basic_tok_to_type[NUM_TOKEN_KINDS] = {
-    [TOK_BOOL] = type_bool,      //
-    [TOK_BYTE] = type_u8,        //
-    [TOK_CODEPT] = type_i32,  //
-    [TOK_DOUBLE] = type_double,  //
-    [TOK_F32] = type_float,      //
-    [TOK_F64] = type_double,     //
-    [TOK_FLOAT] = type_float,    //
-    [TOK_I16] = type_i16,        //
-    [TOK_I32] = type_i32,        //
-    [TOK_I64] = type_i64,        //
-    [TOK_I8] = type_i8,          //
-    [TOK_INT] = type_i32,        //
-    [TOK_STR] = type_str,        //
-    [TOK_U16] = type_u16,        //
-    [TOK_U32] = type_u32,        //
-    [TOK_U64] = type_u64,        //
-    [TOK_U8] = type_u8,          //
-    [TOK_UINT] = type_u32,       //
+    [TOK_BOOL] = type_bool,        //
+    [TOK_BYTE] = type_u8,          //
+    [TOK_CODEPT] = type_i32,       //
+    [TOK_DOUBLE] = type_double,    //
+    [TOK_F32] = type_float,        //
+    [TOK_F64] = type_double,       //
+    [TOK_FLOAT] = type_float,      //
+    [TOK_I16] = type_i16,          //
+    [TOK_I32] = type_i32,          //
+    [TOK_I64] = type_i64,          //
+    [TOK_I8] = type_i8,            //
+    [TOK_INT] = type_i32,          //
+    [TOK_STR] = type_str,          //
+    [TOK_U16] = type_u16,          //
+    [TOK_U32] = type_u32,          //
+    [TOK_U64] = type_u64,          //
+    [TOK_U8] = type_u8,            //
+    [TOK_UINT] = type_u32,         //
 };
 
 static int type_ranks[NUM_TYPE_KINDS] = {
@@ -1291,8 +1291,6 @@ static bool is_convertible(Operand* operand, Type dest) {
   Type src = operand->type;
   if (type_eq(dest, src)) {
     return true;
-  } else if (type_kind(dest) == TYPE_VOID) {
-    return true;
   } else if (type_is_arithmetic(dest) && type_is_arithmetic(src)) {
     // TODO: This would make sense, but have to have small things work
     // automatically somehow, e.g.
@@ -1302,9 +1300,9 @@ static bool is_convertible(Operand* operand, Type dest) {
     // and return the right type if it fits?
     //&& type_rank(dest) >= type_rank(src) && type_signs_match(dest, src)) {
     return true;
-  }
+
   // TODO: various pointer, null, etc.
-  else {
+  } else {
     return false;
   }
 }
@@ -3106,33 +3104,49 @@ static Val eval_unary_op(TokenKind op, Type type, Val val) {
 
 static Operand parse_unary(bool can_assign, Type* expected) {
   TokenKind op_kind = parser.cursor.prev_kind;
-  Operand expr = parse_precedence(PREC_UNARY, expected);
-  if (op_kind == TOK_MINUS) {
-    if (op_is_const(expr)) {
-      return operand_const(expr.type, eval_unary_op(op_kind, expr.type, expr.val));
-    } else {
-      ASSERT(false && "todo");
-      return operand_null;
+  if (op_kind == TOK_CAST) {
+    Type type = parse_type();
+    if (type_is_none(type)) {
+      error("Expected type for cast.");
+    }
+    Operand expr = parse_precedence(PREC_UNARY, expected);
+    if (!is_castable(&expr, type)) {
+      errorf("Cannot cast %s to %s.", type_as_str(expr.type), type_as_str(type));
+    }
+    if (!cast_operand(&expr, type)) {
+      error("internal error: failed to cast?");
+    }
+    return operand_rvalue_imm(type, operand_to_sqref_imm(&expr));
+  } else {
+    Operand expr = parse_precedence(PREC_UNARY, expected);
+    if (op_kind == TOK_MINUS) {
+      if (op_is_const(expr)) {
+        return operand_const(expr.type, eval_unary_op(op_kind, expr.type, expr.val));
+      } else {
+        ASSERT(false && "todo");
+        return operand_null;
 #if 0
       return operand_rvalue_imm(expr.type,
                                 ir_NEG(type_to_ir_type(expr.type), operand_to_irref_imm(&expr)));
 #endif
-    }
-  } else if (op_kind == TOK_NOT) {
-    // TODO: const eval
-    if (type_is_condition(expr.type)) {
-      return operand_rvalue_imm(expr.type, sq_i_ceqw(sqbasetype_from_type(expr.type),
-                                                     operand_to_sqref_imm(&expr), sq_const_int(0)));
-    } else {
-      errorf("Type %s cannot be used in a boolean not.", type_as_str(expr.type));
-    }
-  } else if (op_kind == TOK_AMPERSAND) {
+      }
+    } else if (op_kind == TOK_NOT) {
+      // TODO: const eval
+      if (type_is_condition(expr.type)) {
+        return operand_rvalue_imm(
+            expr.type, sq_i_ceqw(sqbasetype_from_type(expr.type), operand_to_sqref_imm(&expr),
+                                 sq_const_int(0)));
+      } else {
+        errorf("Type %s cannot be used in a boolean not.", type_as_str(expr.type));
+      }
+    } else if (op_kind == TOK_AMPERSAND) {
+      return operand_rvalue_imm(type_ptr(expr.type), expr.ref);
 #if 0
     return operand_rvalue_imm(type_ptr(expr.type), ir_VADDR(expr.ref));
 #endif
-    return operand_rvalue_imm(type_ptr(expr.type), expr.ref);
-  } else {
-    error("unary operator not implemented");
+    } else {
+      error("unary operator not implemented");
+    }
   }
 }
 

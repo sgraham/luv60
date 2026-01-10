@@ -14,6 +14,7 @@ typedef union TypeData {
     uint32_t size;
     uint32_t align;
     Type subtype;
+    uint32_t unused0;
   } PTR;
   struct {
     uint32_t size;
@@ -331,6 +332,7 @@ Type type_ptr(Type subtype) {
   td->PTR.size = 8;
   td->PTR.align = 8;
   td->PTR.subtype = subtype;
+  td->PTR.unused0 = 0;
 
   // The dict is only a set of intern'd Type, but we know they're all TYPE_PTR.
   DictInsert res = dict_deferred_insert(&cached_ptr_types, &ptr, plaintype_hash_func,

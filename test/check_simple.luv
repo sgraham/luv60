@@ -4,6 +4,7 @@ def int main():
     y = 7
     z = 5
     check true
+    check not false
     check x < y
     check x <= z
     return 0
