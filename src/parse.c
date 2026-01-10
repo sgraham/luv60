@@ -656,18 +656,36 @@ static SqRef operand_to_sqref_imm(Operand* op) {
     case OPK_REF_LVAL_LOCAL_ADDR:
     case OPK_REF_RVAL_LOCAL_ADDR: {
       if (type_is_aggregate(op->type)) {
-        // TODO: This seems questionable.
-        return op->ref;
+        error("internal error: cannot turn local aggregate into immediate.");
       }
       return load_by_type_from(op->type, op->ref);
     }
     case OPK_REF_RVAL_GLOBAL_ADDR:
     case OPK_REF_LVAL_GLOBAL_ADDR:
       if (type_is_aggregate(op->type)) {
-        // TODO: This seems questionable. see test/print.luv
-        return op->ref;
+        error("internal error: cannot turn global aggregate into immediate.");
       }
       return load_by_type_from(op->type, op->ref);
+    default:
+      error("internal error: unhandled OpKind");
+  }
+}
+
+static SqRef operand_to_sqref_lval(Operand* op) {
+  switch (op->kind) {
+    case OPK_CONST:
+      error("internal error: cannot take lval of const.");
+    case OPK_REF_RVAL: {
+      SqRef tmp = sq_i_alloc8(sq_const_int(type_size(op->type)));
+      store_by_type_val_into(op->type, op->ref, tmp);
+      return tmp;
+    }
+    case OPK_REF_RVAL_LOCAL_ADDR_BOUND_FUNC:  // assume something else will load ref2
+    case OPK_REF_LVAL_LOCAL_ADDR:
+    case OPK_REF_RVAL_LOCAL_ADDR:
+    case OPK_REF_RVAL_GLOBAL_ADDR:
+    case OPK_REF_LVAL_GLOBAL_ADDR:
+      return op->ref;
     default:
       error("internal error: unhandled OpKind");
   }
@@ -785,7 +803,7 @@ static void print_bool(Operand* op) {
 }
 
 static void print_str(Operand* op) {
-  SqRef obj = operand_to_sqref_imm(op);
+  SqRef obj = operand_to_sqref_lval(op);
   SqRef print_func = sq_ref_extern("printf");
   SqRef fmt_str = sq_ref_for_symbol(parser.str_print_fmt);
   SqRef ptr = sq_i_load(sq_type_long, obj);
@@ -795,7 +813,7 @@ static void print_str(Operand* op) {
 }
 
 static void print_range(Operand* op) {
-  SqRef obj = operand_to_sqref_imm(op);
+  SqRef obj = operand_to_sqref_lval(op);
   SqRef print_func = sq_ref_extern("printf");
 
   SqBlock block_2 = sq_block_declare();
@@ -866,9 +884,10 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
   if (type_kind(type) == TYPE_STR) {
     new->ref = sq_i_alloc8(sq_const_int(type_size(type)));
     if (initial_value) {
-      SqRef init = operand_to_sqref_imm(initial_value);
+      SqRef init = operand_to_sqref_lval(initial_value);
       sq_i_storel(sq_i_load(sq_type_long, init), new->ref);
-      sq_i_storel(sq_i_load(sq_type_long, sq_i_add(sq_type_long, init, sq_const_int(8))), new->ref);
+      sq_i_storel(sq_i_load(sq_type_long, sq_i_add(sq_type_long, init, sq_const_int(8))),
+                  sq_i_add(sq_type_long, new->ref, sq_const_int(8)));
     } else {
       sq_i_storel(sq_const_int(0), new->ref);
       sq_i_storel(sq_const_int(0), sq_i_add(sq_type_long, new->ref, sq_const_int(8)));
@@ -2120,7 +2139,11 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
                       num_args + 1, type_as_str(arg.type), type_as_str(param_type));
       }
       arg_values[num_args].type = type_to_sqtype(arg.type);
-      arg_values[num_args].value = operand_to_sqref_imm(&arg);
+      if (type_is_aggregate(arg.type)) {
+        arg_values[num_args].value = operand_to_sqref_lval(&arg);
+      } else {
+        arg_values[num_args].value = operand_to_sqref_imm(&arg);
+      }
       ++num_args;
       if (!match(TOK_COMMA)) {
         break;
@@ -2250,7 +2273,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
 
         store_by_type_val_into(
             field_type, operand_to_sqref_imm(&rhs_value),
-            sq_i_add(sq_type_long, operand_to_sqref_imm(&left), sq_const_int(field_offset)));
+            sq_i_add(sq_type_long, operand_to_sqref_lval(&left), sq_const_int(field_offset)));
         return operand_null;
       } else {
         errorf_offset(name_offset, "'%s' is not a field of type %s.",
@@ -2271,7 +2294,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       if (type_struct_find_field_by_name(left.type, name, &field_type, &field_offset)) {
         SqRef ref = load_by_type_from(
             field_type,
-            sq_i_add(sq_type_long, operand_to_sqref_imm(&left), sq_const_int(field_offset)));
+            sq_i_add(sq_type_long, operand_to_sqref_lval(&left), sq_const_int(field_offset)));
         return operand_rvalue_imm(field_type, ref);
       }
 
@@ -2319,7 +2342,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
     SqRef self_ptr;
     if (type_kind(original_left_type) == TYPE_STRUCT) {
       SqRef addr = sq_i_alloc8(sq_const_int(8));
-      sq_i_storel(operand_to_sqref_imm(&left), addr);
+      sq_i_storel(operand_to_sqref_lval(&left), addr);
       self_ptr = addr;
     } else if (type_is_basic(original_left_type)) {
       SqRef addr = sq_i_alloc8(sq_const_int(8));
@@ -3731,7 +3754,7 @@ static void print_statement(void) {
   if (sym) {
     Operand as_str = operand_rvalue_imm(
         type_str, sq_i_call1(parser.sq_type_str, sq_ref_for_symbol(sym->global),
-                             (SqCallArg){sq_type_long, operand_to_sqref_imm(&val)}));
+                             (SqCallArg){sq_type_long, operand_to_sqref_lval(&val)}));
 
     SqRef print_func = sq_ref_extern("printf");
     SqRef fmt_str = sq_ref_for_symbol(parser.str_print_fmt);
@@ -4073,7 +4096,13 @@ static LastStatementType return_statement(void) {
       errorf("Cannot convert type %s to expected return type %s.", type_as_str(op.type),
              type_as_str(func_ret));
     }
-    store_by_type_val_into(op.type, operand_to_sqref_imm(&op), parser.cur_scope->return_slot->ref);
+    if (type_is_aggregate(func_ret)) {
+      store_by_type_val_into(op.type, operand_to_sqref_lval(&op),
+                             parser.cur_scope->return_slot->ref);
+    } else {
+      store_by_type_val_into(op.type, operand_to_sqref_imm(&op),
+                             parser.cur_scope->return_slot->ref);
+    }
     return LST_RETURN_VALUE;
   } else {
     consume(TOK_NEWLINE, "Expected newline after return in function with no return type.");
