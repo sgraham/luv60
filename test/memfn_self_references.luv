@@ -1,0 +1,53 @@
+# OUT: 123
+# OUT: 456
+# OUT: 789
+# OUT: func
+# OUT: 123
+# OUT: 456
+# OUT: 789
+# OUT: 999
+# OUT: memfn 1
+# OUT: 123
+# OUT: 456
+# OUT: 789
+# OUT: 998
+# OUT: memfn 2
+# OUT: 123
+# OUT: 456
+# OUT: 789
+# OUT: 998
+struct Stuff:
+    int a
+    int b
+    int c
+
+def func(*Stuff p, int d):
+    print "func"
+    print p.a
+    print p.b
+    print p.c
+    print d
+
+on Stuff def memfn_2(self, int d):
+    print "memfn 2"
+    print self.a
+    print self.b
+    print self.c
+    print d
+
+on Stuff def memfn_1(self, int d):
+    print "memfn 1"
+    print self.a
+    print self.b
+    print self.c
+    print d
+    self.memfn_2(d)
+
+def int main():
+    x = Stuff(123, 456, 789)
+    print x.a
+    print x.b
+    print x.c
+    func(&x, 999)
+    x.memfn_1(998)
+    return 0
