@@ -175,39 +175,38 @@ typedef struct Parser {
 static Parser parser;
 
 #define OPK_BIT_CONST 0x1
-#define OPK_BIT_RVAL_REF 0x2
-#define OPK_BIT_LVAL_REF 0x4
-#define OPK_BIT_LOCAL_ADDR 0x8
-#define OPK_BIT_SECOND_REF 0x10
-#define OPK_BIT_GLOBAL_ADDR 0x20
+#define OPK_BIT_LVAL 0x2
+#define OPK_BIT_LOCAL_ADDR 0x4
+#define OPK_BIT_SECOND_REF 0x8
+#define OPK_BIT_GLOBAL_ADDR 0x10
 
 typedef enum OpKind {
+  // an immediate value in .ref
+  OPK_REF_RVAL = 0,
+
   // an actual number at compile time in .val
   OPK_CONST = OPK_BIT_CONST,
 
-  // an immediate value in .ref
-  OPK_REF_RVAL = OPK_BIT_RVAL_REF,
-
   // address of a local in .ref, not a named variable (e.g. a compound
   // literal, range, etc.)
-  OPK_REF_RVAL_LOCAL_ADDR = OPK_BIT_RVAL_REF | OPK_BIT_LOCAL_ADDR,
+  OPK_REF_RVAL_LOCAL_ADDR = OPK_BIT_LOCAL_ADDR,
 
   // address of a local in .ref to a named variable (could be stored to)
-  OPK_REF_LVAL_LOCAL_ADDR = OPK_BIT_LVAL_REF | OPK_BIT_LOCAL_ADDR,
+  OPK_REF_LVAL_LOCAL_ADDR = OPK_BIT_LVAL | OPK_BIT_LOCAL_ADDR,
 
   // global address as const in .ref, and an additional address that points at
   // the closure block in .ref2
-  OPK_REF_RVAL_LOCAL_ADDR_BOUND_FUNC = OPK_BIT_SECOND_REF | OPK_BIT_RVAL_REF | OPK_BIT_LOCAL_ADDR,
+  OPK_REF_RVAL_LOCAL_ADDR_BOUND_FUNC = OPK_BIT_SECOND_REF | OPK_BIT_LOCAL_ADDR,
 
   // global address as const in .ref (read-only; generally a function address)
-  OPK_REF_RVAL_GLOBAL_ADDR = OPK_BIT_RVAL_REF | OPK_BIT_GLOBAL_ADDR,
+  OPK_REF_RVAL_GLOBAL_ADDR = OPK_BIT_GLOBAL_ADDR,
 
   // global address as const in .ref (read-only; generally a function address),
   // and a self pointer in .ref2.
-  OPK_REF_RVAL_GLOBAL_ADDR_BOUND_FUNC = OPK_BIT_SECOND_REF | OPK_BIT_RVAL_REF | OPK_BIT_GLOBAL_ADDR,
+  OPK_REF_RVAL_GLOBAL_ADDR_BOUND_FUNC = OPK_BIT_SECOND_REF | OPK_BIT_GLOBAL_ADDR,
 
   // global variable address as const in .ref (could be stored to)
-  OPK_REF_LVAL_GLOBAL_ADDR = OPK_BIT_LVAL_REF | OPK_BIT_GLOBAL_ADDR,
+  OPK_REF_LVAL_GLOBAL_ADDR = OPK_BIT_LVAL | OPK_BIT_GLOBAL_ADDR,
 } OpKind;
 
 typedef struct Operand {
@@ -222,6 +221,10 @@ typedef struct Operand {
 
 static inline FORCE_INLINE bool op_is_const(Operand op) {
   return op.kind == OPK_CONST;
+}
+
+static inline FORCE_INLINE bool op_is_lval(Operand op) {
+  return op.kind & OPK_BIT_LVAL;
 }
 
 static inline FORCE_INLINE bool op_is_local_addr(Operand op) {
@@ -2635,7 +2638,7 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
     Sym* lval = make_local_and_alloc(SYM_VAR, (Str){0}, elem.type, NULL);
     sq_i_storew(operand_to_sqref_imm(&elem), lval->ref);
 
-    SqRef list_append_func = sq_ref_extern("$List_append");
+    SqRef list_append_func = sq_ref_extern("List_append");
     sq_i_call3(sq_type_void, list_append_func, (SqCallArg){sq_type_long, untyped_list},
                (SqCallArg){sq_type_long, sq_const_int(type_size(elem.type))},
               // (SqCallArg){sq_type_long, operand_to_sqref_imm(&elem)}
@@ -3078,7 +3081,7 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
     store_by_type_val_into(rhs.type, operand_to_sqref_imm(&rhs), target_addr);
     return operand_null;
   } else {
-    return operand_rvalue_imm(subtype, sq_i_load(sqbasetype_from_type(subtype), target_addr));
+    return operand_lvalue_local(subtype, target_addr);
   }
 }
 
@@ -3127,6 +3130,7 @@ static Val eval_unary_op(TokenKind op, Type type, Val val) {
 
 static Operand parse_unary(bool can_assign, Type* expected) {
   TokenKind op_kind = parser.cursor.prev_kind;
+  uint32_t expr_offset = cur_offset();
   if (op_kind == TOK_CAST) {
     Type type = parse_type();
     if (type_is_none(type)) {
@@ -3163,6 +3167,9 @@ static Operand parse_unary(bool can_assign, Type* expected) {
         errorf("Type %s cannot be used in a boolean not.", type_as_str(expr.type));
       }
     } else if (op_kind == TOK_AMPERSAND) {
+      if (!op_is_lval(expr)) {
+        error_offset(expr_offset, "Can't take the address of this.");
+      }
       return operand_rvalue_imm(type_ptr(expr.type), expr.ref);
 #if 0
     return operand_rvalue_imm(type_ptr(expr.type), ir_VADDR(expr.ref));
@@ -3797,7 +3804,7 @@ static void check_statement(void) {
 
   sq_block_start(fail_block);
   // TODO: file/line would be nice!
-  sq_i_call0(sq_type_void, sq_ref_extern("$CheckFailed"));
+  sq_i_call0(sq_type_void, sq_ref_extern("CheckFailed"));
 
   sq_block_start(after_block);
   expect_end_of_statement("check");
