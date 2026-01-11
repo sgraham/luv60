@@ -1,0 +1,44 @@
+# OUT: 0
+# OUT: 10
+# OUT: 20
+# OUT: 30
+# OUT: 3
+
+foreign *u8 realloc(*u8 ptr, u64 new_size)
+
+struct ListData_int:
+    *int data
+    u64 length
+    u64 capacity
+
+on ListData_int def ensure_capacity(self, u64 cap):
+    if self.capacity >= cap:
+        return
+    if self.capacity > 0u64:
+        self.capacity = self.capacity * 2
+    else:
+        self.capacity = 16
+    # TODO: arena
+    self.data = cast *int realloc(cast *u8 self.data, self.capacity * sizeof(int))
+
+on ListData_int def append(self, int item):
+    self.ensure_capacity(self.length + 1)
+    self.data[self.length] = item
+    self.length = self.length + 1
+
+on ListData_int def int at(self, u64 index):
+    check index < self.length
+    return self.data[index]
+
+def int main():
+    ListData_int lst
+    *ListData_int p = &lst
+    print p.length
+    p.append(10)
+    lst.append(20)
+    p.append(30)
+    print lst.at(0)
+    print p.at(1)
+    print lst.at(2)
+    print lst.length
+    return 0
