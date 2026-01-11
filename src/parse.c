@@ -2265,7 +2265,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
 
   if (can_assign && match_assignment()) {
     while (type_kind(left.type) == TYPE_PTR) {
-      left = operand_lvalue_local(type_ptr_subtype(left.type), sq_i_load(sq_type_long, left.ref));
+      left = operand_lvalue_local(type_ptr_subtype(left.type), operand_to_sqref_imm(&left));
     }
 
     if (type_kind(left.type) == TYPE_STRUCT) {
@@ -2288,17 +2288,16 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
     }
   } else {
     Type original_left_type = left.type;
+
     while (type_kind(left.type) == TYPE_PTR) {
-      left = operand_lvalue_local(type_ptr_subtype(left.type), sq_i_load(sq_type_long, left.ref));
+      left = operand_lvalue_local(type_ptr_subtype(left.type), operand_to_sqref_imm(&left));
     }
     if (type_kind(left.type) == TYPE_STRUCT) {
       uint32_t field_offset;
       Type field_type;
       if (type_struct_find_field_by_name(left.type, name, &field_type, &field_offset)) {
-        SqRef ref = load_by_type_from(
-            field_type,
-            sq_i_add(sq_type_long, operand_to_sqref_lval(&left), sq_const_int(field_offset)));
-        return operand_rvalue_imm(field_type, ref);
+        return operand_lvalue_local(field_type, sq_i_add(sq_type_long, operand_to_sqref_lval(&left),
+                                                         sq_const_int(field_offset)));
       }
 
       // Not an error yet; could be a memfn below.
@@ -2344,9 +2343,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
     // build that from the left that we originally had.
     SqRef self_ptr;
     if (type_kind(original_left_type) == TYPE_STRUCT) {
-      SqRef addr = sq_i_alloc8(sq_const_int(8));
-      sq_i_storel(operand_to_sqref_lval(&left), addr);
-      self_ptr = addr;
+      self_ptr = operand_to_sqref_lval(&left);
     } else if (type_is_basic(original_left_type)) {
       SqRef addr = sq_i_alloc8(sq_const_int(8));
       store_by_type_val_into(original_left_type, operand_to_sqref_imm(&left), addr);
@@ -4251,7 +4248,7 @@ static void parse_impl(Arena* main_arena,
   parser.str_counter = 0;
 
   SqConfiguration config = SQ_CONFIGURATION_DEFAULT;
-  //config.target = SQ_TARGET_AMD64_WIN;
+  //config.target = SQ_TARGET_AMD64_APPLE;
   config.output = out_file;
   config.output_function = sqbe_callback_output_function;
   if (verbose == 1) {

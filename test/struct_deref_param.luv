@@ -1,0 +1,20 @@
+# OUT: 123
+# OUT: 123
+# OUT: 123
+struct Stuff:
+    int space
+    int data
+
+def func(*Stuff p):
+    print p.data
+
+on Stuff def memfn(self):
+    print self.data
+
+def int main():
+    Stuff x
+    x.data = 123
+    print x.data
+    func(&x)
+    x.memfn()
+    return 0

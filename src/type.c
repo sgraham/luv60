@@ -421,7 +421,7 @@ const char* type_as_str(Type type) {
       return cstr_copy(arena_, str_internf("[]%s", type_as_str(type_list_subtype(type))));
     }
     case TYPE_STRUCT: {
-      return "TODO: STRUCT";
+      return cstr_copy(arena_, type_struct_decl_name(type));
     }
     default:
       ASSERT(false && "todo");
