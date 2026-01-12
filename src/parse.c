@@ -971,6 +971,7 @@ static Sym* make_global(SymKind kind, Str name, Type type, Val initial_value) {
 
 static Sym* make_param(Str name, Type type, int index) {
   Sym* new = sym_new(SYM_VAR, name, type);
+  // Parameters are values, not variables.
   new->ref = sq_func_param_named(type_to_sqtype(type),
 #if BUILD_DEBUG
                                  cstr_copy(parser.arena, name)
@@ -2287,29 +2288,30 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       error("todo; assigning to unexpected thing");
     }
   } else {
-    Type original_left_type = left.type;
-
-    while (type_kind(left.type) == TYPE_PTR) {
-      left = operand_lvalue_local(type_ptr_subtype(left.type), operand_to_sqref_imm(&left));
+    Operand new_left = left;
+    while (type_kind(new_left.type) == TYPE_PTR) {
+      new_left =
+          operand_lvalue_local(type_ptr_subtype(new_left.type), operand_to_sqref_imm(&new_left));
     }
-    if (type_kind(left.type) == TYPE_STRUCT) {
+    if (type_kind(new_left.type) == TYPE_STRUCT) {
       uint32_t field_offset;
       Type field_type;
-      if (type_struct_find_field_by_name(left.type, name, &field_type, &field_offset)) {
-        return operand_lvalue_local(field_type, sq_i_add(sq_type_long, operand_to_sqref_lval(&left),
-                                                         sq_const_int(field_offset)));
+      if (type_struct_find_field_by_name(new_left.type, name, &field_type, &field_offset)) {
+        return operand_lvalue_local(
+            field_type,
+            sq_i_add(sq_type_long, operand_to_sqref_lval(&new_left), sq_const_int(field_offset)));
       }
 
       // Not an error yet; could be a memfn below.
     }
 
     Sym* func_sym = {0};
-    switch (type_kind(left.type)) {
+    switch (type_kind(new_left.type)) {
       case TYPE_ARRAY:
         error("TODO: polymorphic array memfns");
 
       case TYPE_LIST: {
-        //MemfnsForType memfns = ensure_generic_impl(left.type);
+        //MemfnsForType memfns = ensure_generic_impl(new_left.type);
         error("TODO: polymorphic list memfns");
       }
 
@@ -2317,7 +2319,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
         error("TODO: polymorphic dict memfns");
 
       default: {
-        Sym* sym = lookup_memfn(left.type, name);
+        Sym* sym = lookup_memfn(new_left.type, name);
         if (!sym) {
           errorf("Undefined member function %s.", cstr_copy(parser.arena, name));
         } else {
@@ -2342,15 +2344,15 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
     // just be Stuff. The target memfn always just gets *Stuff, so we need to
     // build that from the left that we originally had.
     SqRef self_ptr;
-    if (type_kind(original_left_type) == TYPE_STRUCT) {
+    if (type_kind(left.type) == TYPE_STRUCT) {
       self_ptr = operand_to_sqref_lval(&left);
-    } else if (type_is_basic(original_left_type)) {
+    } else if (type_is_basic(left.type)) {
       SqRef addr = sq_i_alloc8(sq_const_int(8));
-      store_by_type_val_into(original_left_type, operand_to_sqref_imm(&left), addr);
+      store_by_type_val_into(left.type, operand_to_sqref_imm(&left), addr);
       self_ptr = addr;
-    } else if (type_kind(original_left_type) == TYPE_PTR &&
-               type_kind(type_ptr_subtype(original_left_type)) == TYPE_STRUCT) {
-      self_ptr = left.ref;
+    } else if (type_kind(left.type) == TYPE_PTR &&
+               type_kind(type_ptr_subtype(left.type)) == TYPE_STRUCT) {
+      self_ptr = operand_to_sqref_imm(&left);
     } else {
       error("TODO: self ptr");
     }
@@ -3039,13 +3041,11 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
             errorf("Cannot subscript using type %s.", type_as_str(subscript.type));
           }
           if (left_type_kind == TYPE_ARRAY) {
-            ASSERT(op_is_local_addr(left));
             subtype = type_array_subtype(left.type);
             target_addr = sq_i_add(sq_type_long, left.ref,
                                    sq_i_mul(sq_type_long, sq_const_int(type_size(subtype)),
                                             operand_to_sqref_imm(&subscript)));
           } else if (left_type_kind == TYPE_LIST) {
-            ASSERT(op_is_local_addr(left));
             subtype = type_list_subtype(left.type);
             SqRef arr_base = sq_i_load(sq_type_long, left.ref);
             target_addr = sq_i_add(sq_type_long, arr_base,
@@ -3053,10 +3053,9 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
                                             operand_to_sqref_imm(&subscript)));
           } else if (left_type_kind == TYPE_PTR) {
             subtype = type_ptr_subtype(left.type);
-            target_addr = sq_i_add(
-                sq_type_long, op_is_local_addr(left) ? sq_i_load(sq_type_long, left.ref) : left.ref,
-                sq_i_mul(sq_type_long, sq_const_int(type_size(subtype)),
-                         operand_to_sqref_imm(&subscript)));
+            target_addr = sq_i_add(sq_type_long, operand_to_sqref_imm(&left),
+                                   sq_i_mul(sq_type_long, sq_const_int(type_size(subtype)),
+                                            operand_to_sqref_imm(&subscript)));
           } else {
             error("TODO: subscript impl");
           }
@@ -3165,7 +3164,7 @@ static Operand parse_unary(bool can_assign, Type* expected) {
       }
     } else if (op_kind == TOK_AMPERSAND) {
       if (!op_is_lval(expr)) {
-        error_offset(expr_offset, "Can't take the address of this.");
+        error_offset(expr_offset, "Can't take the address of non-lvalue.");
       }
       return operand_rvalue_imm(type_ptr(expr.type), expr.ref);
 #if 0
@@ -3369,6 +3368,8 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
         }
       }
     case SCOPE_RESULT_PARAMETER: {
+      // Paramters aren't mutable and they're sqbe values, not variables with
+      // stack space.
       return operand_rvalue_imm(sym->type, sym->ref);
     }
     case SCOPE_RESULT_GLOBAL: {

@@ -1,0 +1,16 @@
+# OUT: 10
+# OUT: 123
+struct Stuff:
+    i32 wee
+    u64 count
+    u64 capacity
+
+on Stuff def func(self, i32 item):
+    print self.count
+    print item
+
+
+def int main():
+    mylist = Stuff(0, 10, 20)
+    mylist.func(123)
+    return 0

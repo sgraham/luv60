@@ -1,0 +1,61 @@
+# OUT: 13
+# OUT: 24
+# OUT: 36
+# OUT: 13
+# OUT: 24
+# OUT: 36
+# OUT: 13
+# OUT: 13
+# OUT: 9
+# OUT: 10
+# OUT: 11
+# OUT: 9
+# OUT: 10
+# OUT: 11
+# OUT: 12
+# OUT: 13
+# OUT: 14
+# OUT: 12
+# OUT: 13
+# OUT: 14
+struct Stuff:
+    u64 data
+    u64 length
+    u64 capacity
+
+on Stuff def zap(self):
+    print self.data
+
+def int main():
+    obj = Stuff(13, 24, 36)
+    *Stuff p = &obj
+    print obj.data
+    print obj.length
+    print obj.capacity
+    print p.data
+    print p.length
+    print p.capacity
+    obj.zap()
+    p.zap()
+
+    obj.data = 9
+    obj.length = 10
+    obj.capacity = 11
+    print obj.data
+    print obj.length
+    print obj.capacity
+    print p.data
+    print p.length
+    print p.capacity
+
+    p.data = 12
+    p.length = 13
+    p.capacity = 14
+
+    print obj.data
+    print obj.length
+    print obj.capacity
+    print p.data
+    print p.length
+    print p.capacity
+    return 0

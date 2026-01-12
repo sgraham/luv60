@@ -1,0 +1,11 @@
+# CRET: 1
+# CERR: {self}:8:10:    wee(&stuff)
+# CERR: {ssss}               ^ error: Can't take the address of non-lvalue.
+def wee(*int ptr):
+    pass
+
+def func(int stuff):
+    wee(&stuff)
+
+def main():
+    func(44)

@@ -1,6 +1,6 @@
 # CRET: 1
 # CERR: {self}:5:15:    *int p = &5
-# CERR: {ssss}                    ^ error: Can't take the address of this.
+# CERR: {ssss}                    ^ error: Can't take the address of non-lvalue.
 def int main():
     *int p = &5
     return 0
