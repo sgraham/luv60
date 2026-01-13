@@ -497,6 +497,7 @@ struct Target {
 	void (*emitfin)(FILE *);
 	char asloc[4];
 	char assym[4];
+	uint cansel:1;
 };
 
 #define BIT(n) ((bits)1 << (n))
@@ -732,6 +733,8 @@ O(nop,     T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(addr,    T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(blit0,   T(m,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,1,0) V(0)
 O(blit1,   T(w,e,e,e, x,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,1,0) V(0)
+O(sel0,    T(w,e,e,e, x,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(sel1,    T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
 O(swap,    T(w,l,s,d, w,l,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(1,0,0) V(0)
 O(sign,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
 O(salloc,  T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
@@ -783,6 +786,26 @@ O(flagfne,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(flagfo,   T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(flagfuo,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
+/* Backend Flag Select (Condition Move) */
+O(xselieq,  T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseline,  T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselisge, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselisgt, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselisle, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselislt, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseliuge, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseliugt, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseliule, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseliult, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfeq,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfge,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfgt,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfle,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselflt,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfne,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfo,   T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfuo,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+
 #undef T
 #undef X
 #undef V
@@ -825,6 +848,8 @@ enum {
 	Oalloc1 = Oalloc16,
 	Oflag = Oflagieq,
 	Oflag1 = Oflagfuo,
+	Oxsel = Oxselieq,
+	Oxsel1 = Oxselfuo,
 	NPubOp = Onop,
 	Jjf = Jjfieq,
 	Jjf1 = Jjffuo,
@@ -841,6 +866,7 @@ enum {
 #define isparbh(o) INRANGE(o, Oparsb, Oparuh)
 #define isargbh(o) INRANGE(o, Oargsb, Oarguh)
 #define isretbh(j) INRANGE(j, Jretsb, Jretuh)
+#define isxsel(o) INRANGE(o, Oxsel, Oxsel1)
 
 enum {
 	Kx = -1, /* "top" class (see usecheck() and clsmerge()) */
@@ -1232,6 +1258,7 @@ typedef struct GlobalContext {
 	// ['N'] = 0, /* ssa construction */
 	// ['C'] = 0, /* copy elimination */
 	// ['F'] = 0, /* constant folding */
+	// ['K'] = 0, /* if-conversion */
 	// ['A'] = 0, /* abi lowering */
 	// ['I'] = 0, /* instruction selection */
 	// ['L'] = 0, /* liveness */
@@ -1268,6 +1295,7 @@ static void *vnew(ulong, size_t, Pool);
 static void vfree(void *);
 static void vgrow(void *, ulong);
 static void addins(Ins **, uint *, Ins *);
+static void addbins(Ins **, uint *, Blk *);
 static void strf(char[NString], char *, ...);
 static uint32_t intern(char *);
 static char *str(uint32_t);
@@ -1339,6 +1367,8 @@ static void fillloop(Fn *);
 static void simpljmp(Fn *);
 static int reaches(Fn *, Blk *, Blk *);
 static int reachesnotvia(Fn *, Blk *, Blk *, Blk *);
+static int ifgraph(Blk *, Blk **, Blk **, Blk **);
+static void simplcfg(Fn *);
 
 /* mem.c */
 static void promote(Fn *);
@@ -1378,6 +1408,9 @@ static void gvn(Fn *);
 /* gcm.c */
 static int pinned(Ins *);
 static void gcm(Fn *);
+
+/* ifopt.c */
+static void ifconvert(Fn *fn);
 
 /* simpl.c */
 static void simpl(Fn *);
@@ -1466,7 +1499,7 @@ struct Amd64Op {
 };
 
 /* targ.c */
-static Amd64Op amd64_op[138];
+static Amd64Op amd64_op[158];
 
 /* sysv.c (abi) */
 static int amd64_sysv_rsave[25];
@@ -1572,7 +1605,7 @@ struct Rv64Op {
 /* targ.c */
 static int rv64_rsave[34];
 static int rv64_rclob[24];
-static Rv64Op rv64_op[138];
+static Rv64Op rv64_op[158];
 
 /* abi.c */
 static bits rv64_retregs(Ref, int[2]);
@@ -1859,19 +1892,22 @@ newblk(void)
 static void
 qbe_cfg_fixphis(Fn *f)
 {
-	Blk *b;
+	Blk *b, *bp;
 	Phi *p;
 	uint n, n0;
 
 	for (b=f->start; b; b=b->link) {
 		SQ_ASSERT(b->id < f->nblk);
 		for (p=b->phi; p; p=p->link) {
-			for (n=n0=0; n<p->narg; n++)
-				if (p->blk[n]->id != -1u) {
-					p->blk[n0] = p->blk[n];
+			for (n=n0=0; n<p->narg; n++) {
+				bp = p->blk[n];
+				if (bp->id != -1u)
+				if (bp->s1 == b || bp->s2 == b) {
+					p->blk[n0] = bp;
 					p->arg[n0] = p->arg[n];
 					n0++;
 				}
+			}
 			SQ_ASSERT(n0 > 0);
 			p->narg = n0;
 		}
@@ -2238,6 +2274,172 @@ reachesnotvia(Fn *fn, Blk *b, Blk *to, Blk *excl)
 {
 	excl->visit = 1;
 	return reaches(fn, b, to);
+}
+
+int
+ifgraph(Blk *ifb, Blk **pthenb, Blk **pelseb, Blk **pjoinb)
+{
+	Blk *s1, *s2, **t;
+
+	if (ifb->jmp.type != Jjnz)
+		return 0;
+
+	s1 = ifb->s1;
+	s2 = ifb->s2;
+	if (s1->id > s2->id) {
+		s1 = ifb->s2;
+		s2 = ifb->s1;
+		t = pthenb;
+		pthenb = pelseb;
+		pelseb = t;
+	}
+	if (s1 == s2)
+		return 0;
+
+	if (s1->jmp.type != Jjmp || s1->npred != 1)
+		return 0;
+
+	if (s1->s1 == s2) {
+		/* if-then / if-else */
+		if (s2->npred != 2)
+			return 0;
+		*pthenb = s1;
+		*pelseb = ifb;
+		*pjoinb = s2;
+		return 1;
+	}
+
+	if (s2->jmp.type != Jjmp || s2->npred != 1)
+		return 0;
+	if (s1->s1 != s2->s1 || s1->s1->npred != 2)
+		return 0;
+
+	SQ_ASSERT(s1->s1 != ifb);
+	*pthenb = s1;
+	*pelseb = s2;
+	*pjoinb = s1->s1;
+	return 1;
+}
+
+typedef struct Jmp Jmp;
+
+struct Jmp {
+	int type;
+	Ref arg;
+	Blk *s1, *s2;
+};
+
+static int
+qbe_cfg_jmpeq(Jmp *a, Jmp *b)
+{
+	return a->type == b->type && req(a->arg, b->arg)
+		&& a->s1 == b->s1 && a->s2 == b->s2;
+}
+
+static int
+qbe_cfg_jmpnophi(Jmp *j)
+{
+	if (j->s1 && j->s1->phi)
+		return 0;
+	if (j->s2 && j->s2->phi)
+		return 0;
+	return 1;
+}
+
+/* require cfg rpo, breaks use */
+void
+simplcfg(Fn *fn)
+{
+	Ins cpy, *i;
+	Blk *b, *bb, **pb;
+	Jmp *jmp, *j, *jj;
+	Phi *p;
+	int *empty, done;
+	uint n;
+
+	if (GC(debug)['C']) {
+		fprintf(stderr, "\n> Before CFG simplification:\n");
+		printfn(fn, stderr);
+	}
+
+	cpy = (Ins){.op = Ocopy};
+	for (b=fn->start; b; b=b->link)
+		if (b->npred == 1) {
+			bb = b->pred[0];
+			for (p=b->phi; p; p=p->link) {
+				cpy.cls = p->cls;
+				cpy.to = p->to;
+				cpy.arg[0] = phiarg(p, bb);
+				addins(&bb->ins, &bb->nins, &cpy);
+			}
+			b->phi = 0;
+		}
+
+	jmp = emalloc(fn->nblk * sizeof jmp[0]);
+	empty = emalloc(fn->nblk * sizeof empty[0]);
+	for (b=fn->start; b; b=b->link) {
+		jmp[b->id].type = b->jmp.type;
+		jmp[b->id].arg = b->jmp.arg;
+		jmp[b->id].s1 = b->s1;
+		jmp[b->id].s2 = b->s2;
+		empty[b->id] = !b->phi;
+		for (i=b->ins; i<&b->ins[b->nins]; i++)
+			if (i->op != Onop && i->op != Odbgloc) {
+				empty[b->id] = 0;
+				break;
+			}
+	}
+
+	do {
+		done = 1;
+		for (b=fn->start; b; b=b->link) {
+			if (b->id == -1u)
+				continue;
+			j = &jmp[b->id];
+			if (j->type == Jjmp && j->s1->npred == 1) {
+				SQ_ASSERT(!j->s1->phi);
+				addbins(&b->ins, &b->nins, j->s1);
+				empty[b->id] &= empty[j->s1->id];
+				jj = &jmp[j->s1->id];
+				pb = (Blk*[]){jj->s1, jj->s2, 0};
+				for (; (bb=*pb); pb++)
+					for (p=bb->phi; p; p=p->link) {
+						n = phiargn(p, j->s1);
+						p->blk[n] = b;
+					}
+				j->s1->id = -1u;
+				*j = *jj;
+				done = 0;
+			}
+			else if (j->type == Jjnz
+			&& empty[j->s1->id] && empty[j->s2->id]
+			&& qbe_cfg_jmpeq(&jmp[j->s1->id], &jmp[j->s2->id])
+			&& qbe_cfg_jmpnophi(&jmp[j->s1->id])) {
+				*j = jmp[j->s1->id];
+				done = 0;
+			}
+		}
+	} while (!done);
+
+	for (b=fn->start; b; b=b->link)
+		if (b->id != -1u) {
+			j = &jmp[b->id];
+			b->jmp.type = j->type;
+			b->jmp.arg = j->arg;
+			b->s1 = j->s1;
+			b->s2 = j->s2;
+			SQ_ASSERT(!j->s1 || j->s1->id != -1u);
+			SQ_ASSERT(!j->s2 || j->s2->id != -1u);
+		}
+
+	fillcfg(fn);
+	qbe_free(empty);
+	qbe_free(jmp);
+
+	if (GC(debug)['C']) {
+		fprintf(stderr, "\n> After CFG simplification:\n");
+		printfn(fn, stderr);
+	}
 }
 #undef G
 /*** END FILE: cfg.c ***/
@@ -3885,6 +4087,10 @@ qbe_gvn_dedupins(Fn *fn, Blk *b, Ins *i)
 	if (i->op == Onop || pinned(i))
 		return;
 
+	/* when sel instructions are inserted
+	 * before gvn, we may want to optimize
+	 * them here */
+	SQ_ASSERT(i->op != Osel0);
 	SQ_ASSERT(!req(i->to, NULL_R));
 	qbe_gvn_assoccon(fn, b, i);
 
@@ -4142,6 +4348,130 @@ gvn(Fn *fn)
 }
 #undef G
 /*** END FILE: gvn.c ***/
+/*** START FILE: ifopt.c ***/
+/* skipping all.h */
+
+enum {
+	MaxIns = 2,
+	MaxPhis = 2,
+};
+
+static int
+qbe_ifopt_okbranch(Blk *b)
+{
+	Ins *i;
+	int n;
+
+	n = 0;
+	for (i=b->ins; i<&b->ins[b->nins]; i++)
+		if (i->op != Odbgloc) {
+			if (pinned(i))
+				return 0;
+			if (i->op != Onop)
+				n++;
+		}
+	return n <= MaxIns;
+}
+
+static int
+qbe_ifopt_okjoin(Blk *b)
+{
+	Phi *p;
+	int n;
+
+	n = 0;
+	for (p=b->phi; p; p=p->link) {
+		if (KBASE(p->cls) != 0)
+			return 0;
+		n++;
+	}
+	return n <= MaxPhis;
+}
+
+static int
+qbe_ifopt_okgraph(Blk *ifb, Blk *thenb, Blk *elseb, Blk *joinb)
+{
+	if (joinb->npred != 2 || !qbe_ifopt_okjoin(joinb))
+		return 0;
+	SQ_ASSERT(thenb != elseb);
+	if (thenb != ifb && !qbe_ifopt_okbranch(thenb))
+		return 0;
+	if (elseb != ifb && !qbe_ifopt_okbranch(elseb))
+		return 0;
+	return 1;
+}
+
+static void
+qbe_ifopt_convert(Blk *ifb, Blk *thenb, Blk *elseb, Blk *joinb)
+{
+	Ins *ins, sel;
+	Phi *p;
+	uint nins;
+
+	ins = vnew(0, sizeof ins[0], PHeap);
+	nins = 0;
+	addbins(&ins, &nins, ifb);
+	if (thenb != ifb)
+		addbins(&ins, &nins, thenb);
+	if (elseb != ifb)
+		addbins(&ins, &nins, elseb);
+	SQ_ASSERT(joinb->npred == 2);
+	if (joinb->phi) {
+		sel = (Ins){
+			.op = Osel0, .cls = Kw,
+			.arg = {ifb->jmp.arg},
+		};
+		addins(&ins, &nins, &sel);
+	}
+	sel = (Ins){.op = Osel1};
+	for (p=joinb->phi; p; p=p->link) {
+		sel.to = p->to;
+		sel.cls = p->cls;
+		sel.arg[0] = phiarg(p, thenb);
+		sel.arg[1] = phiarg(p, elseb);
+		addins(&ins, &nins, &sel);
+	}
+	idup(ifb, ins, nins);
+	ifb->jmp.type = Jjmp;
+	ifb->jmp.arg = NULL_R;
+	ifb->s1 = joinb;
+	ifb->s2 = 0;
+	joinb->npred = 1;
+	joinb->pred[0] = ifb;
+	joinb->phi = 0;
+	vfree(ins);
+}
+
+/* eliminate if-then[-else] graphlets
+ * using sel instructions
+ * needs rpo pred use; breaks cfg use
+ */
+void
+ifconvert(Fn *fn)
+{
+	Blk *ifb, *thenb, *elseb, *joinb;
+
+	if (GC(debug)['K'])
+		fputs("\n> If-conversion:\n", stderr);
+
+	for (ifb=fn->start; ifb; ifb=ifb->link)
+		if (ifgraph(ifb, &thenb, &elseb, &joinb))
+		if (qbe_ifopt_okgraph(ifb, thenb, elseb, joinb)) {
+			if (GC(debug)['K'])
+				fprintf(stderr,
+					"    @%s -> @%s, @%s -> @%s\n",
+					ifb->name, thenb->name, elseb->name,
+					joinb->name);
+			qbe_ifopt_convert(ifb, thenb, elseb, joinb);
+		}
+
+	if (GC(debug)['K']) {
+		fprintf(stderr, "\n> After if-conversion:\n");
+		printfn(fn, stderr);
+	}
+}
+#undef G
+/*** END FILE: ifopt.c ***/
 /*** START FILE: live.c ***/
 /* skipping all.h */
 
@@ -4845,11 +5175,19 @@ qbe_main_func(Fn *fn)
   ret_on_err();
 	gvn(fn);
 	fillcfg(fn);
+	simplcfg(fn);
 	filluse(fn);
 	filldom(fn);
 	gcm(fn);
 	filluse(fn);
 	ssacheck(fn);
+	if (GC(T).cansel) {
+		ifconvert(fn);
+		fillcfg(fn);
+		filluse(fn);
+		filldom(fn);
+		ssacheck(fn);
+	}
 	GC(T).abi1(fn);
 	simpl(fn);
 	fillcfg(fn);
@@ -5555,6 +5893,8 @@ O(nop,     T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(addr,    T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(blit0,   T(m,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,1,0) V(0)
 O(blit1,   T(w,e,e,e, x,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,1,0) V(0)
+O(sel0,    T(w,e,e,e, x,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(sel1,    T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
 O(swap,    T(w,l,s,d, w,l,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(1,0,0) V(0)
 O(sign,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
 O(salloc,  T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
@@ -5605,6 +5945,26 @@ O(flagflt,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(flagfne,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(flagfo,   T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(flagfuo,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+
+/* Backend Flag Select (Condition Move) */
+O(xselieq,  T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseline,  T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselisge, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselisgt, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselisle, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselislt, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseliuge, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseliugt, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseliule, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseliult, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfeq,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfge,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfgt,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfle,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselflt,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfne,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfo,   T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfuo,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
 
 #undef T
 #undef X
@@ -7203,26 +7563,20 @@ spill(Fn *fn)
 			if (rtype(b->jmp.arg) == RCall)
 				v->t[0] |= GC(T).retregs(b->jmp.arg, 0);
 		}
+		if (rtype(b->jmp.arg) == RTmp) {
+			t = b->jmp.arg.val;
+			SQ_ASSERT(KBASE(G(tmp)[t].cls) == 0);
+			bsset(v, t);
+			qbe_spill_limit2(v, 0, 0, NULL);
+			if (!bshas(v, t))
+				b->jmp.arg = qbe_spill_slot(t);
+		}
 		for (t=Tmp0; bsiter(b->out, &t); t++)
 			if (!bshas(v, t))
 				qbe_spill_slot(t);
 		bscopy(b->out, v);
 
 		/* 2. process the block instructions */
-		if (rtype(b->jmp.arg) == RTmp) {
-			t = b->jmp.arg.val;
-			SQ_ASSERT(KBASE(G(tmp)[t].cls) == 0);
-			lvarg[0] = bshas(v, t);
-			bsset(v, t);
-			bscopy(u, v);
-			qbe_spill_limit2(v, 0, 0, NULL);
-			if (!bshas(v, t)) {
-				if (!lvarg[0])
-					bsclr(u, t);
-				b->jmp.arg = qbe_spill_slot(t);
-			}
-			qbe_spill_reloads(u, v);
-		}
 		GC(curi) = &GC(insb)[NIns];
 		for (i=&b->ins[b->nins]; i!=b->ins;) {
 			i--;
@@ -7868,6 +8222,15 @@ addins(Ins **pvins, uint *pnins, Ins *i)
 }
 
 void
+addbins(Ins **pvins, uint *pnins, Blk *b)
+{
+	Ins *i;
+
+	for (i=b->ins; i<&b->ins[b->nins]; i++)
+		addins(pvins, pnins, i);
+}
+
+void
 strf(char str[NString], char *s, ...)
 {
 	va_list ap;
@@ -7975,6 +8338,17 @@ igroup(Blk *b, Ins *i, Ins **i0, Ins **i1)
 			;
 		SQ_ASSERT(i < ie);
 		*i1 = i + 1;
+		return;
+	case Osel1:
+		for (; i>ib && (i-1)->op == Osel1; i--)
+			;
+		SQ_ASSERT(i->op == Osel0);
+		/* fall through */
+	case Osel0:
+		*i0 = i++;
+		for (; i<ie && i->op == Osel1; i++)
+			;
+		*i1 = i;
 		return;
 	default:
 		if (ispar(i->op))
@@ -8463,24 +8837,22 @@ struct QBE_AMD64_EMIT_E {
 };
 
 #define CMP(X) \
-	X(Ciule,      "be") \
-	X(Ciult,      "b")  \
-	X(Cisle,      "le") \
-	X(Cislt,      "l")  \
-	X(Cisgt,      "g")  \
-	X(Cisge,      "ge") \
-	X(Ciugt,      "a")  \
-	X(Ciuge,      "ae") \
-	X(Cieq,       "z")  \
-	X(Cine,       "nz") \
-	X(NCmpI+Cfle, "be") \
-	X(NCmpI+Cflt, "b")  \
-	X(NCmpI+Cfgt, "a")  \
-	X(NCmpI+Cfge, "ae") \
-	X(NCmpI+Cfeq, "z")  \
-	X(NCmpI+Cfne, "nz") \
-	X(NCmpI+Cfo,  "np") \
-	X(NCmpI+Cfuo, "p")
+	X(Ciule,      "be", "a") \
+	X(Ciult,      "b", "ae") \
+	X(Cisle,      "le", "g") \
+	X(Cislt,      "l", "ge") \
+	X(Cisgt,      "g", "le") \
+	X(Cisge,      "ge", "l") \
+	X(Ciugt,      "a", "be") \
+	X(Ciuge,      "ae", "b") \
+	X(Cieq,       "z", "nz") \
+	X(Cine,       "nz", "z") \
+	X(NCmpI+Cfle, "be", "a") \
+	X(NCmpI+Cflt, "b", "ae") \
+	X(NCmpI+Cfgt, "a", "be") \
+	X(NCmpI+Cfge, "ae", "b") \
+	X(NCmpI+Cfo,  "np", "p") \
+	X(NCmpI+Cfuo, "p", "np")
 
 enum {
 	SLong = 0,
@@ -8523,63 +8895,75 @@ static struct {
 	short cls;
 	char *fmt;
 } qbe_amd64_emit_omap[] = {
-	{ Oadd,    QBE_AMD64_EMIT_Ka, "+add%k %1, %=" },
-	{ Osub,    QBE_AMD64_EMIT_Ka, "-sub%k %1, %=" },
-	{ Oand,    QBE_AMD64_EMIT_Ki, "+and%k %1, %=" },
-	{ Oor,     QBE_AMD64_EMIT_Ki, "+or%k %1, %=" },
-	{ Oxor,    QBE_AMD64_EMIT_Ki, "+xor%k %1, %=" },
-	{ Osar,    QBE_AMD64_EMIT_Ki, "-sar%k %B1, %=" },
-	{ Oshr,    QBE_AMD64_EMIT_Ki, "-shr%k %B1, %=" },
-	{ Oshl,    QBE_AMD64_EMIT_Ki, "-shl%k %B1, %=" },
-	{ Omul,    QBE_AMD64_EMIT_Ki, "+imul%k %1, %=" },
-	{ Omul,    Ks, "+mulss %1, %=" },
-	{ Omul,    Kd, "+mulsd %1, %=" },
-	{ Odiv,    QBE_AMD64_EMIT_Ka, "-div%k %1, %=" },
-	{ Ostorel, QBE_AMD64_EMIT_Ka, "movq %L0, %M1" },
-	{ Ostorew, QBE_AMD64_EMIT_Ka, "movl %W0, %M1" },
-	{ Ostoreh, QBE_AMD64_EMIT_Ka, "movw %H0, %M1" },
-	{ Ostoreb, QBE_AMD64_EMIT_Ka, "movb %B0, %M1" },
-	{ Ostores, QBE_AMD64_EMIT_Ka, "movss %S0, %M1" },
-	{ Ostored, QBE_AMD64_EMIT_Ka, "movsd %D0, %M1" },
-	{ Oload,   QBE_AMD64_EMIT_Ka, "mov%k %M0, %=" },
-	{ Oloadsw, Kl, "movslq %M0, %L=" },
-	{ Oloadsw, Kw, "movl %M0, %W=" },
-	{ Oloaduw, QBE_AMD64_EMIT_Ki, "movl %M0, %W=" },
-	{ Oloadsh, QBE_AMD64_EMIT_Ki, "movsw%k %M0, %=" },
-	{ Oloaduh, QBE_AMD64_EMIT_Ki, "movzw%k %M0, %=" },
-	{ Oloadsb, QBE_AMD64_EMIT_Ki, "movsb%k %M0, %=" },
-	{ Oloadub, QBE_AMD64_EMIT_Ki, "movzb%k %M0, %=" },
-	{ Oextsw,  Kl, "movslq %W0, %L=" },
-	{ Oextuw,  Kl, "movl %W0, %W=" },
-	{ Oextsh,  QBE_AMD64_EMIT_Ki, "movsw%k %H0, %=" },
-	{ Oextuh,  QBE_AMD64_EMIT_Ki, "movzw%k %H0, %=" },
-	{ Oextsb,  QBE_AMD64_EMIT_Ki, "movsb%k %B0, %=" },
-	{ Oextub,  QBE_AMD64_EMIT_Ki, "movzb%k %B0, %=" },
+	{ Oadd,     QBE_AMD64_EMIT_Ka, "+add%k %1, %=" },
+	{ Osub,     QBE_AMD64_EMIT_Ka, "-sub%k %1, %=" },
+	{ Oand,     QBE_AMD64_EMIT_Ki, "+and%k %1, %=" },
+	{ Oor,      QBE_AMD64_EMIT_Ki, "+or%k %1, %=" },
+	{ Oxor,     QBE_AMD64_EMIT_Ki, "+xor%k %1, %=" },
+	{ Osar,     QBE_AMD64_EMIT_Ki, "-sar%k %B1, %=" },
+	{ Oshr,     QBE_AMD64_EMIT_Ki, "-shr%k %B1, %=" },
+	{ Oshl,     QBE_AMD64_EMIT_Ki, "-shl%k %B1, %=" },
+	{ Omul,     QBE_AMD64_EMIT_Ki, "+imul%k %1, %=" },
+	{ Omul,     Ks, "+mulss %1, %=" },
+	{ Omul,     Kd, "+mulsd %1, %=" },
+	{ Odiv,     QBE_AMD64_EMIT_Ka, "-div%k %1, %=" },
+	{ Ostorel,  QBE_AMD64_EMIT_Ka, "movq %L0, %M1" },
+	{ Ostorew,  QBE_AMD64_EMIT_Ka, "movl %W0, %M1" },
+	{ Ostoreh,  QBE_AMD64_EMIT_Ka, "movw %H0, %M1" },
+	{ Ostoreb,  QBE_AMD64_EMIT_Ka, "movb %B0, %M1" },
+	{ Ostores,  QBE_AMD64_EMIT_Ka, "movss %S0, %M1" },
+	{ Ostored,  QBE_AMD64_EMIT_Ka, "movsd %D0, %M1" },
+	{ Oload,    QBE_AMD64_EMIT_Ka, "mov%k %M0, %=" },
+	{ Oloadsw,  Kl, "movslq %M0, %L=" },
+	{ Oloadsw,  Kw, "movl %M0, %W=" },
+	{ Oloaduw,  QBE_AMD64_EMIT_Ki, "movl %M0, %W=" },
+	{ Oloadsh,  QBE_AMD64_EMIT_Ki, "movsw%k %M0, %=" },
+	{ Oloaduh,  QBE_AMD64_EMIT_Ki, "movzw%k %M0, %=" },
+	{ Oloadsb,  QBE_AMD64_EMIT_Ki, "movsb%k %M0, %=" },
+	{ Oloadub,  QBE_AMD64_EMIT_Ki, "movzb%k %M0, %=" },
+	{ Oextsw,   Kl, "movslq %W0, %L=" },
+	{ Oextuw,   Kl, "movl %W0, %W=" },
+	{ Oextsh,   QBE_AMD64_EMIT_Ki, "movsw%k %H0, %=" },
+	{ Oextuh,   QBE_AMD64_EMIT_Ki, "movzw%k %H0, %=" },
+	{ Oextsb,   QBE_AMD64_EMIT_Ki, "movsb%k %B0, %=" },
+	{ Oextub,   QBE_AMD64_EMIT_Ki, "movzb%k %B0, %=" },
 
-	{ Oexts,   Kd, "cvtss2sd %0, %=" },
-	{ Otruncd, Ks, "cvtsd2ss %0, %=" },
-	{ Ostosi,  QBE_AMD64_EMIT_Ki, "cvttss2si%k %0, %=" },
-	{ Odtosi,  QBE_AMD64_EMIT_Ki, "cvttsd2si%k %0, %=" },
-	{ Oswtof,  QBE_AMD64_EMIT_Ka, "cvtsi2%k %W0, %=" },
-	{ Osltof,  QBE_AMD64_EMIT_Ka, "cvtsi2%k %L0, %=" },
-	{ Ocast,   QBE_AMD64_EMIT_Ki, "movq %D0, %L=" },
-	{ Ocast,   QBE_AMD64_EMIT_Ka, "movq %L0, %D=" },
+	{ Oexts,    Kd, "cvtss2sd %0, %=" },
+	{ Otruncd,  Ks, "cvtsd2ss %0, %=" },
+	{ Ostosi,   QBE_AMD64_EMIT_Ki, "cvttss2si%k %0, %=" },
+	{ Odtosi,   QBE_AMD64_EMIT_Ki, "cvttsd2si%k %0, %=" },
+	{ Oswtof,   QBE_AMD64_EMIT_Ka, "cvtsi2%k %W0, %=" },
+	{ Osltof,   QBE_AMD64_EMIT_Ka, "cvtsi2%k %L0, %=" },
+	{ Ocast,    QBE_AMD64_EMIT_Ki, "movq %D0, %L=" },
+	{ Ocast,    QBE_AMD64_EMIT_Ka, "movq %L0, %D=" },
 
-	{ Oaddr,   QBE_AMD64_EMIT_Ki, "lea%k %M0, %=" },
-	{ Oswap,   QBE_AMD64_EMIT_Ki, "xchg%k %0, %1" },
-	{ Osign,   Kl, "cqto" },
-	{ Osign,   Kw, "cltd" },
-	{ Oxdiv,   QBE_AMD64_EMIT_Ki, "div%k %0" },
-	{ Oxidiv,  QBE_AMD64_EMIT_Ki, "idiv%k %0" },
-	{ Oxcmp,   Ks, "ucomiss %S0, %S1" },
-	{ Oxcmp,   Kd, "ucomisd %D0, %D1" },
-	{ Oxcmp,   QBE_AMD64_EMIT_Ki, "cmp%k %0, %1" },
-	{ Oxtest,  QBE_AMD64_EMIT_Ki, "test%k %0, %1" },
-#define X(c, s) \
-	{ Oflag+c, QBE_AMD64_EMIT_Ki, "set" s " %B=\n\tmovzb%k %B=, %=" },
+	{ Oaddr,    QBE_AMD64_EMIT_Ki, "lea%k %M0, %=" },
+	{ Oswap,    QBE_AMD64_EMIT_Ki, "xchg%k %0, %1" },
+	{ Osign,    Kl, "cqto" },
+	{ Osign,    Kw, "cltd" },
+	{ Oxdiv,    QBE_AMD64_EMIT_Ki, "div%k %0" },
+	{ Oxidiv,   QBE_AMD64_EMIT_Ki, "idiv%k %0" },
+	{ Oxcmp,    Ks, "ucomiss %S0, %S1" },
+	{ Oxcmp,    Kd, "ucomisd %D0, %D1" },
+	{ Oxcmp,    QBE_AMD64_EMIT_Ki, "cmp%k %0, %1" },
+	{ Oxtest,   QBE_AMD64_EMIT_Ki, "test%k %0, %1" },
+#define X(c, s, _) \
+	{ Oflag+c,  QBE_AMD64_EMIT_Ki, "set" s " %B=\n\tmovzb%k %B=, %=" },
 	CMP(X)
 #undef X
+	{ Oflagfeq, QBE_AMD64_EMIT_Ki, "setz %B=\n\tmovzb%k %B=, %=" },
+	{ Oflagfne, QBE_AMD64_EMIT_Ki, "setnz %B=\n\tmovzb%k %B=, %=" },
 	{ NOp, 0, 0 }
+};
+
+static char cmov[][2][16] = {
+#define X(c, s0, s1) \
+	[c] = { \
+		"cmov" s0 " %0, %=", \
+		"cmov" s1 " %1, %=", \
+	},
+	CMP(X)
+#undef X
 };
 
 static char *qbe_amd64_emit_rname[][4] = {
@@ -8857,6 +9241,8 @@ qbe_amd64_emit_emitins(Ins i, QBE_AMD64_EMIT_E *e)
 
 	switch (i.op) {
 	default:
+		if (isxsel(i.op))
+			goto case_Oxsel;
 	Table:
 		/* most instructions are just pulled out of
 		 * the table qbe_amd64_emit_omap[], some special cases are
@@ -9032,6 +9418,15 @@ qbe_amd64_emit_emitins(Ins i, QBE_AMD64_EMIT_E *e)
 	case Odbgloc:
 		emitdbgloc(i.arg[0].val, i.arg[1].val, e->f);
 		break;
+	case_Oxsel:
+		if (req(i.to, i.arg[1]))
+			qbe_amd64_emit_emitf(cmov[i.op-Oxsel][0], &i, e);
+		else {
+			if (!req(i.to, i.arg[0]))
+				qbe_amd64_emit_emitf("mov %0, %=", &i, e);
+			qbe_amd64_emit_emitf(cmov[i.op-Oxsel][1], &i, e);
+		}
+		break;
 	}
 }
 
@@ -9060,7 +9455,7 @@ void
 amd64_sysv_emitfn(Fn *fn, FILE *f)
 {
 	static char *ctoa[] = {
-	#define X(c, s) [c] = s,
+	#define X(c, s, _) [c] = s,
 		CMP(X)
 	#undef X
 	};
@@ -9131,7 +9526,7 @@ amd64_sysv_emitfn(Fn *fn, FILE *f)
 			fputs("\tret\n", f);
 			break;
 		case Jjmp:
-		Jmp:
+		lblJmp:
 			if (b->s1 != b->link)
 				fprintf(f, "\tjmp %sbb%d\n",
 					GC(T).asloc, G(amd64_sysv_emitfn_id0)+b->s1->id);
@@ -9149,7 +9544,7 @@ amd64_sysv_emitfn(Fn *fn, FILE *f)
 					c = cmpneg(c);
 				fprintf(f, "\tj%s %sbb%d\n", ctoa[c],
 					GC(T).asloc, G(amd64_sysv_emitfn_id0)+b->s2->id);
-				goto Jmp;
+				goto lblJmp;
 			}
 			die("unhandled jump %d", b->jmp.type);
 		}
@@ -9184,7 +9579,7 @@ void
 amd64_winabi_emitfn(Fn *fn, FILE *f)
 {
 	static char *ctoa[] = {
-	#define X(c, s) [c] = s,
+	#define X(c, s, _) [c] = s,
 		CMP(X)
 	#undef X
 	};
@@ -9247,7 +9642,7 @@ amd64_winabi_emitfn(Fn *fn, FILE *f)
 			fputs("\tret\n", f);
 			break;
 		case Jjmp:
-		Jmp:
+		lblJmp:
 			if (b->s1 != b->link)
 				fprintf(f, "\tjmp %sbb%d\n",
 					GC(T).asloc, G(amd64_winabi_emitfn_id0)+b->s1->id);
@@ -9265,7 +9660,7 @@ amd64_winabi_emitfn(Fn *fn, FILE *f)
 					c = cmpneg(c);
 				fprintf(f, "\tj%s %sbb%d\n", ctoa[c],
 					GC(T).asloc, G(amd64_winabi_emitfn_id0)+b->s2->id);
-				goto Jmp;
+				goto lblJmp;
 			}
 			die("unhandled jump %d", b->jmp.type);
 		}
@@ -9440,6 +9835,10 @@ qbe_amd64_isel_fixarg(Ref *r, int k, Ins *i, Fn *fn)
 			m->offset.type = CUndef;
 			m->base = r0;
 		}
+	}
+	else if (isxsel(op) && rtype(*r) == RCon) {
+		r1 = newtmp("isel", i->cls, fn);
+		emit(Ocopy, i->cls, r1, *r, NULL_R);
 	}
 	*r = r1;
 }
@@ -9704,7 +10103,8 @@ qbe_amd64_isel_sel(Ins i, Num *tn, Fn *fn)
 	case Oexts:
 	case Otruncd:
 	case Ocast:
-	case_OExt:
+	case_Oxsel:
+	case_Oext:
 Emit:
 		emiti(i);
 		i1 = GC(curi); /* qbe_amd64_isel_fixarg() can change curi */
@@ -9718,7 +10118,9 @@ Emit:
 		break;
 	default:
 		if (isext(i.op))
-			goto case_OExt;
+			goto case_Oext;
+		if (isxsel(i.op))
+			goto case_Oxsel;
 		if (isload(i.op))
 			goto case_Oload;
 		if (iscmp(i.op, &kc, &x)) {
@@ -9772,6 +10174,89 @@ qbe_amd64_isel_flagi(Ins *i0, Ins *i)
 	return 0;
 }
 
+static Ins*
+qbe_amd64_isel_selsel(Fn *fn, Blk *b, Ins *i, Num *tn)
+{
+	Ref r, cr[2];
+	int c, k, swap, gencmp, gencpy;
+	Ins *isel0, *isel1, *fi;
+	Tmp *t;
+
+	SQ_ASSERT(i->op == Osel1);
+	for (isel0=i; b->ins<isel0; isel0--) {
+		if (isel0->op == Osel0)
+			break;
+		SQ_ASSERT(isel0->op == Osel1);
+	}
+	SQ_ASSERT(isel0->op == Osel0);
+	r = isel0->arg[0];
+	SQ_ASSERT(rtype(r) == RTmp);
+	t = &fn->tmp[r.val];
+	fi = qbe_amd64_isel_flagi(b->ins, isel0);
+	cr[0] = cr[1] = NULL_R;
+	gencmp = gencpy = swap = 0;
+	k = Kw;
+	c = Cine;
+	if (!fi || !req(fi->to, r)) {
+		gencmp = 1;
+		cr[0] = r;
+		cr[1] = CON_Z;
+	}
+	else if (iscmp(fi->op, &k, &c)) {
+		if (c == NCmpI+Cfeq
+		|| c == NCmpI+Cfne) {
+			/* these are selected as 'and'
+			 * or 'or', so we check their
+			 * result with Cine
+			 */
+			c = Cine;
+			goto Other;
+		}
+		swap = qbe_amd64_isel_cmpswap(fi->arg, c);
+		if (swap)
+			c = cmpop(c);
+		if (t->nuse == 1) {
+			gencmp = 1;
+			cr[0] = fi->arg[0];
+			cr[1] = fi->arg[1];
+			*fi = (Ins){.op = Onop};
+		}
+	}
+	else if (fi->op == Oand && t->nuse == 1
+	     && (rtype(fi->arg[0]) == RTmp ||
+	         rtype(fi->arg[1]) == RTmp)) {
+		fi->op = Oxtest;
+		fi->to = NULL_R;
+		if (rtype(fi->arg[1]) == RCon) {
+			r = fi->arg[1];
+			fi->arg[1] = fi->arg[0];
+			fi->arg[0] = r;
+		}
+	}
+	else {
+	Other:
+		/* since flags are not tracked in liveness,
+		 * the result of the flag-setting instruction
+		 * has to be marked as live
+		 */
+		if (t->nuse == 1)
+			gencpy = 1;
+	}
+	/* generate conditional moves */
+	for (isel1=i; isel0<isel1; --isel1) {
+		isel1->op = Oxsel+c;
+		qbe_amd64_isel_sel(*isel1, tn, fn);
+    ret_on_err_i();
+	}
+	SQ_ASSERT(!gencmp || !gencpy);
+	if (gencmp)
+		qbe_amd64_isel_selcmp(cr, k, swap, fn);
+	if (gencpy)
+		emit(Ocopy, Kw, NULL_R, r, NULL_R);
+	*isel0 = (Ins){.op = Onop};
+	return isel0;
+}
+
 static void
 qbe_amd64_isel_seljmp(Blk *b, Fn *fn)
 {
@@ -9801,7 +10286,7 @@ qbe_amd64_isel_seljmp(Blk *b, Fn *fn)
 		b->jmp.type = Jjf + Cine;
 	}
 	else if (iscmp(fi->op, &k, &c)
-	     && c != NCmpI+Cfeq /* see qbe_amd64_isel_sel() */
+	     && c != NCmpI+Cfeq /* see qbe_amd64_isel_sel(), qbe_amd64_isel_selsel() */
 	     && c != NCmpI+Cfne) {
 		swap = qbe_amd64_isel_cmpswap(fi->arg, c);
 		if (swap)
@@ -10106,9 +10591,16 @@ amd64_isel(Fn *fn)
 		qbe_amd64_isel_anumber(num, b, fn->con);
 		qbe_amd64_isel_seljmp(b, fn);
 		for (i=&b->ins[b->nins]; i!=b->ins;) {
-			qbe_amd64_isel_sel(*--i, num, fn);
-      ret_on_err();
-    }
+			--i;
+			SQ_ASSERT(i->op != Osel0);
+			if (i->op == Osel1) {
+				i = qbe_amd64_isel_selsel(fn, b, i, num);
+        ret_on_err();
+      } else {
+				qbe_amd64_isel_sel(*i, num, fn);
+        ret_on_err();
+      }
+		}
 		idup(b, GC(curi), &GC(insb)[NIns]-GC(curi));
 	}
 	qbe_free(num);
@@ -11002,6 +11494,8 @@ O(nop,     T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(addr,    T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(blit0,   T(m,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,1,0) V(0)
 O(blit1,   T(w,e,e,e, x,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,1,0) V(0)
+O(sel0,    T(w,e,e,e, x,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(sel1,    T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
 O(swap,    T(w,l,s,d, w,l,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(1,0,0) V(0)
 O(sign,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
 O(salloc,  T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
@@ -11053,6 +11547,26 @@ O(flagfne,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(flagfo,   T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(flagfuo,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 
+/* Backend Flag Select (Condition Move) */
+O(xselieq,  T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseline,  T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselisge, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselisgt, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselisle, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselislt, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseliuge, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseliugt, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseliule, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseliult, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfeq,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfge,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfgt,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfle,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselflt,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfne,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfo,   T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfuo,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+
 #undef T
 #undef X
 #undef V
@@ -11080,6 +11594,7 @@ amd64_memargs(int op)
 	.memargs = amd64_memargs, \
 	.abi0 = elimsb, \
 	.isel = amd64_isel, \
+	.cansel = 1, \
 
 static Target T_amd64_sysv = {
 	.name = "amd64_sysv",
@@ -13416,7 +13931,7 @@ arm64_emitfn(Fn *fn, FILE *out)
 			fprintf(e->f, "\tret\n");
 			break;
 		case Jjmp:
-		Jmp:
+		lblJmp:
 			if (b->s1 != b->link)
 				fprintf(e->f,
 					"\tb\t%s%d\n",
@@ -13439,7 +13954,7 @@ arm64_emitfn(Fn *fn, FILE *out)
 				"\tb%s\t%s%d\n",
 				ctoa[c], GC(T).asloc, G(arm64_emitfn_id0)+b->s2->id
 			);
-			goto Jmp;
+			goto lblJmp;
 		}
 	}
 	G(arm64_emitfn_id0) += e->fn->nblk;
@@ -13811,6 +14326,7 @@ arm64_memargs(int op)
 	.isel = arm64_isel, \
 	.abi1 = arm64_abi, \
 	.emitfn = arm64_emitfn, \
+	.cansel = 0, \
 
 static Target T_arm64 = {
 	.name = "arm64",
@@ -14953,7 +15469,7 @@ rv64_emitfn(Fn *fn, FILE *f)
 {
 	int lbl, neg, off, frame, *pr, r;
 	Blk *b, *s;
-	Ins *i;
+	Ins *i, ii;
 
 	emitfnlnk(fn->name, &fn->lnk, f);
 
@@ -15044,7 +15560,7 @@ rv64_emitfn(Fn *fn, FILE *f)
 			);
 			break;
 		case Jjmp:
-		Jmp:
+		lblJmp:
 			if (b->s1 != b->link)
 				fprintf(f, "\tj .L%d\n", G(rv64_emitfn_id0)+b->s1->id);
 			else
@@ -15058,6 +15574,11 @@ rv64_emitfn(Fn *fn, FILE *f)
 				b->s2 = s;
 				neg = 1;
 			}
+			if (rtype(b->jmp.arg) == RSlot) {
+				ii.arg[0] = b->jmp.arg;
+				qbe_rv64_emit_emitf("lw t6, %M0", &ii, fn, f);
+				b->jmp.arg = TMP(QBE_RV64_T6);
+			}
 			SQ_ASSERT(isreg(b->jmp.arg));
 			fprintf(f,
 				"\tb%sz %s, .L%d\n",
@@ -15065,7 +15586,7 @@ rv64_emitfn(Fn *fn, FILE *f)
 				qbe_rv64_emit_rname[b->jmp.arg.val],
 				G(rv64_emitfn_id0)+b->s2->id
 			);
-			goto Jmp;
+			goto lblJmp;
 		}
 	}
 	G(rv64_emitfn_id0) += fn->nblk;
@@ -15489,6 +16010,8 @@ O(nop,     T(x,x,x,x, x,x,x,x), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(addr,    T(m,m,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(blit0,   T(m,e,e,e, m,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,1,0) V(0)
 O(blit1,   T(w,e,e,e, x,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,1,0) V(0)
+O(sel0,    T(w,e,e,e, x,e,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
+O(sel1,    T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,1)) X(0,0,0) V(0)
 O(swap,    T(w,l,s,d, w,l,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(1,0,0) V(0)
 O(sign,    T(w,l,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
 O(salloc,  T(e,l,e,e, e,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
@@ -15539,6 +16062,26 @@ O(flagflt,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(flagfne,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(flagfo,   T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
 O(flagfuo,  T(x,x,e,e, x,x,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,1) V(0)
+
+/* Backend Flag Select (Condition Move) */
+O(xselieq,  T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseline,  T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselisge, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselisgt, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselisle, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselislt, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseliuge, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseliugt, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseliule, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xseliult, T(w,l,e,e, w,l,e,e), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfeq,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfge,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfgt,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfle,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselflt,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfne,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfo,   T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
+O(xselfuo,  T(e,e,s,d, e,e,s,d), F(0,0,0,0,0,0,0,0,0,0)) X(0,0,0) V(0)
 
 #undef T
 #undef X
@@ -15595,6 +16138,7 @@ static Target T_rv64 = {
 	.emitfn = rv64_emitfn,
 	.emitfin = elf_emitfin,
 	.asloc = ".L",
+	.cansel = 0,
 };
 
 MAKESURE(rsave_size_ok, sizeof rv64_rsave == (QBE_RV64_NGPS+QBE_RV64_NFPS+1) * sizeof(int));
@@ -17078,7 +17622,7 @@ void sq_i_dbgloc(SqRef arg0 /*weee*/, SqRef arg1 /*weee*/) { _normal_two_op_void
 
 QBE LICENSE:
 
-© 2015-2025 Quentin Carbonneaux <quentin@c9x.me>
+© 2015-2026 Quentin Carbonneaux <quentin@c9x.me>
 
 Permission is hereby granted, free of charge, to any person obtaining a
 copy of this software and associated documentation files (the "Software"),
