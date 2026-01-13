@@ -129,51 +129,6 @@ typedef struct TokenCursor {
   int paren_level;
 } TokenCursor;
 
-typedef struct Parser {
-  Arena* arena;
-  Arena* var_scope_arena;
-  const char* cur_filename;
-
-  const char* file_contents;
-  uint32_t num_tokens;
-  uint32_t* token_offsets;
-
-  TokenCursor cursor;
-
-  TokenKind token_buffer[16];
-  int num_buffered_tokens;
-  int indent_levels[12];  // This is the maximum possible in lexer.
-  int num_indents;
-
-  Scope scopes[MAX_SCOPES];
-  int num_scopes;
-  Scope* cur_scope;
-
-  int verbose;
-
-  Str static_str_main;
-  Str static_str___str__;
-  Str static_str___repr__;
-  Str static_str_ret;
-  Str static_str_up;
-
-  SqSymbol i32_print_fmt;
-  SqSymbol float_print_fmt;
-  SqSymbol str_print_fmt;
-  SqSymbol range2_print_fmt;
-  SqSymbol range3_print_fmt;
-  SqSymbol str_true;
-  SqSymbol str_false;
-
-  SqType sq_type_str;
-  SqType sq_type_list;
-  SqType sq_type_range;
-
-  int str_counter;
-} Parser;
-
-static Parser parser;
-
 #define OPK_BIT_CONST 0x1
 #define OPK_BIT_LVAL 0x2
 #define OPK_BIT_LOCAL_ADDR 0x4
@@ -218,6 +173,53 @@ typedef struct Operand {
   };
   SqRef ref2; // Used for fat function pointers and $up.
 } Operand;
+
+typedef struct Parser {
+  Arena* arena;
+  Arena* var_scope_arena;
+  const char* cur_filename;
+
+  const char* file_contents;
+  uint32_t num_tokens;
+  uint32_t* token_offsets;
+
+  TokenCursor cursor;
+
+  TokenKind token_buffer[16];
+  int num_buffered_tokens;
+  int indent_levels[12];  // This is the maximum possible in lexer.
+  int num_indents;
+
+  Scope scopes[MAX_SCOPES];
+  int num_scopes;
+  Scope* cur_scope;
+
+  Operand op_null_ptr;
+
+  int verbose;
+
+  Str static_str_main;
+  Str static_str___str__;
+  Str static_str___repr__;
+  Str static_str_ret;
+  Str static_str_up;
+
+  SqSymbol i32_print_fmt;
+  SqSymbol float_print_fmt;
+  SqSymbol str_print_fmt;
+  SqSymbol range2_print_fmt;
+  SqSymbol range3_print_fmt;
+  SqSymbol str_true;
+  SqSymbol str_false;
+
+  SqType sq_type_str;
+  SqType sq_type_list;
+  SqType sq_type_range;
+
+  int str_counter;
+} Parser;
+
+static Parser parser;
 
 static inline FORCE_INLINE bool op_is_const(Operand op) {
   return op.kind == OPK_CONST;
@@ -303,7 +305,7 @@ static void opv_append(OpVec* vec, Operand op) {
   opv_set(vec, vec->size - 1, op);
 }
 
-static Operand operand_null;
+static Operand operand_none;
 
 typedef enum LastStatementType {
   LST_NON_RETURN,
@@ -649,6 +651,8 @@ static SqRef operand_to_sqref_imm(Operand* op) {
           return sq_const_single(op->val.f);
         case TYPE_DOUBLE:
           return sq_const_double(op->val.d);
+        case TYPE_PTR:
+          return sq_const_int((int64_t)(uint64_t)op->val.p);
         default:
           error("internal error: unexpected const type.");
       }
@@ -1323,8 +1327,9 @@ static bool is_convertible(Operand* operand, Type dest) {
     // and return the right type if it fits?
     //&& type_rank(dest) >= type_rank(src) && type_signs_match(dest, src)) {
     return true;
-
-  // TODO: various pointer, null, etc.
+  } else if (memcmp(operand, &parser.op_null_ptr, sizeof(Operand)) == 0) {
+    return true;
+  // TODO: various pointer, etc.
   } else {
     return false;
   }
@@ -1753,12 +1758,12 @@ static Operand parse_precedence(Precedence precedence, Type* expected);
 
 static Operand parse_invalid_trailing_comment(bool can_assign, Type* expected) {
   error("Trailing comments not allowed.");
-  return operand_null;
+  return operand_none;
 }
 
 static Operand parse_alignof(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
-  return operand_null;
+  return operand_none;
 }
 
 static Operand parse_and(Operand left, bool can_assign, Type* expected) {
@@ -2104,7 +2109,7 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
     return operand_rvalue_imm(left.type, result);
   } else {
     ASSERT(false && "todo");
-    return operand_null;
+    return operand_none;
   }
 }
 
@@ -2234,7 +2239,7 @@ static Operand parse_compound_literal(bool can_assign, Type* expected) {
 
 static Operand parse_dict_literal(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
-  return operand_null;
+  return operand_none;
 }
 
 static Str memfn_name_from_type_name(Str type_name, Str func_name) {
@@ -2275,10 +2280,15 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       if (type_struct_find_field_by_name(left.type, name, &field_type, &field_offset)) {
         Operand rhs_value = parse_expression(expected);
 
+        if (!convert_operand(&rhs_value, field_type)) {
+          errorf_offset(name_offset, "Cannot assign type %s to field '%s' which is type %s.",
+                        type_as_str(rhs_value.type), cstr_copy(parser.arena, name),
+                        type_as_str(field_type));
+        }
         store_by_type_val_into(
             field_type, operand_to_sqref_imm(&rhs_value),
             sq_i_add(sq_type_long, operand_to_sqref_lval(&left), sq_const_int(field_offset)));
-        return operand_null;
+        return operand_none;
       } else {
         errorf_offset(name_offset, "'%s' is not a field of type %s.",
                       cstr_copy(parser.arena, name),
@@ -2360,16 +2370,16 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
   }
 
   ASSERT(false && "todo");
-  return operand_null;
+  return operand_none;
 }
 
 static Operand parse_grouping(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
-  return operand_null;
+  return operand_none;
 }
 static Operand parse_in_or_not_in(Operand left, bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
-  return operand_null;
+  return operand_none;
 }
 
 static Operand parse_len(bool can_assign, Type* expected) {
@@ -2726,8 +2736,7 @@ static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
 }
 
 static Operand parse_null_literal(bool can_assign, Type* expected) {
-  ASSERT(false && "not implemented");
-  return operand_null;
+  return parser.op_null_ptr;
 }
 
 static Operand parse_int_literal(bool allow_suffix) {
@@ -2917,8 +2926,8 @@ static Operand parse_range_literal(bool can_assign, Type* expected) {
     errorf("Cannot convert type %s to i64.", type_as_str(first.type));
   }
 
-  Operand second = operand_null;
-  Operand third = operand_null;
+  Operand second = operand_none;
+  Operand third = operand_none;
   if (match(TOK_COMMA)) {
     second = parse_precedence(PREC_OR, &type_i64);
     if (!convert_operand(&second, type_i64)) {
@@ -3004,7 +3013,7 @@ static Operand parse_string(bool can_assign, Type* expected) {
 
 static Operand parse_string_interpolate(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
-  return operand_null;
+  return operand_none;
 }
 
 static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
@@ -3075,7 +3084,7 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
       errorf("Cannot store type %s into %s.", type_as_str(rhs.type), type_as_str(left.type));
     }
     store_by_type_val_into(rhs.type, operand_to_sqref_imm(&rhs), target_addr);
-    return operand_null;
+    return operand_none;
   } else {
     return operand_lvalue_local(subtype, target_addr);
   }
@@ -3083,7 +3092,7 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
 
 static Operand parse_typeid(bool can_assign, Type* expected) {
   ASSERT(false && "not implemented");
-  return operand_null;
+  return operand_none;
 }
 
 static long long eval_unary_op_ll(TokenKind op, long long val) {
@@ -3147,7 +3156,7 @@ static Operand parse_unary(bool can_assign, Type* expected) {
         return operand_const(expr.type, eval_unary_op(op_kind, expr.type, expr.val));
       } else {
         ASSERT(false && "todo");
-        return operand_null;
+        return operand_none;
 #if 0
       return operand_rvalue_imm(expr.type,
                                 ir_NEG(type_to_ir_type(expr.type), operand_to_irref_imm(&expr)));
@@ -3409,7 +3418,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
         }
         if (eq_kind == TOK_EQ) {
           store_by_type_val_into(op.type, operand_to_sqref_imm(&op), sym->ref);
-          return operand_null;
+          return operand_none;
         } else {
           error_offset(eq_offset, "Unhandled assignment type.");
         }
@@ -3429,7 +3438,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
           }
           ASSERT(eq_kind == TOK_EQ);
           ir_STORE(ir_CONST_ADDR(sym->addr), operand_to_irref_imm(&op));
-          return operand_null;
+          return operand_none;
 #endif
           ASSERT((scope_result == SCOPE_RESULT_UNDEFINED && !sym) ||
                  (scope_result == SCOPE_RESULT_GLOBAL && sym));
@@ -3441,7 +3450,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
             // Local variable declaration without a type.
             Operand op = parse_expression(NULL);
             make_local_and_alloc(SYM_VAR, target, op.type, &op);
-            return operand_null;
+            return operand_none;
           } else {
             error_offset(eq_offset,
                          "Cannot use an augmented assignment when implicitly declaring a local.");
@@ -3457,7 +3466,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
               error("Global initializers must be constants.");
             }
             make_global(SYM_VAR, target, op.type, op.val);
-            return operand_null;
+            return operand_none;
 #if 0
             Sym* new_global = make_global(SYM_VAR, target, op.type, op.val);
             return operand_lvalue_global_addr(op.type, sq_ref_for_symbol(new_global->global));
@@ -3996,7 +4005,7 @@ static void struct_statement() {
       field_initializers[num_fields] = const_expression();
       have_initializers = true;
     } else {
-      field_initializers[num_fields] = operand_null;
+      field_initializers[num_fields] = operand_none;
     }
 
     ++num_fields;
@@ -4094,7 +4103,7 @@ static void parse_variable_statement(Type type) {
 static LastStatementType return_statement(void) {
   Type func_ret = type_func_return_type(parser.cur_scope->func_sym->type);
   ASSERT(!type_is_none(func_ret));
-  Operand op = operand_null;
+  Operand op = operand_none;
   if (!type_eq(func_ret, type_void)) {
     op = parse_expression(NULL);
     if (!convert_operand(&op, func_ret)) {
@@ -4240,6 +4249,7 @@ static void parse_impl(Arena* main_arena,
   parser.indent_levels[0] = 0;
   parser.num_indents = 1;
   parser.num_buffered_tokens = 0;
+  parser.op_null_ptr = operand_const(type_ptr(type_void), (Val){.p = 0});
   parser.verbose = verbose;
   parser.static_str_main = str_intern_len("main", 4);
   parser.static_str___str__ = str_intern_len("__str__", 7);

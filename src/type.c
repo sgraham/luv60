@@ -410,6 +410,10 @@ const char* type_as_str(Type type) {
       return cstr_copy(arena_, str_internf("%s)", cstr_copy(arena_, head)));
     }
     case TYPE_PTR: {
+      // void not in the general case, we only want to allow void*.
+      if (type_eq(type_ptr_subtype(type), type_void)) {
+        return "*opaque";
+      }
       Str ptr = str_internf("*%s", type_as_str(type_ptr_subtype(type)));
       return cstr_copy(arena_, ptr);
     }

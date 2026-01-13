@@ -1,0 +1,25 @@
+# OUT: 123
+# OUT: 456
+
+foreign *u8 realloc(*u8 ptr, u64 new_size)
+foreign free(*u8 ptr)
+
+struct Stuff:
+    *int data
+
+on Stuff def init(self):
+    self.data = cast *int realloc(cast *u8 self.data, sizeof(int) * 100)
+
+on Stuff def free(self):
+    free(cast *u8 self.data)
+    self.data = null
+
+def int main():
+    Stuff s
+    s.init()
+    s.data[0] = 123
+    s.data[1] = 456
+    print s.data[0]
+    print s.data[1]
+    s.free()
+    return 0

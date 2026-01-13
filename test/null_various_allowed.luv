@@ -1,0 +1,21 @@
+# RET: 0
+struct Stuff:
+    int num
+    *int data
+
+def int main():
+    *int x
+    x = null
+    *Stuff s
+    s = null
+
+    *int y = null
+    *Stuff t = null
+
+    stuff = Stuff(44, null)
+
+    Stuff things
+    things.num = 123
+    things.data = null
+
+    return 0
