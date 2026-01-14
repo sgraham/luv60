@@ -8,6 +8,43 @@ void CheckFailed(void) {
   exit(127);
 }
 
+typedef struct Str {
+  const uint8_t* data;
+  int64_t size;
+} Str;
+
+typedef struct List {
+  unsigned char* data;
+  uint64_t size;
+  uint64_t capacity;
+} List;
+
+void List$reserve(List* list, uint64_t capacity, uint64_t item_size) {
+  if (capacity <= list->capacity) {
+    return;
+  }
+  while (list->capacity < capacity) {
+    list->capacity = list->capacity > 0 ? list->capacity * 2 : 16;
+  }
+  list->data = realloc(list->data, list->capacity * item_size);
+}
+
+Str str$join(Str* str, List* strings) {
+  List string_buffer = {0};
+  for (size_t i = 0; i < strings->size; ++i) {
+    Str* item = (Str*)&strings->data[i * sizeof(Str)];
+    List$reserve(&string_buffer, string_buffer.size + item->size + str->size, sizeof(unsigned char));
+    memcpy(&string_buffer.data[string_buffer.size], item->data, item->size);
+    string_buffer.size += item->size;
+    if (i < strings->size - 1) {
+      memcpy(&string_buffer.data[string_buffer.size], str->data, str->size);
+      string_buffer.size += str->size;
+    }
+  }
+
+  return (Str){string_buffer.data, string_buffer.size};
+}
+
 #define RT_CHECK(cond) if (!(cond)) { fprintf(stderr, "%s\n", #cond); CheckFailed(); }
 
 #if 0
@@ -46,22 +83,6 @@ uint64_t _impl_NothingRetrieveRAX(void) {}
 
 #define LOAD_LIST_DATA() uint64_t item_size; GET_ENV_DATA(item_size)
 #endif
-
-typedef struct List {
-  unsigned char* data;
-  uint64_t size;
-  uint64_t capacity;
-} List;
-
-void List$reserve(List* list, uint64_t capacity, uint64_t item_size) {
-  if (capacity <= list->capacity) {
-    return;
-  }
-  while (list->capacity < capacity) {
-    list->capacity = list->capacity > 0 ? list->capacity * 2 : 16;
-  }
-  list->data = realloc(list->data, list->capacity * item_size);
-}
 
 void List$free(List* list) {
   free(list->data);

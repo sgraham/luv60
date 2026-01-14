@@ -1,0 +1,19 @@
+on str foreign str join(self, []str strings)
+
+# OUT: 0
+# OUT: larry, curly, moe
+# OUT: larry--curly--moe
+def int main():
+    []str names
+
+    print len(names)
+    names.append("larry")
+    names.append("curly")
+    names.append("moe")
+    str tmp = ", "
+    str res = tmp.join(names)
+    print res
+
+    print "--".join(names)
+
+    return 0

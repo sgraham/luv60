@@ -1,0 +1,11 @@
+# CRET: 1
+# CERR: {self}:9:26:    print "stuff".weewaa(nums)
+# CERR: {ssss}                               ^ error: Call argument 2 is type []i32, but function expects type []str.
+
+on str foreign str weewaa(self, []str strings)
+
+def int main():
+    []int nums
+    print "stuff".weewaa(nums)
+
+    return 0

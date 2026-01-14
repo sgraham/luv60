@@ -2,17 +2,6 @@
 
 #include "dict.h"
 
-typedef struct RuntimeStr {
-  const uint8_t* data;
-  int64_t length;
-} RuntimeStr;
-
-typedef struct RuntimeRange {
-  int64_t start;
-  int64_t stop;
-  int64_t step;
-} RuntimeRange;
-
 typedef enum SymKind {
   SYM_NONE,
   SYM_VAR,
@@ -2418,13 +2407,10 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
     // just be Stuff. The target memfn always just gets *Stuff, so we need to
     // build that from the left that we originally had.
     SqRef self_ptr;
-    if (type_kind(left.type) == TYPE_STRUCT || type_kind(left.type) == TYPE_LIST) {
+    TypeKind left_type_kind = type_kind(left.type);
+    if (type_is_basic(left.type) || left_type_kind == TYPE_STRUCT || left_type_kind == TYPE_LIST) {
       self_ptr = operand_to_sqref_lval(&left);
-    } else if (type_is_basic(left.type)) {
-      SqRef addr = sq_i_alloc8(sq_const_int(8));
-      store_by_type_val_into(left.type, operand_to_sqref_imm(&left), addr);
-      self_ptr = addr;
-    } else if (type_kind(left.type) == TYPE_PTR &&
+    } else if (left_type_kind == TYPE_PTR &&
                (type_kind(type_ptr_subtype(left.type)) == TYPE_STRUCT ||
                 type_kind(type_ptr_subtype(left.type)) == TYPE_LIST)) {
       self_ptr = operand_to_sqref_imm(&left);
@@ -4001,8 +3987,6 @@ static void on_statement(void) {
   uint32_t num_params = parse_func_params(/*is_nested=*/false, /*is_memfn=*/&self_arg, self_name,
                                           param_types, param_names);
 
-  ASSERT(!is_foreign && "todo");
-
   if (!is_foreign) {
     consume(TOK_COLON, "Expect ':' before function body.");
     consume(TOK_NEWLINE, "Expect newline before function body. (TODO: single line)");
@@ -4011,23 +3995,31 @@ static void on_statement(void) {
     consume(TOK_INDENT, "Expect indented function body.");
   }
 
-  Type functype = type_function(param_types, num_params, return_type, TFF_MEMFN);
+
+  TypeFuncFlags flags = TFF_MEMFN;
+  if (is_foreign) {
+    flags |= TFF_FOREIGN;
+  }
+  Type functype = type_function(param_types, num_params, return_type, flags);
 
   ASSERT(str_eq(on_type_name, type_decl_name(on_type)));
   Str full_name = memfn_name_from_type_name(on_type_name, func_name);
   Sym* funcsym = sym_new(SYM_FUNC, full_name, functype);
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
-  enter_function(funcsym, param_names, param_types);
-  LastStatementType lst = parse_block();
-  if (lst == LST_NON_RETURN) {
-    if (!type_eq(type_void, type_func_return_type(functype))) {
-      errorf_offset(function_start_offset,
-                    "Function returns %s, but there is no return at the end of the body.",
-                    type_as_str(type_func_return_type(functype)));
-    }
-  }
 
-  leave_function();
+  if (!is_foreign) {
+    enter_function(funcsym, param_names, param_types);
+    LastStatementType lst = parse_block();
+    if (lst == LST_NON_RETURN) {
+      if (!type_eq(type_void, type_func_return_type(functype))) {
+        errorf_offset(function_start_offset,
+                      "Function returns %s, but there is no return at the end of the body.",
+                      type_as_str(type_func_return_type(functype)));
+      }
+    }
+
+    leave_function();
+  }
 }
 
 static void struct_statement() {
