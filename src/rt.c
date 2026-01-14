@@ -8,6 +8,8 @@ void CheckFailed(void) {
   exit(127);
 }
 
+#define RT_CHECK(cond) if (!(cond)) { fprintf(stderr, "%s\n", #cond); CheckFailed(); }
+
 #if 0
 // The QBE %env is stashed in RAX on x64, or in x9 on aarch64. This is used to
 // pass additional data to the type-erased implementations of the generic
@@ -78,7 +80,18 @@ void List$append(List* list, void* item, uint64_t item_size) {
   list->size++;
 }
 
-void List$unchecked_get(List* list, uint64_t index, void* into, uint64_t item_size) {
+void List$insert(List* list, int64_t index, void* item, uint64_t item_size) {
+  RT_CHECK(index >= 0 && "todo; negative index");
+  List$reserve(list, list->size + 1, item_size);
+  void* at_index = &list->data[index * item_size];
+  void* after_index = &list->data[(index + 1) * item_size];
+  memmove(after_index, at_index, (list->size - index) * item_size);
+  memcpy(at_index, item, item_size);
+  list->size++;
+}
+
+void List$unchecked_get(List* list, int64_t index, void* into, uint64_t item_size) {
+  RT_CHECK(index >= 0 && "todo; negative index");
   memcpy(into, &list->data[index * item_size], item_size);
 }
 

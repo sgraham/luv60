@@ -520,19 +520,6 @@ static Str memfn_name_from_type(Type type, Str func_name) {
   return memfn_name_from_type_name(type_decl_name(type), func_name);
 }
 
-static Sym* lookup_memfn(Type type, Str func_name) {
-  Str memfn_name = memfn_name_from_type(type, func_name);
-  Sym* sym;
-  ScopeResult scope_result = scope_lookup_recursive(memfn_name, &sym);
-  if (scope_result == SCOPE_RESULT_UNDEFINED) {
-    return NULL;
-  } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_FUNC) {
-    return sym;
-  } else {
-    error("internal error: lookup_memfn");
-  }
-}
-
 typedef SqRef (*ExtFunc)(SqType, SqRef);
 
 static SqRef _sextsw(SqType size_class, SqRef arg0) {
@@ -862,6 +849,40 @@ typedef struct GenericThunkCreators {
 static GenericThunkCreators generic_list_functions[] = {
   { "append", gen_list_append },
 };
+
+static Sym* lookup_memfn(Type type, Str name) {
+  switch (type_kind(type)) {
+    case TYPE_ARRAY:
+      error("TODO: polymorphic array memfns");
+
+    case TYPE_LIST: {
+      for (int i = 0; i < COUNTOFI(generic_list_functions); ++i) {
+        if (strncmp(generic_list_functions[i].name, str_raw_ptr(name), str_len(name)) == 0) {
+          return generic_list_functions[i].ensure_gen_thunk(type_list_subtype(type));
+        }
+      }
+      break;
+    }
+
+    case TYPE_DICT:
+      error("TODO: polymorphic dict memfns");
+
+    default:
+      break;
+  }
+
+  Str memfn_name = memfn_name_from_type(type, name);
+  Sym* sym;
+  // TODO: this probably doesn't need to be fully recursive, just look at globals?
+  ScopeResult scope_result = scope_lookup_recursive(memfn_name, &sym);
+  if (scope_result == SCOPE_RESULT_UNDEFINED) {
+    return NULL;
+  } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_FUNC) {
+    return sym;
+  } else {
+    error("internal error: lookup_memfn");
+  }
+}
 
 static void print_i32(Operand* op) {
   SqRef val = operand_to_sqref_imm(op);
@@ -2377,45 +2398,9 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       // Not an error yet; could be a memfn below.
     }
 
-    Sym* func_sym = NULL;
-    switch (type_kind(new_left.type)) {
-      case TYPE_ARRAY:
-        error("TODO: polymorphic array memfns");
-
-      case TYPE_LIST: {
-        for (int i = 0; i < COUNTOFI(generic_list_functions); ++i) {
-          if (strncmp(generic_list_functions[i].name, str_raw_ptr(name), str_len(name)) == 0) {
-            func_sym = generic_list_functions[i].ensure_gen_thunk(type_list_subtype(left.type));
-            break;
-          }
-        }
-        if (!func_sym) {
-          errorf("Undefined member function %s.", cstr_copy(parser.arena, name));
-        }
-        break;
-        /*
-        "reserve": {},
-        "free": {},
-        "append": {},
-        "extend": {},
-        "insert": {},
-        "len": {},
-        "pop": {},
-        */
-      }
-
-      case TYPE_DICT:
-        error("TODO: polymorphic dict memfns");
-
-      default: {
-        Sym* sym = lookup_memfn(new_left.type, name);
-        if (!sym) {
-          errorf("Undefined member function %s.", cstr_copy(parser.arena, name));
-        } else {
-          func_sym = sym;
-        }
-        break;
-      }
+    Sym* func_sym = lookup_memfn(new_left.type, name);
+    if (!func_sym) {
+      errorf("Undefined member function %s.", cstr_copy(parser.arena, name));
     }
 
     if (type_kind(func_sym->type) != TYPE_FUNC) {
