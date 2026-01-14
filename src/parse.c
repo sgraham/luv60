@@ -194,6 +194,8 @@ typedef struct Parser {
   int num_scopes;
   Scope* cur_scope;
 
+  DictImpl generics_thunk_cache;
+
   Operand op_null_ptr;
 
   int verbose;
@@ -307,6 +309,9 @@ static void opv_append(OpVec* vec, Operand op) {
 
 static Operand operand_none;
 
+static ScopeResult scope_lookup_single(Scope* scope, Str name, bool crossed_function, Sym** sym);
+static ScopeResult scope_lookup_recursive(Str name, Sym** sym);
+
 typedef enum LastStatementType {
   LST_NON_RETURN,
   LST_RETURN_VOID,
@@ -363,9 +368,6 @@ static SqType type_to_sqtype(Type type) {
       abort();
   }
 }
-
-static ScopeResult scope_lookup_single(Scope* scope, Str name, bool crossed_function, Sym** sym);
-static ScopeResult scope_lookup_recursive(Str name, Sym** sym);
 
 #if 0
 static Operand operand_sym(Type type, LqSymbol lqsym) {
@@ -507,6 +509,28 @@ static SqType sqbasetype_from_type(Type type) {
     return sq_type_long;
   }
   return sq_type_word;
+}
+
+static Str memfn_name_from_type_name(Str type_name, Str func_name) {
+  return str_internf("%.*s$%.*s", str_len(type_name), str_raw_ptr(type_name), str_len(func_name),
+                     str_raw_ptr(func_name));
+}
+
+static Str memfn_name_from_type(Type type, Str func_name) {
+  return memfn_name_from_type_name(type_decl_name(type), func_name);
+}
+
+static Sym* lookup_memfn(Type type, Str func_name) {
+  Str memfn_name = memfn_name_from_type(type, func_name);
+  Sym* sym;
+  ScopeResult scope_result = scope_lookup_recursive(memfn_name, &sym);
+  if (scope_result == SCOPE_RESULT_UNDEFINED) {
+    return NULL;
+  } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_FUNC) {
+    return sym;
+  } else {
+    error("internal error: lookup_memfn");
+  }
 }
 
 typedef SqRef (*ExtFunc)(SqType, SqRef);
@@ -706,18 +730,17 @@ static SqRef sqref_for_sym(Sym* sym) {
   }
 }
 
-#if 0
-static ir_ref addr_for_operand(Operand* op) {
-  ir_ref var = ir_VAR(type_to_ir_type(op->type), "&");
-  ir_VSTORE(var, operand_to_irref_imm(op));
-  return ir_VADDR(var);
-}
-#endif
-
+// These two both have to start with `name` for the hash/eq funcs to work.
 typedef struct NameSymPair {
   Str name;
   Sym sym;
 } NameSymPair;
+
+// These two both have to start with `name` for the hash/eq funcs to work.
+typedef struct NameSymPPair {
+  Str name;
+  Sym* sym;
+} NameSymPPair;
 
 static size_t namesym_hash_func(void* vnsp) {
   NameSymPair* nsp = (NameSymPair*)vnsp;
@@ -778,6 +801,67 @@ static Sym* sym_new(SymKind kind, Str name, Type type) {
     return ret;
   }
 }
+
+// TODO: type_as_str being used for real work, not errors here, and shouldn't be
+// because it's expensive. should at least be doing a type_as_str_into to build
+// the name so that all the intermediates aren't unnecessarily getting intern'd,
+// etc.
+
+// on []T def append(self, T item):
+//     tmp = item
+//     List$append(self, &tmp, sizeof(T))
+static Sym* gen_list_append(Type subtype) {
+  Str full_name = memfn_name_from_type_name(str_internf("List_%s", type_as_str(subtype)),
+                                            str_intern_len("append", 6));
+
+  DictRawIter iter = dict_find(&parser.generics_thunk_cache, &full_name, namesym_hash_func,
+                               namesym_eq_func, sizeof(NameSymPPair));
+  NameSymPPair* nspp = (NameSymPPair*)dict_rawiter_get(&iter);
+  if (nspp) {
+    return nspp->sym;
+  }
+
+  sq_func_start(sq_linkage_default, sq_type_void, cstr_copy(parser.arena, full_name));
+
+  SqRef self = sq_func_param(sq_type_long);
+
+  SqType sqsubtype = type_to_sqtype(subtype);
+  SqRef item = sq_func_param(sqsubtype);
+
+  uint64_t subtype_size = type_size(subtype);
+
+  SqRef tmp = sq_i_alloc8(sq_const_int(subtype_size));
+  store_by_type_val_into(subtype, item, tmp);
+
+  sq_i_call3(sq_type_void, sq_ref_extern("List$append"), (SqCallArg){sq_type_long, self},
+             (SqCallArg){sq_type_long, tmp}, (SqCallArg){sq_type_long, sq_const_int(subtype_size)});
+  sq_i_ret_void();
+  SqSymbol append_func = sq_func_end();
+
+  Type param_types[2] = { type_ptr(type_list(subtype)), subtype };
+  Type functype = type_function(param_types, COUNTOF(param_types), type_void, TFF_MEMFN);
+
+  Sym* funcsym = sym_new(SYM_FUNC, full_name, functype);
+  funcsym->global = append_func;
+  funcsym->scope_decl = SSD_DECLARED_GLOBAL;
+
+  sq_itemctx_activate(parser.cur_scope->func_item_ctx);
+
+  NameSymPPair nspp_insert = {full_name, funcsym};
+  DictInsert res = dict_insert(&parser.generics_thunk_cache, &nspp_insert, namesym_hash_func,
+                               namesym_eq_func, sizeof(NameSymPPair), _Alignof(NameSymPPair));
+  ASSERT(res.inserted);
+  return funcsym;
+}
+
+typedef struct GenericThunkCreators {
+  const char* name;
+  Sym* (*ensure_gen_thunk)(Type);
+} GenericThunkCreators;
+
+static GenericThunkCreators generic_list_functions[] = {
+  { "append", gen_list_append },
+};
 
 static void print_i32(Operand* op) {
   SqRef val = operand_to_sqref_imm(op);
@@ -2242,28 +2326,6 @@ static Operand parse_dict_literal(bool can_assign, Type* expected) {
   return operand_none;
 }
 
-static Str memfn_name_from_type_name(Str type_name, Str func_name) {
-  return str_internf("%.*s$%.*s", str_len(type_name), str_raw_ptr(type_name), str_len(func_name),
-                     str_raw_ptr(func_name));
-}
-
-static Str memfn_name_from_type(Type type, Str func_name) {
-  return memfn_name_from_type_name(type_decl_name(type), func_name);
-}
-
-static Sym* lookup_memfn(Type type, Str func_name) {
-  Str memfn_name = memfn_name_from_type(type, func_name);
-  Sym* sym;
-  ScopeResult scope_result = scope_lookup_recursive(memfn_name, &sym);
-  if (scope_result == SCOPE_RESULT_UNDEFINED) {
-    return NULL;
-  } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_FUNC) {
-    return sym;
-  } else {
-    error("internal error: lookup_memfn");
-  }
-}
-
 static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
   // TODO: package, and maybe const or types after . ?
   Str name = parse_name("Expect property name after '.'.");
@@ -2315,14 +2377,31 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       // Not an error yet; could be a memfn below.
     }
 
-    Sym* func_sym = {0};
+    Sym* func_sym = NULL;
     switch (type_kind(new_left.type)) {
       case TYPE_ARRAY:
         error("TODO: polymorphic array memfns");
 
       case TYPE_LIST: {
-        //MemfnsForType memfns = ensure_generic_impl(new_left.type);
-        error("TODO: polymorphic list memfns");
+        for (int i = 0; i < COUNTOFI(generic_list_functions); ++i) {
+          if (strncmp(generic_list_functions[i].name, str_raw_ptr(name), str_len(name)) == 0) {
+            func_sym = generic_list_functions[i].ensure_gen_thunk(type_list_subtype(left.type));
+            break;
+          }
+        }
+        if (!func_sym) {
+          errorf("Undefined member function %s.", cstr_copy(parser.arena, name));
+        }
+        break;
+        /*
+        "reserve": {},
+        "free": {},
+        "append": {},
+        "extend": {},
+        "insert": {},
+        "len": {},
+        "pop": {},
+        */
       }
 
       case TYPE_DICT:
@@ -2354,14 +2433,15 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
     // just be Stuff. The target memfn always just gets *Stuff, so we need to
     // build that from the left that we originally had.
     SqRef self_ptr;
-    if (type_kind(left.type) == TYPE_STRUCT) {
+    if (type_kind(left.type) == TYPE_STRUCT || type_kind(left.type) == TYPE_LIST) {
       self_ptr = operand_to_sqref_lval(&left);
     } else if (type_is_basic(left.type)) {
       SqRef addr = sq_i_alloc8(sq_const_int(8));
       store_by_type_val_into(left.type, operand_to_sqref_imm(&left), addr);
       self_ptr = addr;
     } else if (type_kind(left.type) == TYPE_PTR &&
-               type_kind(type_ptr_subtype(left.type)) == TYPE_STRUCT) {
+               (type_kind(type_ptr_subtype(left.type)) == TYPE_STRUCT ||
+                type_kind(type_ptr_subtype(left.type)) == TYPE_LIST)) {
       self_ptr = operand_to_sqref_imm(&left);
     } else {
       error("TODO: self ptr");
@@ -2647,11 +2727,10 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
     Sym* lval = make_local_and_alloc(SYM_VAR, (Str){0}, elem.type, NULL);
     sq_i_storew(operand_to_sqref_imm(&elem), lval->ref);
 
-    SqRef list_append_func = sq_ref_extern("List_append");
+    SqRef list_append_func = sq_ref_extern("List$append");
     sq_i_call3(sq_type_void, list_append_func, (SqCallArg){sq_type_long, untyped_list},
-               (SqCallArg){sq_type_long, sq_const_int(type_size(elem.type))},
-              // (SqCallArg){sq_type_long, operand_to_sqref_imm(&elem)}
-               (SqCallArg){sq_type_long, lval->ref});
+               (SqCallArg){sq_type_long, lval->ref},
+               (SqCallArg){sq_type_long, sq_const_int(type_size(elem.type))});
 
     iteration_epilog(itd);
 
@@ -4245,6 +4324,8 @@ static void parse_impl(Arena* main_arena,
   parser.cur_filename = filename;
   parser.num_scopes = 0;
   parser.cur_scope = NULL;
+  parser.generics_thunk_cache =
+      dict_new(parser.arena, 128, sizeof(NameSymPair), _Alignof(NameSymPair));
   parser.cursor = (TokenCursor){-1, 0, 0, 0};
   parser.indent_levels[0] = 0;
   parser.num_indents = 1;
@@ -4265,7 +4346,7 @@ static void parse_impl(Arena* main_arena,
   if (verbose == 1) {
     config.debug_flags = "P";
   } else if (verbose > 1) {
-    config.debug_flags = "PMNCFAILSRT";
+    config.debug_flags = "PMNCFKAILSRT";
   }
   sq_init(&config);
 
@@ -4311,7 +4392,7 @@ static void parse_impl(Arena* main_arena,
 
   sq_type_struct_start("list", 8);
   sq_type_add_field(sq_type_long); // data
-  sq_type_add_field(sq_type_long); // count
+  sq_type_add_field(sq_type_long); // size
   sq_type_add_field(sq_type_long); // capacity;
   parser.sq_type_list = sq_type_struct_end();
 
