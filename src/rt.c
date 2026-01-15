@@ -13,12 +13,16 @@ typedef struct Str {
   int64_t size;
 } Str;
 
-Str str_copy_cstr(const char* cstr) {
+static Str str_copy_cstr(const char* cstr) {
   // Note, no NUL, not sure if this will be annoying in practice.
   size_t size = strlen(cstr);
   Str ret = {malloc(size), size};
   memcpy((void*)ret.data, cstr, size);
   return ret;
+}
+
+void PrintStr(Str* str) {
+  printf("%.*s\n", (int)str->size, str->data);
 }
 
 typedef struct List {
@@ -122,13 +126,55 @@ void List$insert(List* list, int64_t index, void* item, uint64_t item_size) {
   list->size++;
 }
 
-#if 0
-Str i32$__str__(int32_t* self) {
-  char buf[80];
+Str i8$__str__(int8_t* self) {
+  char buf[40];
   snprintf(buf, sizeof(buf), "%d", *self);
   return str_copy_cstr(buf);
 }
 
+Str u8$__str__(uint8_t* self) {
+  char buf[40];
+  snprintf(buf, sizeof(buf), "%d", *self);
+  return str_copy_cstr(buf);
+}
+
+Str i16$__str__(int16_t* self) {
+  char buf[40];
+  snprintf(buf, sizeof(buf), "%d", *self);
+  return str_copy_cstr(buf);
+}
+
+Str u16$__str__(uint16_t* self) {
+  char buf[40];
+  snprintf(buf, sizeof(buf), "%u", *self);
+  return str_copy_cstr(buf);
+}
+
+Str i32$__str__(int32_t* self) {
+  char buf[40];
+  snprintf(buf, sizeof(buf), "%d", *self);
+  return str_copy_cstr(buf);
+}
+
+Str u32$__str__(uint32_t* self) {
+  char buf[40];
+  snprintf(buf, sizeof(buf), "%u", *self);
+  return str_copy_cstr(buf);
+}
+
+Str i64$__str__(int64_t* self) {
+  char buf[80];
+  snprintf(buf, sizeof(buf), "%lld", *self);
+  return str_copy_cstr(buf);
+}
+
+Str u64$__str__(uint64_t* self) {
+  char buf[80];
+  snprintf(buf, sizeof(buf), "%llu", *self);
+  return str_copy_cstr(buf);
+}
+
+#if 0
 Str List$__str__(List* list, Str (*subtype_str)(void* item)) {
 }
 #endif

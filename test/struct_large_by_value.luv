@@ -1,4 +1,4 @@
-# CLANGRUN: CLANG_BIN -g OUT_DIR/{self}.s test/test_helper_struct.c -o OUT_DIR/{self}.exe
+# CLANGRUN: CLANG_BIN -g OUT_DIR/{self}.s src/rt.c test/test_helper_struct.c -o OUT_DIR/{self}.exe
 # OUT: 99
 # OUT: 97
 # OUT: 87

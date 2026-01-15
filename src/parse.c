@@ -194,7 +194,6 @@ typedef struct Parser {
   Str static_str_ret;
   Str static_str_up;
 
-  SqSymbol i32_print_fmt;
   SqSymbol float_print_fmt;
   SqSymbol str_print_fmt;
   SqSymbol range2_print_fmt;
@@ -679,8 +678,11 @@ static SqRef operand_to_sqref_imm(Operand* op) {
 
 static SqRef operand_to_sqref_lval(Operand* op) {
   switch (op->kind) {
-    case OPK_CONST:
-      error("internal error: cannot take lval of const.");
+    case OPK_CONST: {
+      SqRef tmp = sq_i_alloc8(sq_const_int(type_size(op->type)));
+      store_by_type_val_into(op->type, sq_const_int(op->val.u64), tmp);
+      return tmp;
+    }
     case OPK_REF_RVAL: {
       SqRef tmp = sq_i_alloc8(sq_const_int(type_size(op->type)));
       store_by_type_val_into(op->type, op->ref, tmp);
@@ -870,14 +872,6 @@ static Sym* lookup_memfn(Type type, Str name) {
   } else {
     error("internal error: lookup_memfn");
   }
-}
-
-static void print_i32(Operand* op) {
-  SqRef val = operand_to_sqref_imm(op);
-  SqRef print_func = sq_ref_extern("printf");
-  SqRef fmt_str = sq_ref_for_symbol(parser.i32_print_fmt);
-  sq_i_call3(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str}, sq_varargs_begin,
-             (SqCallArg){sq_type_word, val});
 }
 
 static void print_bool(Operand* op) {
@@ -3816,16 +3810,11 @@ static void print_statement(void) {
   Sym* sym = lookup_memfn(val.type, parser.static_str___str__);
   if (sym) {
     Operand as_str = operand_rvalue_imm(
-        type_str, sq_i_call1(parser.sq_type_str, sq_ref_for_symbol(sym->global),
+        type_str, sq_i_call1(parser.sq_type_str, sqref_for_sym(sym),
                              (SqCallArg){sq_type_long, operand_to_sqref_lval(&val)}));
 
-    SqRef print_func = sq_ref_extern("printf");
-    SqRef fmt_str = sq_ref_for_symbol(parser.str_print_fmt);
-    SqRef ptr = sq_i_load(sq_type_long, operand_to_sqref_imm(&as_str));
-    SqRef len = sq_i_load(sq_type_word,
-                          sq_i_add(sq_type_long, operand_to_sqref_imm(&as_str), sq_const_int(8)));
-    sq_i_call4(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str}, sq_varargs_begin,
-               (SqCallArg){sq_type_word, len}, (SqCallArg){sq_type_long, ptr});
+    sq_i_call1(sq_type_void, sq_ref_extern("PrintStr"),
+               (SqCallArg){sq_type_long, operand_to_sqref_lval(&as_str)});
   } else {
     if (type_eq(val.type, type_str)) {
       print_str(&val);
@@ -3837,8 +3826,6 @@ static void print_statement(void) {
       print_float(&val);
     } else if (type_eq(val.type, type_double)) {
       print_double(&val);
-    } else if (convert_operand(&val, type_i32)) {
-      print_i32(&val);
     } else {
       errorf("TODO: don't know how to print type %s.", type_as_str(val.type));
     }
@@ -4283,10 +4270,20 @@ static int sqbe_callback_output_function(const char* fmt, va_list ap) {
   error(str);
 }
 
+static void declare_rt_foreign_memfn0(Type on, Type return_type, const char* name_cstr) {
+  Str name = str_intern(name_cstr);
+  Str memfn_name = memfn_name_from_type(on, name);
+  Type param_types[] = { type_ptr(on) };
+  Type functype =
+      type_function(param_types, COUNTOF(param_types), return_type, TFF_MEMFN | TFF_FOREIGN);
+  Sym* funcsym = sym_new(SYM_FUNC, memfn_name, functype);
+  funcsym->scope_decl = SSD_DECLARED_GLOBAL;
+}
+
 static void declare_rt_foreign_memfn1(Type on, Type return_type, const char* name_cstr, Type arg0) {
   Str name = str_intern(name_cstr);
   Str memfn_name = memfn_name_from_type(on, name);
-  Type param_types[2] = { type_ptr(on), arg0 };
+  Type param_types[] = { type_ptr(on), arg0 };
   Type functype =
       type_function(param_types, COUNTOF(param_types), return_type, TFF_MEMFN | TFF_FOREIGN);
   Sym* funcsym = sym_new(SYM_FUNC, memfn_name, functype);
@@ -4295,6 +4292,15 @@ static void declare_rt_foreign_memfn1(Type on, Type return_type, const char* nam
 
 static void declare_all_rt_foreigns(void) {
   declare_rt_foreign_memfn1(type_str, type_str, "join", type_list(type_str));
+
+  declare_rt_foreign_memfn0(type_i8, type_str, "__str__");
+  declare_rt_foreign_memfn0(type_u8, type_str, "__str__");
+  declare_rt_foreign_memfn0(type_i16, type_str, "__str__");
+  declare_rt_foreign_memfn0(type_u16, type_str, "__str__");
+  declare_rt_foreign_memfn0(type_i32, type_str, "__str__");
+  declare_rt_foreign_memfn0(type_u32, type_str, "__str__");
+  declare_rt_foreign_memfn0(type_i64, type_str, "__str__");
+  declare_rt_foreign_memfn0(type_u64, type_str, "__str__");
 }
 
 static void parse_impl(Arena* main_arena,
@@ -4338,11 +4344,6 @@ static void parse_impl(Arena* main_arena,
     config.debug_flags = "PMNCFKAILSRT";
   }
   sq_init(&config);
-
-  sq_data_start(sq_linkage_default, "i32_print_fmt");
-  sq_data_string("%d\n");
-  sq_data_byte(0);
-  parser.i32_print_fmt = sq_data_end();
 
   sq_data_start(sq_linkage_default, "float_print_fmt");
   sq_data_string("%f\n");
