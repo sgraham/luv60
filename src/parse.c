@@ -322,6 +322,8 @@ static SqType type_to_sqtype(Type type) {
       return sq_type_void;
     case TYPE_BOOL:
       return sq_type_ubyte;
+    case TYPE_CODEPT:
+      return sq_type_word;
     case TYPE_U8:
       return sq_type_ubyte;
     case TYPE_U16:
@@ -583,6 +585,8 @@ static SqRef load_by_type_from(Type type, SqRef from) {
   ASSERT(resultsize.u == sq_type_long.u || resultsize.u == sq_type_word.u);
   if (type_kind(type) == TYPE_BOOL) {
     return sq_i_loadub(resultsize, from);
+  } else if (type_kind(type) == TYPE_CODEPT) {
+    return sq_i_load(sq_type_word, from);
   } else if (type_kind(type) == TYPE_PTR) {
     return sq_i_load(resultsize, from);
   } else if (type_kind(type) == TYPE_DOUBLE) {
@@ -2419,10 +2423,10 @@ static Operand parse_len(bool can_assign, Type* expected) {
     case TYPE_ARRAY:
       return operand_const(type_u64, (Val){.u64 = type_array_count(len_of.type)});
     case TYPE_LIST:
+    case TYPE_STR:
       return operand_rvalue_imm(
           type_u64, sq_i_load(sq_type_long, sq_i_add(sq_type_long, len_of.ref, sq_const_int(8))));
     case TYPE_DICT:
-    case TYPE_STR:
       error("TODO: len impl");
     default:
       errorf("Cannot use len on type %s.", type_as_str(len_of.type));
@@ -2468,6 +2472,7 @@ typedef enum IterationKind {
   ITK_UNKNOWN = 0,
   ITK_ARRAY,
   ITK_LIST,
+  ITK_STR,
   ITK_RANGE,
 } IterationKind;
 
@@ -2514,6 +2519,16 @@ static IterationData iteration_prolog(Str it, Operand* over) {
     sq_i_storel(sq_i_add(sq_type_long, base,
                          sq_i_mul(sq_type_long, sq_const_int(type_size(itd.it_type)), count)),
                 itd.CONTIG.end);
+  } else if (type_kind(over->type) == TYPE_STR) {
+    itd.kind = ITK_STR;
+    itd.it_type = type_codept;
+    itd.itsym = make_local_and_alloc(SYM_VAR, it, itd.it_type, NULL);
+    itd.CONTIG.ptr = sq_i_alloc8(sq_const_int(8));
+    itd.CONTIG.end = sq_i_alloc8(sq_const_int(8));
+    SqRef base = sq_i_load(sq_type_long, over->ref);
+    sq_i_storel(base, itd.CONTIG.ptr);
+    SqRef count = sq_i_load(sq_type_long, sq_i_add(sq_type_long, over->ref, sq_const_int(8)));
+    sq_i_storel(sq_i_add(sq_type_long, base, count), itd.CONTIG.end);
   } else if (type_eq(over->type, type_range)) {
     itd.kind = ITK_RANGE;
     itd.it_type = type_i64;
@@ -2549,6 +2564,17 @@ static IterationData iteration_prolog(Str it, Operand* over) {
     sq_block_start(block_body);
 
     store_by_type_val_into(itd.it_type, load_by_type_from(itd.it_type, cur), itd.itsym->ref);
+  } else if (itd.kind == ITK_STR) {
+    SqRef cur = sq_i_load(sq_type_long, itd.CONTIG.ptr);
+    SqRef end = sq_i_load(sq_type_long, itd.CONTIG.end);
+    SqRef cmp = sq_i_csltl(sq_type_long, cur, end);
+    sq_i_jnz(cmp, block_body, itd.loop_done);
+    sq_block_start(block_body);
+
+    // TODO: utf8. This is writing to a charpt (correct), but just iterating over
+    // bytes; need to decode code points here.
+
+    store_by_type_val_into(itd.it_type, load_by_type_from(type_u8, cur), itd.itsym->ref);
   } else if (itd.kind == ITK_RANGE) {
     SqRef cur = sq_i_load(sq_type_long, itd.itsym->ref);
 
@@ -2567,7 +2593,7 @@ static IterationData iteration_prolog(Str it, Operand* over) {
 
     sq_block_start(block_cont);
   } else {
-    error("internal error: unhandled case in iter");
+    error("internal error: unhandled case in iter prolog");
   }
 
   return itd;
@@ -2578,12 +2604,16 @@ static void iteration_epilog(IterationData itd) {
     sq_i_storel(sq_i_add(sq_type_long, sq_i_load(sq_type_long, itd.CONTIG.ptr),
                          sq_const_int(type_size(itd.it_type))),
                 itd.CONTIG.ptr);
+  } else if (itd.kind == ITK_STR) {
+    // TODO: utf8
+    sq_i_storel(sq_i_add(sq_type_long, sq_i_load(sq_type_long, itd.CONTIG.ptr), sq_const_int(1)),
+                itd.CONTIG.ptr);
   } else if (itd.kind == ITK_RANGE) {
     SqRef it_val = sq_i_load(sq_type_long, itd.itsym->ref);
     SqRef inc = sq_i_add(sq_type_long, it_val, itd.RANGE.step);
     sq_i_storel(inc, itd.itsym->ref);
   } else {
-    error("internal error: unhandled case in iter");
+    error("internal error: unhandled case in iter epilog");
   }
 
   sq_i_jmp(itd.loop_start);
@@ -3748,9 +3778,9 @@ static void for_statement(void) {
     Str it_name = parse_name("Expect iterator name.");
     consume(TOK_IN, "Expect 'in'.");
     Operand expr = parse_expression(NULL);
-    if (type_eq(expr.type, type_range)) {
-      ASSERT(op_is_local_addr(expr));
-
+    TypeKind expr_type = type_kind(expr.type);
+    if (type_eq(expr.type, type_range) || expr_type == TYPE_ARRAY || expr_type == TYPE_LIST ||
+        expr_type == TYPE_STR) {
       IterationData itd = iteration_prolog(it_name, &expr);
 
       consume(TOK_COLON, "Expect ':' to start for.");
@@ -3763,25 +3793,6 @@ static void for_statement(void) {
       }
 
       iteration_epilog(itd);
-    } else if (type_kind(expr.type) == TYPE_ARRAY || type_kind(expr.type) == TYPE_LIST) {
-      ASSERT(op_is_local_addr(expr));
-
-      bool is_arr = type_kind(expr.type) == TYPE_ARRAY;
-      ASSERT(is_arr || (!is_arr && type_kind(expr.type) == TYPE_LIST));
-
-      IterationData itd = iteration_prolog(it_name, &expr);
-
-      consume(TOK_COLON, "Expect ':' to start for.");
-      consume(TOK_NEWLINE, "Expect newline after ':' to start for.");
-      consume(TOK_INDENT, "Expect indent to start for.");
-      LastStatementType lst = parse_block();
-      if (lst != LST_NON_RETURN) {
-        sq_i_jmp(parser.cur_scope->return_block);
-        sq_block_declare_and_start();
-      }
-
-      iteration_epilog(itd);
-
     } else {
       errorf("Unhandled for/in over type %s.", type_as_str(expr.type));
     }
@@ -4266,6 +4277,7 @@ static void declare_all_rt_foreigns(void) {
   declare_rt_foreign_memfn1(type_str, type_str, "join", type_list(type_str));
 
   declare_rt_foreign_memfn0(type_bool, type_str, parser.static_str___str__);
+  declare_rt_foreign_memfn0(type_codept, type_str, parser.static_str___str__);
   declare_rt_foreign_memfn0(type_i8, type_str, parser.static_str___str__);
   declare_rt_foreign_memfn0(type_u8, type_str, parser.static_str___str__);
   declare_rt_foreign_memfn0(type_i16, type_str, parser.static_str___str__);

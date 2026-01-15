@@ -1,0 +1,34 @@
+# OUT: blorp
+# OUT: b
+# OUT: l
+# OUT: o
+# OUT: r
+# OUT: p
+# OUT: a
+# OUT: b
+# OUT: c
+# OUT: (none)
+# OUT: [b, l, o, r, p]
+# OUT: done
+
+def int main():
+    stuff = "blorp"
+    print stuff
+
+    for c in stuff:
+        print c
+
+    for c in "abc":
+        print c
+
+    for c in "":
+        print c
+
+    print "(none)"
+
+    res = [c for c in stuff]
+    print res
+
+    print "done"
+
+    return 0

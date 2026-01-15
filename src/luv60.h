@@ -132,6 +132,7 @@ typedef struct Type {
   X(NONE)           \
   X(VOID)           \
   X(BOOL)           \
+  X(CODEPT)         \
   X(U8)             \
   X(I8)             \
   X(U16)            \
@@ -153,8 +154,7 @@ typedef struct Type {
   X(STRUCT)         \
   X(UNION)          \
   X(CONST)          \
-  X(PACKAGE)        \
-  X(CHAR) /* only for interop foreign calls */
+  X(PACKAGE)
 
 typedef enum TypeKind {
 #define X(x) TYPE_##x,
@@ -170,6 +170,7 @@ typedef enum TypeKind {
 #define type_none BASIC_TYPE_CONSTANT_IMPL(TYPE_NONE)
 #define type_void BASIC_TYPE_CONSTANT_IMPL(TYPE_VOID)
 #define type_bool BASIC_TYPE_CONSTANT_IMPL(TYPE_BOOL)
+#define type_codept BASIC_TYPE_CONSTANT_IMPL(TYPE_CODEPT)
 #define type_u8 BASIC_TYPE_CONSTANT_IMPL(TYPE_U8)
 #define type_i8 BASIC_TYPE_CONSTANT_IMPL(TYPE_I8)
 #define type_u16 BASIC_TYPE_CONSTANT_IMPL(TYPE_U16)

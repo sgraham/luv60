@@ -194,6 +194,12 @@ Str bool$__str__(bool* self) {
   return *self ? str_const_cstr("true") : str_const_cstr("false");
 }
 
+Str codept$__str__(uint32_t* self) {
+  char buf[80]; // TODO: utf8
+  snprintf(buf, sizeof(buf), "%c", (char)*self);
+  return str_copy_cstr(buf);
+}
+
 Str float$__str__(float* self) {
   char buf[256];
   snprintf(buf, sizeof(buf), "%f", *self);

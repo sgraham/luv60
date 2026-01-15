@@ -442,6 +442,7 @@ void type_init(Arena* arena) {
 
   set_builtin_typedata(TYPE_VOID, "void", 0, 1);
   set_builtin_typedata(TYPE_BOOL, "bool", 1, 1);
+  set_builtin_typedata(TYPE_CODEPT, "codept", 4, 4);
   set_builtin_typedata(TYPE_U8, "u8", 1, 1);
   set_builtin_typedata(TYPE_I8, "i8", 1, 1);
   set_builtin_typedata(TYPE_U16, "u16", 2, 2);
