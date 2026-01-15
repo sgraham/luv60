@@ -1,0 +1,27 @@
+# OUT: []
+# OUT: [1, 2, 3]
+# OUT: [wee, waa, woo, bonk]
+
+struct Zap:
+    int x
+
+def int main():
+    []Zap zaps
+    print zaps
+
+    []int nums_a = [1, 2, 3]
+    print nums_a
+
+    # TODO: implicitly an array which isn't implemented yet
+    # nums_b = [10, 12, 14, 16]
+    # print nums_b
+
+    # TODO: not sure if we want the whole mess of __repr__ vs. __str__ or just live with the ambiguity
+    []str stuff
+    stuff.append("wee")
+    stuff.append("waa")
+    stuff.append("woo")
+    stuff.append("bonk")
+    print stuff
+
+    return 0

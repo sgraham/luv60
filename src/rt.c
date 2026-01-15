@@ -10,7 +10,7 @@ void CheckFailed(void) {
 }
 
 typedef struct Str {
-  const uint8_t* data;
+  const char* data;
   int64_t size;
 } Str;
 
@@ -36,7 +36,7 @@ static Str str_copy_cstr(const char* cstr) {
 
 static Str str_const_cstr(const char* cstr) {
   size_t size = strlen(cstr);
-  return (Str){(const uint8_t*)cstr, size};
+  return (Str){cstr, size};
 }
 
 void PrintStr(Str* str) {
@@ -69,7 +69,7 @@ Str str$join(Str* str, List* strings) {
     }
   }
 
-  return (Str){string_buffer.data, string_buffer.size};
+  return (Str){(const char*)string_buffer.data, string_buffer.size};
 }
 
 #define RT_CHECK(cond) if (!(cond)) { fprintf(stderr, "%s\n", #cond); CheckFailed(); }
@@ -216,10 +216,25 @@ Str range$__str__(Range* range) {
   return str_copy_cstr(buf);
 }
 
-#if 0
-Str List$__str__(List* list, Str (*subtype_str)(void* item)) {
+// subtype___str__ might be null if there's none defined.
+Str List$__str__(List* list, uint64_t item_size, Str (*subtype___str__)(void* item)) {
+  List string_buffer = {0};
+  append_to_string_buffer_list(&string_buffer, &(Str){"[", 1});
+  for (size_t i = 0; i < list->size; ++i) {
+    if (!subtype___str__) {
+      append_to_string_buffer_list(&string_buffer, &(Str){"???", 3});
+    } else {
+      Str tmp = subtype___str__(&list->data[i * item_size]);
+      append_to_string_buffer_list(&string_buffer, &tmp);
+    }
+    if (i < list->size - 1) {
+      append_to_string_buffer_list(&string_buffer, &(Str){", ", 2});
+    }
+  }
+  append_to_string_buffer_list(&string_buffer, &(Str){"]", 1});
+
+  return (Str){(const char*)string_buffer.data, string_buffer.size};
 }
-#endif
 
 void List$unchecked_get(List* list, int64_t index, void* into, uint64_t item_size) {
   RT_CHECK(index >= 0 && "todo; negative index");
