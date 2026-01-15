@@ -1,3 +1,4 @@
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +20,11 @@ static Str str_copy_cstr(const char* cstr) {
   Str ret = {malloc(size), size};
   memcpy((void*)ret.data, cstr, size);
   return ret;
+}
+
+static Str str_const_cstr(const char* cstr) {
+  size_t size = strlen(cstr);
+  return (Str){(const uint8_t*)cstr, size};
 }
 
 void PrintStr(Str* str) {
@@ -172,6 +178,14 @@ Str u64$__str__(uint64_t* self) {
   char buf[80];
   snprintf(buf, sizeof(buf), "%llu", *self);
   return str_copy_cstr(buf);
+}
+
+Str str$__str__(Str* self) {
+  return *self;
+}
+
+Str bool$__str__(bool* self) {
+  return *self ? str_const_cstr("true") : str_const_cstr("false");
 }
 
 #if 0

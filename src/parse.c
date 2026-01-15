@@ -195,11 +195,8 @@ typedef struct Parser {
   Str static_str_up;
 
   SqSymbol float_print_fmt;
-  SqSymbol str_print_fmt;
   SqSymbol range2_print_fmt;
   SqSymbol range3_print_fmt;
-  SqSymbol str_true;
-  SqSymbol str_false;
 
   SqType sq_type_str;
   SqType sq_type_list;
@@ -872,38 +869,6 @@ static Sym* lookup_memfn(Type type, Str name) {
   } else {
     error("internal error: lookup_memfn");
   }
-}
-
-static void print_bool(Operand* op) {
-  SqRef val = operand_to_sqref_imm(op);
-  SqRef print_func = sq_ref_extern("puts");
-
-  SqBlock true_block = sq_block_declare();
-  SqBlock false_block = sq_block_declare();
-  SqBlock after_block = sq_block_declare();
-
-  sq_i_jnz(val, true_block, false_block);
-
-  sq_block_start(true_block);
-  sq_i_call1(sq_type_void, print_func,
-             (SqCallArg){sq_type_long, sq_ref_for_symbol(parser.str_true)});
-  sq_i_jmp(after_block);
-
-  sq_block_start(false_block);
-  sq_i_call1(sq_type_void, print_func,
-             (SqCallArg){sq_type_long, sq_ref_for_symbol(parser.str_false)});
-
-  sq_block_start(after_block);
-}
-
-static void print_str(Operand* op) {
-  SqRef obj = operand_to_sqref_lval(op);
-  SqRef print_func = sq_ref_extern("printf");
-  SqRef fmt_str = sq_ref_for_symbol(parser.str_print_fmt);
-  SqRef ptr = sq_i_load(sq_type_long, obj);
-  SqRef len = sq_i_load(sq_type_word, sq_i_add(sq_type_long, obj, sq_const_int(8)));
-  sq_i_call4(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str}, sq_varargs_begin,
-             (SqCallArg){sq_type_word, len}, (SqCallArg){sq_type_long, ptr});
 }
 
 static void print_range(Operand* op) {
@@ -3806,7 +3771,7 @@ static void for_statement(void) {
 static void print_statement(void) {
   Operand val = parse_expression(NULL);
 
-  // If __str__ exists for the type, call it, and then use print_str.
+  // If __str__ exists for the type, call it, and then print the result.
   Sym* sym = lookup_memfn(val.type, parser.static_str___str__);
   if (sym) {
     Operand as_str = operand_rvalue_imm(
@@ -3816,18 +3781,14 @@ static void print_statement(void) {
     sq_i_call1(sq_type_void, sq_ref_extern("PrintStr"),
                (SqCallArg){sq_type_long, operand_to_sqref_lval(&as_str)});
   } else {
-    if (type_eq(val.type, type_str)) {
-      print_str(&val);
-    } else if (type_eq(val.type, type_bool)) {
-      print_bool(&val);
-    } else if (type_eq(val.type, type_range)) {
+    if (type_eq(val.type, type_range)) {
       print_range(&val);
     } else if (type_eq(val.type, type_float)) {
       print_float(&val);
     } else if (type_eq(val.type, type_double)) {
       print_double(&val);
     } else {
-      errorf("TODO: don't know how to print type %s.", type_as_str(val.type));
+      errorf("Don't know how to print type %s.", type_as_str(val.type));
     }
   }
   expect_end_of_statement("print");
@@ -4293,6 +4254,7 @@ static void declare_rt_foreign_memfn1(Type on, Type return_type, const char* nam
 static void declare_all_rt_foreigns(void) {
   declare_rt_foreign_memfn1(type_str, type_str, "join", type_list(type_str));
 
+  declare_rt_foreign_memfn0(type_bool, type_str, "__str__");
   declare_rt_foreign_memfn0(type_i8, type_str, "__str__");
   declare_rt_foreign_memfn0(type_u8, type_str, "__str__");
   declare_rt_foreign_memfn0(type_i16, type_str, "__str__");
@@ -4301,6 +4263,7 @@ static void declare_all_rt_foreigns(void) {
   declare_rt_foreign_memfn0(type_u32, type_str, "__str__");
   declare_rt_foreign_memfn0(type_i64, type_str, "__str__");
   declare_rt_foreign_memfn0(type_u64, type_str, "__str__");
+  declare_rt_foreign_memfn0(type_str, type_str, "__str__");
 }
 
 static void parse_impl(Arena* main_arena,
@@ -4350,11 +4313,6 @@ static void parse_impl(Arena* main_arena,
   sq_data_byte(0);
   parser.float_print_fmt = sq_data_end();
 
-  sq_data_start(sq_linkage_default, "str_print_fmt");
-  sq_data_string("%.*s\n");
-  sq_data_byte(0);
-  parser.str_print_fmt = sq_data_end();
-
   sq_data_start(sq_linkage_default, "range2_print_fmt");
   sq_data_string("range(%lld, %lld)\n");
   sq_data_byte(0);
@@ -4364,16 +4322,6 @@ static void parse_impl(Arena* main_arena,
   sq_data_string("range(%lld, %lld, %lld)\n");
   sq_data_byte(0);
   parser.range3_print_fmt = sq_data_end();
-
-  sq_data_start(sq_linkage_default, "str_true");
-  sq_data_string("true");
-  sq_data_byte(0);
-  parser.str_true = sq_data_end();
-
-  sq_data_start(sq_linkage_default, "str_false");
-  sq_data_string("false");
-  sq_data_byte(0);
-  parser.str_false = sq_data_end();
 
   sq_type_struct_start("str", 8);
   sq_type_add_field(sq_type_long); // data
