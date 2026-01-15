@@ -191,7 +191,6 @@ typedef struct Parser {
 
   Str static_str_main;
   Str static_str___str__;
-  Str static_str___repr__;
   Str static_str_ret;
   Str static_str_up;
 
@@ -3813,7 +3812,7 @@ static void for_statement(void) {
 static void print_statement(void) {
   Operand val = parse_expression(NULL);
 
-  // If __str__/__repr__ exists for the type, call it, and then use print_str.
+  // If __str__ exists for the type, call it, and then use print_str.
   Sym* sym = lookup_memfn(val.type, parser.static_str___str__);
   if (sym) {
     Operand as_str = operand_rvalue_imm(
@@ -4284,6 +4283,20 @@ static int sqbe_callback_output_function(const char* fmt, va_list ap) {
   error(str);
 }
 
+static void declare_rt_foreign_memfn1(Type on, Type return_type, const char* name_cstr, Type arg0) {
+  Str name = str_intern(name_cstr);
+  Str memfn_name = memfn_name_from_type(on, name);
+  Type param_types[2] = { type_ptr(on), arg0 };
+  Type functype =
+      type_function(param_types, COUNTOF(param_types), return_type, TFF_MEMFN | TFF_FOREIGN);
+  Sym* funcsym = sym_new(SYM_FUNC, memfn_name, functype);
+  funcsym->scope_decl = SSD_DECLARED_GLOBAL;
+}
+
+static void declare_all_rt_foreigns(void) {
+  declare_rt_foreign_memfn1(type_str, type_str, "join", type_list(type_str));
+}
+
 static void parse_impl(Arena* main_arena,
                        Arena* temp_arena,
                        const char* filename,
@@ -4311,7 +4324,6 @@ static void parse_impl(Arena* main_arena,
   parser.verbose = verbose;
   parser.static_str_main = str_intern_len("main", 4);
   parser.static_str___str__ = str_intern_len("__str__", 7);
-  parser.static_str___repr__ = str_intern_len("__repr__", 8);
   parser.static_str_ret = str_intern_len("$ret", 4);
   parser.static_str_up = str_intern_len("$up", 3);
   parser.str_counter = 0;
@@ -4380,6 +4392,8 @@ static void parse_impl(Arena* main_arena,
   parser.sq_type_range = sq_type_struct_end();
 
   enter_scope(/*is_module=*/true, /*is_function=*/false, NULL);
+
+  declare_all_rt_foreigns();
 
   parser.num_tokens = lex_indexer(file.buffer, file.allocated_size, parser.token_offsets);
   token_init(file.buffer);

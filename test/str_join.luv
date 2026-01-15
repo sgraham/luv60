@@ -1,5 +1,3 @@
-on str foreign str join(self, []str strings)
-
 # OUT: 0
 # OUT: larry, curly, moe
 # OUT: larry--curly--moe

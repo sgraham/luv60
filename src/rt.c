@@ -13,6 +13,14 @@ typedef struct Str {
   int64_t size;
 } Str;
 
+Str str_copy_cstr(const char* cstr) {
+  // Note, no NUL, not sure if this will be annoying in practice.
+  size_t size = strlen(cstr);
+  Str ret = {malloc(size), size};
+  memcpy((void*)ret.data, cstr, size);
+  return ret;
+}
+
 typedef struct List {
   unsigned char* data;
   uint64_t size;
@@ -29,16 +37,19 @@ void List$reserve(List* list, uint64_t capacity, uint64_t item_size) {
   list->data = realloc(list->data, list->capacity * item_size);
 }
 
+static void append_to_string_buffer_list(List* sb, Str* str) {
+  List$reserve(sb, sb->size + str->size, sizeof(unsigned char));
+  memcpy(&sb->data[sb->size], str->data, str->size);
+  sb->size += str->size;
+}
+
 Str str$join(Str* str, List* strings) {
   List string_buffer = {0};
   for (size_t i = 0; i < strings->size; ++i) {
     Str* item = (Str*)&strings->data[i * sizeof(Str)];
-    List$reserve(&string_buffer, string_buffer.size + item->size + str->size, sizeof(unsigned char));
-    memcpy(&string_buffer.data[string_buffer.size], item->data, item->size);
-    string_buffer.size += item->size;
+    append_to_string_buffer_list(&string_buffer, item);
     if (i < strings->size - 1) {
-      memcpy(&string_buffer.data[string_buffer.size], str->data, str->size);
-      string_buffer.size += str->size;
+      append_to_string_buffer_list(&string_buffer, str);
     }
   }
 
@@ -110,6 +121,17 @@ void List$insert(List* list, int64_t index, void* item, uint64_t item_size) {
   memcpy(at_index, item, item_size);
   list->size++;
 }
+
+#if 0
+Str i32$__str__(int32_t* self) {
+  char buf[80];
+  snprintf(buf, sizeof(buf), "%d", *self);
+  return str_copy_cstr(buf);
+}
+
+Str List$__str__(List* list, Str (*subtype_str)(void* item)) {
+}
+#endif
 
 void List$unchecked_get(List* list, int64_t index, void* into, uint64_t item_size) {
   RT_CHECK(index >= 0 && "todo; negative index");
