@@ -194,9 +194,6 @@ typedef struct Parser {
   Str static_str_ret;
   Str static_str_up;
 
-  SqSymbol range2_print_fmt;
-  SqSymbol range3_print_fmt;
-
   SqType sq_type_str;
   SqType sq_type_list;
   SqType sq_type_range;
@@ -868,35 +865,6 @@ static Sym* lookup_memfn(Type type, Str name) {
   } else {
     error("internal error: lookup_memfn");
   }
-}
-
-static void print_range(Operand* op) {
-  SqRef obj = operand_to_sqref_lval(op);
-  SqRef print_func = sq_ref_extern("printf");
-
-  SqBlock block_2 = sq_block_declare();
-  SqBlock block_3 = sq_block_declare();
-  SqBlock block_after = sq_block_declare();
-
-  SqRef start = sq_i_load(sq_type_long, obj);
-  SqRef stop = sq_i_load(sq_type_long, sq_i_add(sq_type_long, obj, sq_const_int(8)));
-  SqRef step = sq_i_load(sq_type_long, sq_i_add(sq_type_long, obj, sq_const_int(16)));
-  SqRef cmp = sq_i_ceql(sq_type_long, step, sq_const_int(1));
-  sq_i_jnz(cmp, block_2, block_3);
-
-  sq_block_start(block_2);
-  SqRef fmt_str_2 = sq_ref_for_symbol(parser.range2_print_fmt);
-  sq_i_call4(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str_2}, sq_varargs_begin,
-             (SqCallArg){sq_type_long, start}, (SqCallArg){sq_type_long, stop});
-  sq_i_jmp(block_after);
-
-  sq_block_start(block_3);
-  SqRef fmt_str_3 = sq_ref_for_symbol(parser.range3_print_fmt);
-  sq_i_call5(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str_3}, sq_varargs_begin,
-             (SqCallArg){sq_type_long, start}, (SqCallArg){sq_type_long, stop},
-             (SqCallArg){sq_type_long, step});
-
-  sq_block_start(block_after);
 }
 
 static void initialize_aggregate(SqRef base_addr, Type type) {
@@ -3762,12 +3730,8 @@ static void print_statement(void) {
 
     sq_i_call1(sq_type_void, sq_ref_extern("PrintStr"),
                (SqCallArg){sq_type_long, operand_to_sqref_lval(&as_str)});
-  } else {
-    if (type_eq(val.type, type_range)) {
-      print_range(&val);
-    } else {
-      errorf("Don't know how to print type %s.", type_as_str(val.type));
-    }
+  }  else {
+    errorf("Don't know how to print type %s.", type_as_str(val.type));
   }
   expect_end_of_statement("print");
 }
@@ -4244,6 +4208,7 @@ static void declare_all_rt_foreigns(void) {
   declare_rt_foreign_memfn0(type_float, type_str, "__str__");
   declare_rt_foreign_memfn0(type_double, type_str, "__str__");
   declare_rt_foreign_memfn0(type_str, type_str, "__str__");
+  declare_rt_foreign_memfn0(type_range, type_str, "__str__");
 }
 
 static void parse_impl(Arena* main_arena,
@@ -4287,16 +4252,6 @@ static void parse_impl(Arena* main_arena,
     config.debug_flags = "PMNCFKAILSRT";
   }
   sq_init(&config);
-
-  sq_data_start(sq_linkage_default, "range2_print_fmt");
-  sq_data_string("range(%lld, %lld)\n");
-  sq_data_byte(0);
-  parser.range2_print_fmt = sq_data_end();
-
-  sq_data_start(sq_linkage_default, "range3_print_fmt");
-  sq_data_string("range(%lld, %lld, %lld)\n");
-  sq_data_byte(0);
-  parser.range3_print_fmt = sq_data_end();
 
   sq_type_struct_start("str", 8);
   sq_type_add_field(sq_type_long); // data

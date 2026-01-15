@@ -14,6 +14,18 @@ typedef struct Str {
   int64_t size;
 } Str;
 
+typedef struct Range {
+  int64_t start;
+  int64_t stop;
+  int64_t step;
+} Range;
+
+typedef struct List {
+  unsigned char* data;
+  uint64_t size;
+  uint64_t capacity;
+} List;
+
 static Str str_copy_cstr(const char* cstr) {
   // Note, no NUL, not sure if this will be annoying in practice.
   size_t size = strlen(cstr);
@@ -30,12 +42,6 @@ static Str str_const_cstr(const char* cstr) {
 void PrintStr(Str* str) {
   printf("%.*s\n", (int)str->size, str->data);
 }
-
-typedef struct List {
-  unsigned char* data;
-  uint64_t size;
-  uint64_t capacity;
-} List;
 
 void List$reserve(List* list, uint64_t capacity, uint64_t item_size) {
   if (capacity <= list->capacity) {
@@ -197,6 +203,16 @@ Str float$__str__(float* self) {
 Str double$__str__(double* self) {
   char buf[256];
   snprintf(buf, sizeof(buf), "%f", *self);
+  return str_copy_cstr(buf);
+}
+
+Str range$__str__(Range* range) {
+  char buf[256];
+  if (range->step == 1) {
+    snprintf(buf, sizeof(buf), "range(%lld, %lld)", range->start, range->stop);
+  } else {
+    snprintf(buf, sizeof(buf), "range(%lld, %lld, %lld)", range->start, range->stop, range->step);
+  }
   return str_copy_cstr(buf);
 }
 

@@ -453,7 +453,7 @@ void type_init(Arena* arena) {
   set_builtin_typedata(TYPE_FLOAT, "float", 4, 4);
   set_builtin_typedata(TYPE_DOUBLE, "double", 8, 8);
   set_builtin_typedata(TYPE_STR, "str", 16, 8);
-  set_builtin_typedata(TYPE_RANGE, "Range", 24, 8);
+  set_builtin_typedata(TYPE_RANGE, "range", 24, 8);
   num_typedata = NUM_TYPE_KINDS;
 }
 
