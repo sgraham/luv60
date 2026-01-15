@@ -227,6 +227,13 @@ void List$unchecked_get(List* list, int64_t index, void* into, uint64_t item_siz
 }
 
 #if 0
+// eq_func can be null, which then instead uses memcmp. If provided it must be
+// the typed function, not the erased.
+bool List$__contains__(List* list, void* item, uint64_t item_size, bool (*eq_func)(void*, void*)) {
+}
+#endif
+
+#if 0
 void List$__contains__()
 void List$__getitem__()
 void List$__iter__()

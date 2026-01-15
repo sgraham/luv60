@@ -191,6 +191,7 @@ typedef struct Parser {
 
   Str static_str_main;
   Str static_str___str__;
+  Str static_str___contains__;
   Str static_str_ret;
   Str static_str_up;
 
@@ -824,6 +825,15 @@ static Sym* gen_list_append(Type subtype) {
   return funcsym;
 }
 
+// on []T def __contains__(self, T item):
+//     tmp = item
+//     List$__contains__(self, &tmp, sizeof(T), &T::__eq__)
+static Sym* gen_list___contains__(Type subtype) {
+  // TODO: Need __eq__, otherwise at least special cases for basic value types
+  // and then something for str.
+  error("todo; generic list __contains__");
+}
+
 typedef struct GenericThunkCreators {
   const char* name;
   Sym* (*ensure_gen_thunk)(Type);
@@ -831,6 +841,7 @@ typedef struct GenericThunkCreators {
 
 static GenericThunkCreators generic_list_functions[] = {
   { "append", gen_list_append },
+  { "__contains__", gen_list___contains__ },
 };
 
 static Sym* lookup_memfn(Type type, Str name) {
@@ -2337,8 +2348,21 @@ static Operand parse_grouping(bool can_assign, Type* expected) {
   return operand_none;
 }
 static Operand parse_in_or_not_in(Operand left, bool can_assign, Type* expected) {
-  ASSERT(false && "not implemented");
-  return operand_none;
+  bool negated = match(TOK_NOT);
+  ASSERT(!negated && "todo");
+  //consume(TOK_IN, "Expect 'in'.");
+  Operand container = parse_expression(NULL);
+
+  Sym* sym = lookup_memfn(container.type, parser.static_str___contains__);
+  if (sym) {
+    Operand res = operand_rvalue_imm(
+        type_bool, sq_i_call2(sq_type_word, sqref_for_sym(sym),
+                              (SqCallArg){sq_type_long, operand_to_sqref_lval(&container)},
+                              (SqCallArg){type_to_sqtype(left.type), operand_to_sqref_imm(&left)}));
+    return res;
+  } else {
+    errorf("Type %s does not define __contains__.", type_as_str(container.type));
+  }
 }
 
 static Operand parse_len(bool can_assign, Type* expected) {
@@ -3730,7 +3754,7 @@ static void print_statement(void) {
 
     sq_i_call1(sq_type_void, sq_ref_extern("PrintStr"),
                (SqCallArg){sq_type_long, operand_to_sqref_lval(&as_str)});
-  }  else {
+  } else {
     errorf("Don't know how to print type %s.", type_as_str(val.type));
   }
   expect_end_of_statement("print");
@@ -4173,8 +4197,7 @@ static int sqbe_callback_output_function(const char* fmt, va_list ap) {
   error(str);
 }
 
-static void declare_rt_foreign_memfn0(Type on, Type return_type, const char* name_cstr) {
-  Str name = str_intern(name_cstr);
+static void declare_rt_foreign_memfn0(Type on, Type return_type, Str name) {
   Str memfn_name = memfn_name_from_type(on, name);
   Type param_types[] = { type_ptr(on) };
   Type functype =
@@ -4196,19 +4219,19 @@ static void declare_rt_foreign_memfn1(Type on, Type return_type, const char* nam
 static void declare_all_rt_foreigns(void) {
   declare_rt_foreign_memfn1(type_str, type_str, "join", type_list(type_str));
 
-  declare_rt_foreign_memfn0(type_bool, type_str, "__str__");
-  declare_rt_foreign_memfn0(type_i8, type_str, "__str__");
-  declare_rt_foreign_memfn0(type_u8, type_str, "__str__");
-  declare_rt_foreign_memfn0(type_i16, type_str, "__str__");
-  declare_rt_foreign_memfn0(type_u16, type_str, "__str__");
-  declare_rt_foreign_memfn0(type_i32, type_str, "__str__");
-  declare_rt_foreign_memfn0(type_u32, type_str, "__str__");
-  declare_rt_foreign_memfn0(type_i64, type_str, "__str__");
-  declare_rt_foreign_memfn0(type_u64, type_str, "__str__");
-  declare_rt_foreign_memfn0(type_float, type_str, "__str__");
-  declare_rt_foreign_memfn0(type_double, type_str, "__str__");
-  declare_rt_foreign_memfn0(type_str, type_str, "__str__");
-  declare_rt_foreign_memfn0(type_range, type_str, "__str__");
+  declare_rt_foreign_memfn0(type_bool, type_str, parser.static_str___str__);
+  declare_rt_foreign_memfn0(type_i8, type_str, parser.static_str___str__);
+  declare_rt_foreign_memfn0(type_u8, type_str, parser.static_str___str__);
+  declare_rt_foreign_memfn0(type_i16, type_str, parser.static_str___str__);
+  declare_rt_foreign_memfn0(type_u16, type_str, parser.static_str___str__);
+  declare_rt_foreign_memfn0(type_i32, type_str, parser.static_str___str__);
+  declare_rt_foreign_memfn0(type_u32, type_str, parser.static_str___str__);
+  declare_rt_foreign_memfn0(type_i64, type_str, parser.static_str___str__);
+  declare_rt_foreign_memfn0(type_u64, type_str, parser.static_str___str__);
+  declare_rt_foreign_memfn0(type_float, type_str, parser.static_str___str__);
+  declare_rt_foreign_memfn0(type_double, type_str, parser.static_str___str__);
+  declare_rt_foreign_memfn0(type_str, type_str, parser.static_str___str__);
+  declare_rt_foreign_memfn0(type_range, type_str, parser.static_str___str__);
 }
 
 static void parse_impl(Arena* main_arena,
@@ -4238,6 +4261,7 @@ static void parse_impl(Arena* main_arena,
   parser.verbose = verbose;
   parser.static_str_main = str_intern_len("main", 4);
   parser.static_str___str__ = str_intern_len("__str__", 7);
+  parser.static_str___contains__ = str_intern_len("__contains__", 12);
   parser.static_str_ret = str_intern_len("$ret", 4);
   parser.static_str_up = str_intern_len("$up", 3);
   parser.str_counter = 0;
