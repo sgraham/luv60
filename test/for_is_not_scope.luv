@@ -1,0 +1,6 @@
+# OUT: 2
+def int main():
+    for x in range(3):
+        i = x
+    print i
+    return 0
