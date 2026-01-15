@@ -194,7 +194,6 @@ typedef struct Parser {
   Str static_str_ret;
   Str static_str_up;
 
-  SqSymbol float_print_fmt;
   SqSymbol range2_print_fmt;
   SqSymbol range3_print_fmt;
 
@@ -898,23 +897,6 @@ static void print_range(Operand* op) {
              (SqCallArg){sq_type_long, step});
 
   sq_block_start(block_after);
-}
-
-static void print_float(Operand* op) {
-  SqRef val = operand_to_sqref_imm(op);
-  SqRef vald = sq_i_exts(val);
-  SqRef print_func = sq_ref_extern("printf");
-  SqRef fmt_str = sq_ref_for_symbol(parser.float_print_fmt);
-  sq_i_call3(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str}, sq_varargs_begin,
-             (SqCallArg){sq_type_double, vald});
-}
-
-static void print_double(Operand* op) {
-  SqRef val = operand_to_sqref_imm(op);
-  SqRef print_func = sq_ref_extern("printf");
-  SqRef fmt_str = sq_ref_for_symbol(parser.float_print_fmt);
-  sq_i_call3(sq_type_void, print_func, (SqCallArg){sq_type_long, fmt_str}, sq_varargs_begin,
-             (SqCallArg){sq_type_double, val});
 }
 
 static void initialize_aggregate(SqRef base_addr, Type type) {
@@ -3783,10 +3765,6 @@ static void print_statement(void) {
   } else {
     if (type_eq(val.type, type_range)) {
       print_range(&val);
-    } else if (type_eq(val.type, type_float)) {
-      print_float(&val);
-    } else if (type_eq(val.type, type_double)) {
-      print_double(&val);
     } else {
       errorf("Don't know how to print type %s.", type_as_str(val.type));
     }
@@ -4263,6 +4241,8 @@ static void declare_all_rt_foreigns(void) {
   declare_rt_foreign_memfn0(type_u32, type_str, "__str__");
   declare_rt_foreign_memfn0(type_i64, type_str, "__str__");
   declare_rt_foreign_memfn0(type_u64, type_str, "__str__");
+  declare_rt_foreign_memfn0(type_float, type_str, "__str__");
+  declare_rt_foreign_memfn0(type_double, type_str, "__str__");
   declare_rt_foreign_memfn0(type_str, type_str, "__str__");
 }
 
@@ -4307,11 +4287,6 @@ static void parse_impl(Arena* main_arena,
     config.debug_flags = "PMNCFKAILSRT";
   }
   sq_init(&config);
-
-  sq_data_start(sq_linkage_default, "float_print_fmt");
-  sq_data_string("%f\n");
-  sq_data_byte(0);
-  parser.float_print_fmt = sq_data_end();
 
   sq_data_start(sq_linkage_default, "range2_print_fmt");
   sq_data_string("range(%lld, %lld)\n");

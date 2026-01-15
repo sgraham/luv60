@@ -188,6 +188,18 @@ Str bool$__str__(bool* self) {
   return *self ? str_const_cstr("true") : str_const_cstr("false");
 }
 
+Str float$__str__(float* self) {
+  char buf[256];
+  snprintf(buf, sizeof(buf), "%f", *self);
+  return str_copy_cstr(buf);
+}
+
+Str double$__str__(double* self) {
+  char buf[256];
+  snprintf(buf, sizeof(buf), "%f", *self);
+  return str_copy_cstr(buf);
+}
+
 #if 0
 Str List$__str__(List* list, Str (*subtype_str)(void* item)) {
 }
