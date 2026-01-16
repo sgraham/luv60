@@ -2722,7 +2722,7 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
 
     // TODO: This is very bad, being inside the loop.
     Sym* lval = make_local_and_alloc(SYM_VAR, (Str){0}, elem.type, NULL);
-    sq_i_storew(operand_to_sqref_imm(&elem), lval->ref);
+    copy_by_type(&elem, lval->ref);
 
     SqRef list_append_func = sq_ref_extern("List$append");
     sq_i_call3(sq_type_void, list_append_func, (SqCallArg){sq_type_long, untyped_list},

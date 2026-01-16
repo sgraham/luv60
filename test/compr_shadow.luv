@@ -1,0 +1,16 @@
+# OUT: 56
+# OUT: 3
+# OUT: aa
+# OUT: bb
+# OUT: cc
+def int main():
+    x = 56
+    stuff = [x for x in ["aa", "bb", "cc"]]
+
+    print x
+    print len(stuff)
+    print stuff[0]
+    print stuff[1]
+    print stuff[2]
+
+    return 0
