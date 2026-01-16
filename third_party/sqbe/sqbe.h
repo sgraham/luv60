@@ -197,6 +197,8 @@ void sq_i_jnz(SqRef cond, SqBlock if_true, SqBlock if_false);
 // TODO: only 2-branch phi supported currently
 SqRef sq_i_phi(SqType size_class, SqBlock block0, SqRef val0, SqBlock block1, SqRef val1);
 
+void sq_i_blit(SqRef from, SqRef to, int num_bytes);
+
 typedef struct SqCallArg {
   SqType type;
   SqRef value;
@@ -13376,7 +13378,7 @@ static struct {
 enum {
 	V31 = 0x1fffffff,  /* local name for V31 */
 };
- 
+
 static char* w_regs[] = {
     "w0",  "w1",  "w2",  "w3",  "w4",  "w5",  "w6",  "w7",  "w8",  "w9",  "w10",
     "w11", "w12", "w13", "w14", "w15", "w16", "w17", "w18", "w19", "w20", "w21",
@@ -17076,6 +17078,23 @@ SqRef sq_i_phi(SqType size_class, SqBlock block0, SqRef val0, SqBlock block1, Sq
   G(plink) = &phi->link;
   SQC(pfs.ps) = PPhi;
   return _internal_ref_to_sqref(tmp);
+}
+
+void sq_i_blit(SqRef from, SqRef to, int num_bytes) {
+  SQ_ERR_CHECK_VOID();
+  memset(GC(curi), 0, 2 * sizeof(Ins));
+  GC(curi)->op = Oblit0;
+  GC(curi)->arg[0] = _sqref_to_internal_ref(from);
+  GC(curi)->arg[1] = _sqref_to_internal_ref(to);
+  ++GC(curi);
+  GC(curi)->op = Oblit1;
+  Ref r = INT(num_bytes);
+  if (rsval(r) < 0 || rsval(r) != num_bytes) {
+    err_("invalid blit size");
+  }
+  GC(curi)->arg[0] = r;
+  ++GC(curi);
+  SQC(pfs.ps) = PIns;
 }
 
 static void _normal_two_op_instr_into(int op, Ref into, SqType size_class, SqRef arg0, SqRef arg1) {

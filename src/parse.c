@@ -550,12 +550,19 @@ static ExtFunc zext_by_type(Type type) {
   }
 }
 
+static void copy_bytes(SqRef from, SqRef to, int count) {
+  if (count < 32) {
+    sq_i_blit(from, to, count);
+  } else {
+    SqRef memcpy_func = sq_ref_extern("memcpy");
+    sq_i_call3(sq_type_void, memcpy_func, (SqCallArg){sq_type_long, to},
+               (SqCallArg){sq_type_long, from}, (SqCallArg){sq_type_long, sq_const_int(count)});
+  }
+}
+
 static void store_by_type_val_into(Type type, SqRef val, SqRef into) {
   if (type_is_aggregate(type)) {
-    SqRef memcpy_func = sq_ref_extern("memcpy");
-    sq_i_call3(sq_type_void, memcpy_func, (SqCallArg){sq_type_long, into},
-               (SqCallArg){sq_type_long, val},
-               (SqCallArg){sq_type_long, sq_const_int(type_size(type))});
+    copy_bytes(val, into, type_size(type));
   } else if (type_kind(type) == TYPE_DOUBLE) {
     sq_i_stored(val, into);
   } else if (type_kind(type) == TYPE_FLOAT) {
@@ -584,11 +591,8 @@ static SqRef load_by_type_from(Type type, SqRef from) {
   SqType resultsize = sqbasetype_from_type(type);
   ASSERT(resultsize.u == sq_type_long.u || resultsize.u == sq_type_word.u);
   if (type_is_aggregate(type)) {
-    SqRef memcpy_func = sq_ref_extern("memcpy");
     SqRef into = sq_i_alloc8(sq_const_int(type_size(type)));
-    sq_i_call3(sq_type_void, memcpy_func, (SqCallArg){sq_type_long, into},
-               (SqCallArg){sq_type_long, from},
-               (SqCallArg){sq_type_long, sq_const_int(type_size(type))});
+    copy_bytes(from, into, type_size(type));
     return into;
   } else if (type_kind(type) == TYPE_BOOL) {
     return sq_i_loadub(resultsize, from);
@@ -707,10 +711,7 @@ static SqRef operand_to_sqref_lval(Operand* op) {
 
 static void copy_by_type(Operand* from, SqRef into) {
   if (type_is_aggregate(from->type)) {
-    SqRef memcpy_func = sq_ref_extern("memcpy");
-    sq_i_call3(sq_type_void, memcpy_func, (SqCallArg){sq_type_long, into},
-               (SqCallArg){sq_type_long, from->ref},
-               (SqCallArg){sq_type_long, sq_const_int(type_size(from->type))});
+    copy_bytes(from->ref, into, type_size(from->type));
   } else {
     store_by_type_val_into(from->type, operand_to_sqref_imm(from), into);
   }
@@ -949,11 +950,8 @@ static Sym* lookup_memfn(Type type, Str name) {
 static void initialize_aggregate(SqRef base_addr, Type type) {
   size_t size = type_size(type);
   if (type_kind(type) == TYPE_STRUCT && type_struct_has_initializer(type)) {
-    SqRef memcpy_func = sq_ref_extern("memcpy");
     SqSymbol init_sym = type_struct_initializer_sym(type);
-    sq_i_call3(sq_type_void, memcpy_func, (SqCallArg){sq_type_long, base_addr},
-               (SqCallArg){sq_type_long, sq_ref_for_symbol(init_sym)},
-               (SqCallArg){sq_type_long, sq_const_int(size)});
+    copy_bytes(sq_ref_for_symbol(init_sym), base_addr, size);
 #if 0
     ir_ref memcpy_addr = ir_CONST_ADDR(memcpy);
     ir_ref default_blob = ir_CONST_ADDR(type_struct_initializer_blob(type));
