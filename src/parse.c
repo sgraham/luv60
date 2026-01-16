@@ -847,7 +847,7 @@ static Sym* gen_list___str__(Type subtype) {
     return nspp->sym;                                                                       \
   }
 
-  sq_func_start(sq_linkage_default, sq_type_void, cstr_copy(parser.arena, full_name));
+  sq_func_start(sq_linkage_default, parser.sq_type_str, cstr_copy(parser.arena, full_name));
 
   SqRef self = sq_func_param(sq_type_long);
 
@@ -856,7 +856,7 @@ static Sym* gen_list___str__(Type subtype) {
   Sym* sub_str_func = lookup_memfn(subtype, parser.static_str___str__);
 
   SqRef ret = sq_i_call3(
-      sq_type_long, sq_ref_extern("List$__str__"), (SqCallArg){sq_type_long, self},
+      parser.sq_type_str, sq_ref_extern("List$__str__"), (SqCallArg){sq_type_long, self},
       (SqCallArg){sq_type_long, sq_const_int(subtype_size)},
       (SqCallArg){sq_type_long, sub_str_func ? sqref_for_sym(sub_str_func) : sq_const_int(0)});
   sq_i_ret(ret);
