@@ -583,7 +583,14 @@ static void store_by_type_val_into(Type type, SqRef val, SqRef into) {
 static SqRef load_by_type_from(Type type, SqRef from) {
   SqType resultsize = sqbasetype_from_type(type);
   ASSERT(resultsize.u == sq_type_long.u || resultsize.u == sq_type_word.u);
-  if (type_kind(type) == TYPE_BOOL) {
+  if (type_is_aggregate(type)) {
+    SqRef memcpy_func = sq_ref_extern("memcpy");
+    SqRef into = sq_i_alloc8(sq_const_int(type_size(type)));
+    sq_i_call3(sq_type_void, memcpy_func, (SqCallArg){sq_type_long, into},
+               (SqCallArg){sq_type_long, from},
+               (SqCallArg){sq_type_long, sq_const_int(type_size(type))});
+    return into;
+  } else if (type_kind(type) == TYPE_BOOL) {
     return sq_i_loadub(resultsize, from);
   } else if (type_kind(type) == TYPE_CODEPT) {
     return sq_i_load(sq_type_word, from);

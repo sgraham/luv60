@@ -1,0 +1,15 @@
+# OUT: 0
+# OUT: 3
+# OUT: zoq
+# OUT: fot
+# OUT: pik
+def int main():
+    []str things
+    print len(things)
+    things.append("zoq")
+    things.append("fot")
+    things.append("pik")
+    print len(things)
+    for x in things:
+        print x
+    return 0
