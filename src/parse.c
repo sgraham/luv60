@@ -725,17 +725,10 @@ static SqRef sqref_for_sym(Sym* sym) {
   }
 }
 
-// These two both have to start with `name` for the hash/eq funcs to work.
 typedef struct NameSymPair {
   Str name;
   Sym sym;
 } NameSymPair;
-
-// These two both have to start with `name` for the hash/eq funcs to work.
-typedef struct NameSymPPair {
-  Str name;
-  Sym* sym;
-} NameSymPPair;
 
 static size_t namesym_hash_func(void* vnsp) {
   NameSymPair* nsp = (NameSymPair*)vnsp;
@@ -797,24 +790,46 @@ static Sym* sym_new(SymKind kind, Str name, Type type) {
   }
 }
 
+typedef struct NameTypeSymP {
+  Str name;
+  Type type;
+  Sym* sym;
+} NameTypeSymP;
+
+static size_t nametypesymp_hash_func(void* p) {
+  NameTypeSymP* ntsp = (NameTypeSymP*)p;
+  size_t hash = 0;
+  dict_hash_write(&hash, (void*)str_raw_ptr(ntsp->name), str_len(ntsp->name));
+  // Not the best hash for Type, but I think it's valid.
+  dict_hash_write(&hash, (void*)&ntsp->type, sizeof(Type));
+  return hash;
+}
+
+static bool nametypesymp_eq_func(void* void_a, void* void_b) {
+  NameTypeSymP* ntsp_a = (NameTypeSymP*)void_a;
+  NameTypeSymP* ntsp_b = (NameTypeSymP*)void_b;
+  if (!str_eq(ntsp_a->name, ntsp_b->name)) {
+    return false;
+  }
+  return type_eq(ntsp_a->type, ntsp_b->type);
+}
+
 // TODO: type_as_str being used for real work, not errors here, and shouldn't be
 // because it's expensive. should at least be doing a type_as_str_into to build
 // the name so that all the intermediates aren't unnecessarily getting intern'd,
 // etc.
 
+static Sym* gen_array___str__(Type type) {
+  error("todo; polymorphic array __str__");
+}
+
 // on []T def append(self, T item):
 //     tmp = item
 //     List$append(self, &tmp, sizeof(T))
-static Sym* gen_list_append(Type subtype) {
+static Sym* gen_list_append(Type type) {
+  Type subtype = type_list_subtype(type);
   Str full_name = memfn_name_from_type_name(str_internf("List_%s", type_as_str(subtype)),
                                             str_intern_len("append", 6));
-
-  DictRawIter iter = dict_find(&parser.generics_thunk_cache, &full_name, namesym_hash_func,
-                               namesym_eq_func, sizeof(NameSymPPair));
-  NameSymPPair* nspp = (NameSymPPair*)dict_rawiter_get(&iter);
-  if (nspp) {
-    return nspp->sym;
-  }
 
   sq_func_start(sq_linkage_default, sq_type_void, cstr_copy(parser.arena, full_name));
 
@@ -842,17 +857,13 @@ static Sym* gen_list_append(Type subtype) {
 
   sq_itemctx_activate(parser.cur_scope->func_item_ctx);
 
-  NameSymPPair nspp_insert = {full_name, funcsym};
-  DictInsert res = dict_insert(&parser.generics_thunk_cache, &nspp_insert, namesym_hash_func,
-                               namesym_eq_func, sizeof(NameSymPPair), _Alignof(NameSymPPair));
-  ASSERT(res.inserted);
   return funcsym;
 }
 
 // on []T def __contains__(self, T item):
 //     tmp = item
 //     List$__contains__(self, &tmp, sizeof(T), &T::__eq__)
-static Sym* gen_list___contains__(Type subtype) {
+static Sym* gen_list___contains__(Type type) {
   // TODO: Need __eq__, otherwise at least special cases for basic value types
   // and then something for str.
   error("todo; generic list __contains__");
@@ -860,15 +871,10 @@ static Sym* gen_list___contains__(Type subtype) {
 
 // on []T def str __str__(self):
 //     List$__str__(self, sizeof(T), &T::__str__)
-static Sym* gen_list___str__(Type subtype) {
-  Str full_name = memfn_name_from_type_name(str_internf("List_%s", type_as_str(subtype)),   \
-                                            parser.static_str___str__);                     \
-  DictRawIter iter = dict_find(&parser.generics_thunk_cache, &full_name, namesym_hash_func, \
-                               namesym_eq_func, sizeof(NameSymPPair));                      \
-  NameSymPPair* nspp = (NameSymPPair*)dict_rawiter_get(&iter);                              \
-  if (nspp) {                                                                               \
-    return nspp->sym;                                                                       \
-  }
+static Sym* gen_list___str__(Type type) {
+  Type subtype = type_list_subtype(type);
+  Str full_name = memfn_name_from_type_name(str_internf("List_%s", type_as_str(subtype)),
+                                            parser.static_str___str__);
 
   sq_func_start(sq_linkage_default, parser.sq_type_str, cstr_copy(parser.arena, full_name));
 
@@ -893,11 +899,6 @@ static Sym* gen_list___str__(Type subtype) {
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
 
   sq_itemctx_activate(parser.cur_scope->func_item_ctx);
-
-  NameSymPPair nspp_insert = {full_name, funcsym};
-  DictInsert res = dict_insert(&parser.generics_thunk_cache, &nspp_insert, namesym_hash_func,
-                               namesym_eq_func, sizeof(NameSymPPair), _Alignof(NameSymPPair));
-  ASSERT(res.inserted);
   return funcsym;
 }
 
@@ -906,31 +907,66 @@ typedef struct GenericThunkCreators {
   Sym* (*ensure_gen_thunk)(Type);
 } GenericThunkCreators;
 
+static GenericThunkCreators generic_array_functions[] = {
+    {"__str__", gen_array___str__},
+};
+
 static GenericThunkCreators generic_list_functions[] = {
-  { "append", gen_list_append },
-  { "__contains__", gen_list___contains__ },
-  { "__str__", gen_list___str__ },
+    {"append", gen_list_append},
+    {"__contains__", gen_list___contains__},
+    {"__str__", gen_list___str__},
 };
 
 static Sym* lookup_memfn(Type type, Str name) {
-  switch (type_kind(type)) {
+  TypeKind kind = type_kind(type);
+  switch (kind) {
     case TYPE_ARRAY:
-      error("TODO: polymorphic array memfns");
-
-    case TYPE_LIST: {
-      // TODO: memoize generically here instead of inside the generator
-      for (int i = 0; i < COUNTOFI(generic_list_functions); ++i) {
-        if (strncmp(generic_list_functions[i].name, str_raw_ptr(name), str_len(name)) == 0) {
-          return generic_list_functions[i].ensure_gen_thunk(type_list_subtype(type));
-        }
+    case TYPE_LIST:
+    case TYPE_DICT: {
+      NameTypeSymP ntsp_lookup = {name, type};
+      DictRawIter iter =
+          dict_find(&parser.generics_thunk_cache, &ntsp_lookup, nametypesymp_hash_func,
+                    nametypesymp_eq_func, sizeof(NameTypeSymP));
+      NameTypeSymP* nstp = (NameTypeSymP*)dict_rawiter_get(&iter);
+      if (nstp) {
+        return nstp->sym;
       }
-      break;
+
+      Sym* new_func = NULL;
+      switch (kind) {
+        case TYPE_ARRAY:
+          for (int i = 0; i < COUNTOFI(generic_array_functions); ++i) {
+            if (strncmp(generic_array_functions[i].name, str_raw_ptr(name), str_len(name)) == 0) {
+              new_func = generic_array_functions[i].ensure_gen_thunk(type);
+              break;
+            }
+          }
+          break;
+        case TYPE_LIST:
+          for (int i = 0; i < COUNTOFI(generic_list_functions); ++i) {
+            if (strncmp(generic_list_functions[i].name, str_raw_ptr(name), str_len(name)) == 0) {
+              new_func = generic_list_functions[i].ensure_gen_thunk(type);
+              break;
+            }
+          }
+          break;
+        case TYPE_DICT:
+          error("TODO: polymorphic dict memfns");
+          break;
+        default:
+          error("internal error");
+      }
+
+      NameTypeSymP ntsp_insert = {name, type, new_func};
+      DictInsert res =
+          dict_insert(&parser.generics_thunk_cache, &ntsp_insert, nametypesymp_hash_func,
+                      nametypesymp_eq_func, sizeof(NameTypeSymP), _Alignof(NameTypeSymP));
+      ASSERT(res.inserted);
+      return new_func;
     }
 
-    case TYPE_DICT:
-      error("TODO: polymorphic dict memfns");
-
     default:
+      // non-polymorphic below
       break;
   }
 
