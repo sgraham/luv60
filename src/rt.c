@@ -223,23 +223,31 @@ Str range$__str__(Range* range) {
 }
 
 // subtype___str__ might be null if there's none defined.
-Str List$__str__(List* list, uint64_t item_size, Str (*subtype___str__)(void* item)) {
+Str Array$__str__(unsigned char* arr_base,
+                  uint64_t arr_count,
+                  uint64_t item_size,
+                  Str (*subtype___str__)(void* item)) {
   List string_buffer = {0};
   append_to_string_buffer_list(&string_buffer, &(Str){"[", 1});
-  for (size_t i = 0; i < list->size; ++i) {
+  for (size_t i = 0; i < arr_count; ++i) {
     if (!subtype___str__) {
       append_to_string_buffer_list(&string_buffer, &(Str){"???", 3});
     } else {
-      Str tmp = subtype___str__(&list->data[i * item_size]);
+      Str tmp = subtype___str__(&arr_base[i * item_size]);
       append_to_string_buffer_list(&string_buffer, &tmp);
     }
-    if (i < list->size - 1) {
+    if (i < arr_count - 1) {
       append_to_string_buffer_list(&string_buffer, &(Str){", ", 2});
     }
   }
   append_to_string_buffer_list(&string_buffer, &(Str){"]", 1});
 
   return (Str){(const char*)string_buffer.data, string_buffer.size};
+}
+
+// subtype___str__ might be null if there's none defined.
+Str List$__str__(List* list, uint64_t item_size, Str (*subtype___str__)(void* item)) {
+  return Array$__str__(list->data, list->size, item_size, subtype___str__);
 }
 
 void List$unchecked_get(List* list, int64_t index, void* into, uint64_t item_size) {
