@@ -2646,19 +2646,16 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
   if (check(TOK_FOR)) {
     error("todo; multiple for in list compr");
   }
-  if (check(TOK_IF)) {
-    // TODO: downgrade array to slice below if any
-    error("todo; conditional in list compr");
-  }
-  TokenCursor after_clauses = parser.cursor;
+  bool have_condition = check(TOK_IF);
 
   // In general, we have to assume a slice output here because even if iterating
   // over an array, it could be filtered, so we can't know the number of
   // outputs. So this only creates an array if |expected| is provided
-  // explicitly.
+  // explicitly. (Not sure this case is worth it over just always returning a
+  // slice and writing array versions as loops for cases where the allocation
+  // has to be avoided.)
   if (expected && type_kind(*expected) == TYPE_ARRAY &&
-      type_array_count(*expected) == type_array_count(over.type) /* TODO: && no ifs */) {
-
+      type_array_count(*expected) == type_array_count(over.type) && !have_condition) {
     // TODO: enter a full function scope here? or some third non-module,
     // non-function type of scope?
     // I think it has to be equivalent to a nested function, because the iterator
@@ -2673,6 +2670,7 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
     IterationData itd = iteration_prolog(it, &over);
     ASSERT(type_eq(itd.it_type, subtype));
 
+    TokenCursor after_clauses = parser.cursor;
     parser.cursor = original;
 
     Operand elem = parse_expression(NULL);
@@ -2714,9 +2712,24 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
 
     IterationData itd = iteration_prolog(it, &over);
 
+    SqBlock true_block = sq_block_declare();
+    SqBlock false_block = sq_block_declare();
+    if (have_condition) {
+      consume(TOK_IF, "Expect 'if'.");
+      Operand cond = parse_expression(NULL);
+      if (!type_is_condition(cond.type)) {
+        errorf("Result of condition expression cannot be type %s.", type_as_str(cond.type));
+      }
+
+      sq_i_jnz(operand_to_sqref_imm(&cond), true_block, false_block);
+      sq_block_start(true_block);
+    }
+
+    TokenCursor after_clauses = parser.cursor;
     parser.cursor = original;
 
     Operand elem = parse_expression(NULL);
+
 
     // TODO: This is very bad, being inside the loop.
     Sym* lval = make_local_and_alloc(SYM_VAR, (Str){0}, elem.type, NULL);
@@ -2726,6 +2739,8 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
     sq_i_call3(sq_type_void, list_append_func, (SqCallArg){sq_type_long, untyped_list},
                (SqCallArg){sq_type_long, lval->ref},
                (SqCallArg){sq_type_long, sq_const_int(type_size(elem.type))});
+
+    sq_block_start(false_block);
 
     iteration_epilog(itd);
 
