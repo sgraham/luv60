@@ -1,0 +1,5 @@
+# OUT: [bob, job, mob]
+def int main():
+    []str stuff = ["bob", "job", "mob"]
+    print stuff
+    return 0

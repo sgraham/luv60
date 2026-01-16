@@ -705,6 +705,17 @@ static SqRef operand_to_sqref_lval(Operand* op) {
   }
 }
 
+static void copy_by_type(Operand* from, SqRef into) {
+  if (type_is_aggregate(from->type)) {
+    SqRef memcpy_func = sq_ref_extern("memcpy");
+    sq_i_call3(sq_type_void, memcpy_func, (SqCallArg){sq_type_long, into},
+               (SqCallArg){sq_type_long, from->ref},
+               (SqCallArg){sq_type_long, sq_const_int(type_size(from->type))});
+  } else {
+    store_by_type_val_into(from->type, operand_to_sqref_imm(from), into);
+  }
+}
+
 static SqRef sqref_for_sym(Sym* sym) {
   if (type_kind(sym->type) == TYPE_FUNC && type_func_flags(sym->type) & TFF_FOREIGN) {
     return sq_ref_extern(cstr_copy(parser.arena, sym->name));
@@ -2762,16 +2773,15 @@ static Operand parse_list_literal(Type* expected) {
     // [1u64, 2, 0xffff_ffff_ffff_ffff] instead.
     Operand first_item = opv_at(&elems, 0);
     SqRef arr_base = sq_i_alloc8(sq_const_int(type_size(first_item.type) * elems.size));
-    store_by_type_val_into(first_item.type, operand_to_sqref_imm(&first_item), arr_base);
+    copy_by_type(&first_item, arr_base);
     for (int i = 1; i < elems.size; ++i) {
       Operand next_item = opv_at(&elems, i);
       if (!convert_operand(&next_item, first_item.type)) {
         errorf("List item %d is of type %s which does not match type %s of first element.", i + 1,
                type_as_str(next_item.type), type_as_str(first_item.type));
       }
-      store_by_type_val_into(
-          first_item.type, operand_to_sqref_imm(&next_item),
-          sq_i_add(sq_type_long, arr_base, sq_const_int(type_size(first_item.type) * i)));
+      SqRef target = sq_i_add(sq_type_long, arr_base, sq_const_int(type_size(first_item.type) * i));
+      copy_by_type(&next_item, target);
     }
     if (expected && type_kind(*expected) == TYPE_LIST) {
       SqRef list_obj = sq_i_alloc8(sq_const_int(type_size(*expected)));
