@@ -923,7 +923,7 @@ static Sym* lookup_memfn(Type type, Str name) {
     case TYPE_ARRAY:
     case TYPE_LIST:
     case TYPE_DICT: {
-      NameTypeSymP ntsp_lookup = {name, type};
+      NameTypeSymP ntsp_lookup = {name, type, NULL};
       DictRawIter iter =
           dict_find(&parser.generics_thunk_cache, &ntsp_lookup, nametypesymp_hash_func,
                     nametypesymp_eq_func, sizeof(NameTypeSymP));
