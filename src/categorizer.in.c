@@ -41,6 +41,7 @@ decorator = '@' [a-z_][a-zA-Z0-9_]*;
   "f64"       { return TOK_F64; }
   "false"     { return TOK_FALSE; }
   "float"     { return TOK_FLOAT; }
+  "fmt"       { return TOK_FMT; }
   "for"       { return TOK_FOR; }
   "foreign"   { return TOK_FOREIGN; }
   "global"    { return TOK_GLOBAL; }

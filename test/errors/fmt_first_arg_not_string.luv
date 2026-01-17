@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:9:    fmt(234)
+# CERR: {ssss}             ^ error: Expecting str as first argument to fmt.
+def int main():
+    fmt(234)
+    return 0

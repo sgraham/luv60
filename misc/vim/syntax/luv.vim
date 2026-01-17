@@ -73,7 +73,7 @@ syn match       luvType '\<_*[A-Z][A-Z0-9]*[a-z][A-Za-z0-9_]*'
 hi def link     luvType Type
 
 " Builtin functions
-syn keyword     luvBuiltins enumerate len range reversed self
+syn keyword     luvBuiltins enumerate fmt len range reversed self
 syn keyword     luvBuiltins alloc
 hi def link     luvBuiltins Function
 

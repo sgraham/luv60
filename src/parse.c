@@ -54,6 +54,7 @@ typedef struct Sym {
 #define MAX_STRUCT_FIELDS 64
 #define MAX_UPVALS 32
 #define MAX_PACKAGE_DEPTH 16
+#define MAX_FMT_ARGS 32
 
 typedef enum ScopeResult {
   SCOPE_RESULT_GLOBAL,
@@ -192,6 +193,8 @@ typedef struct Parser {
   Str static_str_main;
   Str static_str___str__;
   Str static_str___contains__;
+  Str static_str___enter__;
+  Str static_str___exit__;
   Str static_str_ret;
   Str static_str_up;
 
@@ -2496,6 +2499,36 @@ static Operand parse_in_or_not_in(Operand left, bool can_assign, Type* expected)
   }
 }
 
+// TODO: require first arg to be constant? then it could just be parsed here
+// with error checking
+static Operand parse_fmt(bool can_assign, Type* expected) {
+  consume(TOK_LPAREN, "Expect '(' after fmt.");
+  Operand fmtstr = parse_expression(NULL);
+  if (!type_eq(fmtstr.type, type_str)) {
+    error("Expecting str as first argument to fmt.");
+  }
+  SqRef args_strs = sq_i_alloc8(sq_const_int(MAX_FMT_ARGS));
+  size_t num_args = 0;
+  while (!match(TOK_RPAREN)) {
+    consume(TOK_COMMA, "Expect ',' between fmt items.");
+    Operand item = parse_expression(NULL);
+    Sym* item_str_func = lookup_memfn(item.type, parser.static_str___str__);
+    if (!item_str_func) {
+      errorf("Don't know how to convert type %s to string for fmt.", type_as_str(item.type));
+    }
+    SqRef as_str = sq_i_call1(parser.sq_type_str, sqref_for_sym(item_str_func),
+                              (SqCallArg){sq_type_long, operand_to_sqref_lval(&item)});
+    sq_i_storel(as_str, sq_i_add(sq_type_long, args_strs, sq_const_int(num_args * 8)));
+    ++num_args;
+  }
+
+  return operand_rvalue_imm(type_str,
+                            sq_i_call3(parser.sq_type_str, sq_ref_extern("FmtImpl"),
+                                       (SqCallArg){sq_type_long, operand_to_sqref_lval(&fmtstr)},
+                                       (SqCallArg){sq_type_long, args_strs},
+                                       (SqCallArg){sq_type_long, sq_const_int(num_args)}));
+}
+
 static Operand parse_len(bool can_assign, Type* expected) {
   consume(TOK_LPAREN, "Expect '(' after len.");
   Operand len_of = parse_precedence(PREC_OR, NULL);
@@ -3691,6 +3724,7 @@ static Rule rules[NUM_TOKEN_KINDS] = {
     {NULL, NULL, PREC_NONE},                                    // TOK_ERROR
     {parse_bool_literal, NULL, PREC_NONE},                      // TOK_FALSE
     {NULL, NULL, PREC_NONE},                                    // TOK_FLOAT_LITERAL
+    {parse_fmt, NULL, PREC_NONE},                               // TOK_FMT
     {NULL, NULL, PREC_NONE},                                    // TOK_FOR
     {NULL, NULL, PREC_NONE},                                    // TOK_FOREIGN
     {NULL, parse_binary, PREC_COMPARISON},                      // TOK_GEQ
@@ -3892,6 +3926,47 @@ static void for_statement(void) {
       errorf("Unhandled for/in over type %s.", type_as_str(expr.type));
     }
   }
+}
+
+//   with EXPR as TARGET:
+//       BODY
+//
+// is the same as
+//
+//   manager = EXPR
+//   ent = &type(manager).__enter__
+//   ext = &type(manager).__exit__
+//   TARGET = ent(manager)
+//   try:
+//       BODY
+//   finally:
+//       ext(manager)
+//
+// (except that we don't actually have try/finally, so it's that idea captured
+// in normal control flow if there's a break/return/etc.)
+//
+static void with_statement(void) {
+  Operand wobj = parse_expression(NULL);
+  if (check(TOK_AS)) {
+    error("todo; with as");
+  }
+
+  Sym* enter_func = lookup_memfn(wobj.type, parser.static_str___enter__);
+  Sym* exit_func = lookup_memfn(wobj.type, parser.static_str___exit__);
+
+  sq_i_call1(/*todo*/ sq_type_void, sqref_for_sym(enter_func),
+             (SqCallArg){sq_type_long, operand_to_sqref_lval(&wobj)});
+  // TODO: bind return to the 'as' target
+
+  consume(TOK_COLON, "Expect ':' to start with.");
+  consume(TOK_NEWLINE, "Expect newline after ':' to start with.");
+  consume(TOK_INDENT, "Expect indent to start with.");
+
+  LastStatementType lst = parse_block();
+  ASSERT(lst == LST_NON_RETURN && "todo");
+
+  sq_i_call1(/*todo*/ sq_type_void, sqref_for_sym(exit_func),
+             (SqCallArg){sq_type_long, operand_to_sqref_lval(&wobj)});
 }
 
 static void print_statement(void) {
@@ -4298,6 +4373,11 @@ static LastStatementType parse_statement(bool toplevel) {
       if (toplevel) error("for statement not allowed at top level.");
       for_statement();
       break;
+    case TOK_WITH:
+      advance();
+      if (toplevel) error("with statement not allowed at top level.");
+      with_statement();
+      break;
     case TOK_PRINT:
       advance();
       if (toplevel) error("print statement not allowed at top level.");
@@ -4415,6 +4495,8 @@ static void parse_impl(Arena* main_arena,
   parser.static_str_main = str_intern_len("main", 4);
   parser.static_str___str__ = str_intern_len("__str__", 7);
   parser.static_str___contains__ = str_intern_len("__contains__", 12);
+  parser.static_str___enter__ = str_intern_len("__enter__", 9);
+  parser.static_str___exit__ = str_intern_len("__exit__", 8);
   parser.static_str_ret = str_intern_len("$ret", 4);
   parser.static_str_up = str_intern_len("$up", 3);
   parser.str_counter = 0;

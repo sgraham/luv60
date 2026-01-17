@@ -115,7 +115,6 @@ Str type_decl_name(Type type) {
   } else if (type_is_basic(type)) {
     return type_td(type)->BASIC.name;
   } else {
-    ASSERT(false);
     return (Str){0};
   }
 }
@@ -428,7 +427,6 @@ const char* type_as_str(Type type) {
       return cstr_copy(arena_, type_struct_decl_name(type));
     }
     default:
-      ASSERT(false && "todo");
       return "TODO";
   }
 }
