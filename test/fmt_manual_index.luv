@@ -1,0 +1,5 @@
+# OUT: true wee 44 zippy
+def int main():
+    print fmt("{1} wee {0} {2}", 44, true, "zippy")
+    return 0
+

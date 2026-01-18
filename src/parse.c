@@ -2620,12 +2620,20 @@ static Operand parse_fmt(bool can_assign, Type* expected) {
 
   Sym* buf = make_local_and_alloc(SYM_VAR, gensym_var_name(), type_list(type_u8), NULL);
   // TODO: List$reserve(list, len(inside_quotes) + num_args*K, sizeof(u8));
+  // or maybe a StackList + copy into final result str.
 
 
   fmtlex_start(inside_quotes);
   FmtToken tok;
   bool in_braces = false;
   int index = 0;
+  typedef enum IndexingState {
+    IS_DEFAULT,
+    IS_AUTOMATIC,
+    IS_MANUAL,
+    IS_MANUAL_REQUIRED,
+  } IndexingState;
+  IndexingState indexing_state = IS_DEFAULT;
   for (;;) {
     tok = fmtlex_next();
     //printf("TOK: %s\n", fmtlex_token_kind_name(tok.kind));
@@ -2638,8 +2646,15 @@ static Operand parse_fmt(bool can_assign, Type* expected) {
         error_offset(string_offset, "todo; Nested braces?");
       }
       in_braces = true;
+      if (indexing_state == IS_MANUAL) {
+        indexing_state = IS_MANUAL_REQUIRED;
+      }
     } else if (tok.kind == FMTTOK_RBRACE) {
       in_braces = false;
+      if (indexing_state == IS_MANUAL_REQUIRED) {
+        error_offset_delta(string_offset, tok.data.data - inside_quotes + 1,
+                           "Can't switch to automatic index after manual index.");
+      }
       if (index >= num_args) {
         errorf_offset_delta(string_offset, tok.data.data - inside_quotes + 1,
                             "Trying to use argument %d, but only %d provided.", index + 1,
@@ -2654,7 +2669,20 @@ static Operand parse_fmt(bool can_assign, Type* expected) {
                                 (SqCallArg){sq_type_long, operand_to_sqref_lval(&args[index])});
       sq_i_call2(sq_type_void, sq_ref_extern("AppendToStringBufferList"),
                  (SqCallArg){sq_type_long, buf->ref}, (SqCallArg){sq_type_long, as_str});
-      ++index;
+      if (indexing_state == IS_DEFAULT) {
+        indexing_state = IS_AUTOMATIC;
+      }
+      if (indexing_state == IS_AUTOMATIC) {
+        ++index;
+      }
+    } else if (tok.kind == FMTTOK_FIELD_NAME) {
+      if (indexing_state != IS_DEFAULT && indexing_state != IS_MANUAL_REQUIRED) {
+        error_offset_delta(string_offset, tok.data.data - inside_quotes + 1,
+                           "Can't switch to manual index after automatic index.");
+      }
+      indexing_state = IS_MANUAL;
+      // TODO: named fields, only handling numerical right now
+      index = scan_int(tok.data, false, NULL);
     } else if (tok.kind == FMTTOK_EOF) {
       break;
     } else if (tok.kind == FMTTOK_ERROR) {

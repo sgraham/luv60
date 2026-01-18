@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:25:    print fmt("{1} wee {}", 44, true)
+# CERR: {ssss}                              ^ error: Can't switch to automatic index after manual index.
+def int main():
+    print fmt("{1} wee {}", 44, true)
+    return 0
