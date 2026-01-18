@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:31:    print fmt("wee {} {}", 44 true)
+# CERR: {ssss}                                    ^ error: Expect ',' between fmt values.
+def int main():
+    print fmt("wee {} {}", 44 true)
+    return 0

@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:7:15:    print fmt(s, 4)
+# CERR: {ssss}                    ^ error: Expecting constant str as first argument to fmt.
+def int main():
+    s = "wee {}"
+    # TODO: implement this, needs sharing/duplicating between compiler and rt.
+    print fmt(s, 4)

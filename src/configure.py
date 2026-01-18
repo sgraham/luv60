@@ -19,6 +19,7 @@ COMMON_FILELIST = [
     "str.c",
     "token.c",
     "type.c",
+    "fmt_lex.c",
 ]
 
 LUVC_FILELIST = [
@@ -30,6 +31,7 @@ UNITTEST_FILELIST = [
     "lex_test.c",
     "str_test.c",
     "type_test.c",
+    "fmt_lex_test.c",
 ]
 
 LEXBENCH_FILELIST = [
@@ -235,6 +237,8 @@ def generate(platform, config, settings, cmdlines, tests):
         # categorizer.c is included by lex.c (so don't build separately)
         f.write("build categorizer.c: re2c $src/categorizer.in.c\n")
 
+        f.write("build fmt_lex.c: re2c $src/fmt_lex.in.c\n")
+
         f.write(
             "build dumbbench.c dumbbench.lua dumbbench.py dumbbench.luv: gendumbbench | $src/gen_dumbbench.py\n"
         )
@@ -253,7 +257,10 @@ def generate(platform, config, settings, cmdlines, tests):
             extra_deps = ""
             extra_deps = " | snippets.c" if src == "gen.c" else extra_deps
             extra_deps = " | categorizer.c" if src == "token.c" else extra_deps
-            f.write("build %s: cc $src/%s%s\n" % (obj, src, extra_deps))
+            if src == "fmt_lex.c":
+                f.write("build %s: cc %s\n" % (obj, src))
+            else:
+                f.write("build %s: cc $src/%s%s\n" % (obj, src, extra_deps))
 
         if config == "p":
             tracy_cpp = "../third_party/tracy/public/TracyClient.cpp"

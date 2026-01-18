@@ -45,14 +45,6 @@ void PrintStr(Str* str) {
   printf("%.*s\n", (int)str->size, str->data);
 }
 
-Str FmtImpl(Str* fmt, Str** args, uint64_t num_args) {
-  printf("in fmt, str '%*s' num_args: %llu\n", (int)fmt->size, fmt->data, num_args);
-  for (int i = 0; i < num_args; ++i) {
-    printf("  %d: %*s\n", i, (int)args[i]->size, args[i]->data);
-  }
-  return (Str){"todo; fmt!", 10};
-}
-
 void List$reserve(List* list, uint64_t capacity, uint64_t item_size) {
   if (capacity <= list->capacity) {
     return;

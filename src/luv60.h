@@ -121,6 +121,31 @@ TokenKind token_categorize(uint32_t offset);
 int token_get_continuation_paren_level(void);
 void token_restore_continuation_paren_level(int level);
 
+// fmt_lex.c
+typedef enum {
+  FMTTOK_LITERAL,        // Literal text outside braces
+  FMTTOK_LBRACE,         // Opening {
+  FMTTOK_RBRACE,         // Closing }
+  FMTTOK_FIELD_NAME,     // Field name/number (before :)
+  FMTTOK_CONVERSION,     // Conversion specifier (!r, !s, !a)
+  FMTTOK_COLON,          // : before format spec
+  FMTTOK_FORMAT_SPEC,    // Format specification
+  FMTTOK_DOT,            // . for attribute access
+  FMTTOK_LBRACKET,       // [ for index/key access
+  FMTTOK_RBRACKET,       // ] for index/key access
+  FMTTOK_ESCAPED_BRACE,  // {{ or }}
+  FMTTOK_EOF,
+  FMTTOK_ERROR
+} FmtTokenKind;
+
+typedef struct {
+  FmtTokenKind kind;
+  const char* start;
+  size_t length;
+} FmtToken;
+
+void fmtlex_start(const char* input_cstr);
+FmtToken fmtlex_next(void);
 
 // type.c
 

@@ -750,6 +750,7 @@ static bool namesym_eq_func(void* void_nsp_a, void* void_nsp_b) {
 // Returns pointer into dict where Sym is stored by value, probably bad idea.
 static Sym* sym_new(SymKind kind, Str name, Type type) {
   ASSERT(parser.cur_scope);
+  // TODO: shouldn't be passing in {0} because it'll break the dict: ASSERT(!str_is_none(name));
   if (parser.cur_scope->is_full_dict) {
     NameSymPair nsp = {.name = name,
                       .sym = {
@@ -2499,14 +2500,60 @@ static Operand parse_in_or_not_in(Operand left, bool can_assign, Type* expected)
   }
 }
 
-// TODO: require first arg to be constant? then it could just be parsed here
-// with error checking
-static Operand parse_fmt(bool can_assign, Type* expected) {
-  consume(TOK_LPAREN, "Expect '(' after fmt.");
-  Operand fmtstr = parse_expression(NULL);
-  if (!type_eq(fmtstr.type, type_str)) {
-    error("Expecting str as first argument to fmt.");
+// TODO: This breaks error messages, and so does the other str_process_escapes()
+// I guess.
+static char* get_fmt_string_literal(void) {
+  StrView strview = get_strview_for_offsets(prev_offset(), cur_offset());
+  StrView inside_quotes = {strview.data + 1, strview.size - 2};
+  if (memchr(strview.data, '\\', strview.size) != NULL) {  // worthwhile?
+    // Mutates source buffer!
+    uint32_t new_len = str_process_escapes((char*)inside_quotes.data, inside_quotes.size);
+    if (new_len == 0) {
+      error("Invalid string escape.");
+    }
+    inside_quotes.size = new_len;
   }
+
+  // Need nul termination for the fmtlex scanner, so dup here.
+  char* copy = arena_push(parser.arena, inside_quotes.size + 1, 1);
+  memcpy(copy, inside_quotes.data, inside_quotes.size);
+  copy[inside_quotes.size] = 0;
+  return copy;
+}
+
+// The format string is currently required to be a constant so this can be more
+// like interpolation than runtime error-checked. Once the format language is
+// somewhat nice, should implement a separate path that takes a runtime str and
+// implements formatting in rt instead.
+static Operand parse_fmt(bool can_assign, Type* expected) {
+  consume(TOK_LPAREN, "Expect '(' before fmt.");
+  uint32_t string_offset = cur_offset();
+  if (!match(TOK_STRING_QUOTED)) {
+    error_offset(string_offset, "Expecting constant str as first argument to fmt.");
+  }
+  char *inside_quotes = get_fmt_string_literal();
+
+  Operand args[MAX_FMT_ARGS];
+  int num_args = 0;
+  while (!match(TOK_RPAREN)) {
+    consume(TOK_COMMA, "Expect ',' between fmt values.");
+    args[num_args++] = parse_expression(NULL);
+  }
+
+  //Sym* buffer = make_local_and_alloc(SYM_VAR, name, type_list(type_u8), NULL);
+  // TODO: List$reserve(list, len(inside_quotes) + num_args*K, sizeof(u8));
+
+
+  fmtlex_start(inside_quotes);
+  // Walk through inside_quotes and build tmp.append(literal)
+
+  // Figure out which arguments we need.
+
+
+  consume(TOK_LPAREN, "Expect ')' after fmt.");
+
+
+  /*
   SqRef args_strs = sq_i_alloc8(sq_const_int(MAX_FMT_ARGS));
   size_t num_args = 0;
   while (!match(TOK_RPAREN)) {
@@ -2527,6 +2574,8 @@ static Operand parse_fmt(bool can_assign, Type* expected) {
                                        (SqCallArg){sq_type_long, operand_to_sqref_lval(&fmtstr)},
                                        (SqCallArg){sq_type_long, args_strs},
                                        (SqCallArg){sq_type_long, sq_const_int(num_args)}));
+                                       */
+  return operand_none;
 }
 
 static Operand parse_len(bool can_assign, Type* expected) {
@@ -3191,10 +3240,8 @@ static Operand parse_string(bool can_assign, Type* expected) {
       error("Invalid string escape.");
     }
     inside_quotes.size = new_len;
-    return operand_rvalue_global_addr(type_str, emit_string_obj(inside_quotes));
-  } else {
-    return operand_rvalue_global_addr(type_str, emit_string_obj(inside_quotes));
   }
+  return operand_rvalue_global_addr(type_str, emit_string_obj(inside_quotes));
 }
 
 static Operand parse_string_interpolate(bool can_assign, Type* expected) {
