@@ -94,6 +94,22 @@ CONFIGS = {
             "obj_ext": ".o",
         },
     },
+    "la": {
+        "d": {
+            "COMPILE": f"{CLANG} -MMD -MF $out.d -O0 -g {DEBUG_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            "LINK": CLANG + " -g $in -o $out",
+            "ML": CLANG + " $in -o $out",
+        },
+        "r": {
+            "COMPILE": f"{CLANG} -MMD -MF $out.d -flto -O3 -g {RELEASE_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            "LINK": CLANG + " -g $in -o $out",
+            "ML": CLANG + " $in -o $out",
+        },
+        "__": {
+            "exe_ext": "",
+            "obj_ext": ".o",
+        },
+    },
 }
 
 
@@ -248,9 +264,11 @@ def generate(platform, config, settings, cmdlines, tests):
 
         common_objs = []
         for src in COMMON_FILELIST:
-            if sys.platform == "darwin" and "_win." in src:
+            if sys.platform != "win32" and "_win." in src:
                 continue
-            elif sys.platform == "win32" and "_mac." in src:
+            elif sys.platform != "darwin" and "_mac." in src:
+                continue
+            elif sys.platform != "linux" and "_linux." in src:
                 continue
             obj = getobj(src)
             common_objs.append(obj)
@@ -354,7 +372,7 @@ def main():
     for platform, pdata in CONFIGS.items():
         if (
             (sys.platform == "win32" and platform == "w")
-            or (sys.platform == "linux" and platform == "l")
+            or (sys.platform == "linux" and platform == "la")
             or (sys.platform == "darwin" and platform == "m")
         ):
             for config, cmdlines in pdata.items():
