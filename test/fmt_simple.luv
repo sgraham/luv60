@@ -1,0 +1,10 @@
+# OUT: wee
+# OUT: waa 52
+# OUT: true woo 111
+# OUT: true zippy 222 -- hi!
+def int main():
+    print fmt("wee")
+    print fmt("waa {}", 52)
+    print fmt("{} woo {}", true, 111)
+    print fmt("{} zippy {} -- {}", true, 222, "hi!")
+    return 0

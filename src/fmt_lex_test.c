@@ -62,33 +62,62 @@ TEST(FmtLex, Basic) {
 
 TEST(FmtLex, FloatSpec) {
   FmtTokenKind expected[] = {
-      FMTTOK_LITERAL,     FMTTOK_LBRACE, FMTTOK_FIELD_NAME, FMTTOK_COLON,
-      FMTTOK_FORMAT_SPEC, FMTTOK_RBRACE, FMTTOK_EOF,
+      FMTTOK_LITERAL,      //
+      FMTTOK_LBRACE,       //
+      FMTTOK_FIELD_NAME,   //
+      FMTTOK_COLON,        //
+      FMTTOK_FORMAT_SPEC,  //
+      FMTTOK_RBRACE,       //
+      FMTTOK_EOF,          //
   };
   EXPECT_TRUE(fmtlex_test("Value: {0:.2f}", expected, COUNTOF(expected)));
 }
 
 TEST(FmtLex, EscapedBraces) {
   FmtTokenKind expected[] = {
-      FMTTOK_ESCAPED_BRACE, FMTTOK_LITERAL, FMTTOK_ESCAPED_BRACE, FMTTOK_LITERAL, FMTTOK_EOF,
+      FMTTOK_ESCAPED_BRACE,  //
+      FMTTOK_LITERAL,        //
+      FMTTOK_ESCAPED_BRACE,  //
+      FMTTOK_LITERAL,        //
+      FMTTOK_EOF,            //
   };
   EXPECT_TRUE(fmtlex_test("{{escaped}} braces", expected, COUNTOF(expected)));
 }
 
 TEST(FmtLex, AttrAndFormats) {
   FmtTokenKind expected[] = {
-      FMTTOK_LBRACE,   FMTTOK_FIELD_NAME,  FMTTOK_DOT,      FMTTOK_FIELD_NAME,
-      FMTTOK_LBRACKET, FMTTOK_FIELD_NAME,  FMTTOK_RBRACKET, FMTTOK_CONVERSION,
-      FMTTOK_COLON,    FMTTOK_FORMAT_SPEC, FMTTOK_RBRACE,   FMTTOK_EOF,
+      FMTTOK_LBRACE,       //
+      FMTTOK_FIELD_NAME,   //
+      FMTTOK_DOT,          //
+      FMTTOK_FIELD_NAME,   //
+      FMTTOK_LBRACKET,     //
+      FMTTOK_FIELD_NAME,   //
+      FMTTOK_RBRACKET,     //
+      FMTTOK_CONVERSION,   //
+      FMTTOK_COLON,        //
+      FMTTOK_FORMAT_SPEC,  //
+      FMTTOK_RBRACE,       //
+      FMTTOK_EOF,          //
+
   };
   EXPECT_TRUE(fmtlex_test("{obj.attr[key]!r:>10}", expected, COUNTOF(expected)));
 }
 
 TEST(FmtLex, DifferentSubs) {
   FmtTokenKind expected[] = {
-      FMTTOK_LITERAL,     FMTTOK_LBRACE, FMTTOK_FIELD_NAME, FMTTOK_RBRACE,
-      FMTTOK_LITERAL,     FMTTOK_LBRACE, FMTTOK_FIELD_NAME, FMTTOK_COLON,
-      FMTTOK_FORMAT_SPEC, FMTTOK_RBRACE, FMTTOK_LITERAL,    FMTTOK_EOF,
+      FMTTOK_LITERAL,      //
+      FMTTOK_LBRACE,       //
+      FMTTOK_FIELD_NAME,   //
+      FMTTOK_RBRACE,       //
+      FMTTOK_LITERAL,      //
+      FMTTOK_LBRACE,       //
+      FMTTOK_FIELD_NAME,   //
+      FMTTOK_COLON,        //
+      FMTTOK_FORMAT_SPEC,  //
+      FMTTOK_RBRACE,       //
+      FMTTOK_LITERAL,      //
+      FMTTOK_EOF,          //
+
   };
   EXPECT_TRUE(fmtlex_test("Mix {0} and {name:^20s} together", expected, COUNTOF(expected)));
 }

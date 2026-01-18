@@ -202,7 +202,7 @@ typedef struct Parser {
   SqType sq_type_list;
   SqType sq_type_range;
 
-  int str_counter;
+  int uniq_counter;
 } Parser;
 
 static Parser parser;
@@ -435,16 +435,21 @@ static void get_location_and_line_slow(uint32_t offset,
   }
 }
 
-NORETURN static void error_offset(uint32_t offset, const char* message) {
+NORETURN static void error_offset_delta(uint32_t offset, int delta, const char* message) {
   uint32_t loc_line;
   uint32_t loc_column;
   StrView line;
   get_location_and_line_slow(offset, &loc_line, &loc_column, &line);
+  loc_column += delta;
   int indent = base_writef_stderr("%s:%d:%d:", parser.cur_filename, loc_line, loc_column);
   base_writef_stderr("%.*s\n", (int)line.size, line.data);
   base_writef_stderr("%*s", indent + loc_column - 1, "");
   base_writef_stderr("^ error: %s\n", message);
   base_exit(1);
+}
+
+NORETURN static void error_offset(uint32_t offset, const char* message) {
+  error_offset_delta(offset, 0, message);
 }
 
 NORETURN static void error(const char* message) {
@@ -489,6 +494,18 @@ NORETURN static void errorf_offset(uint32_t offset, const char* fmt, ...) {
   vsnprintf(str, n, fmt, args);
   va_end(args);
   error_offset(offset, str);
+}
+
+NORETURN static void errorf_offset_delta(uint32_t offset, int delta, const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  size_t n = 1 + vsnprintf(NULL, 0, fmt, args);
+  va_end(args);
+  char* str = malloc(n);  // just a simple malloc because we're going to base_exit() momentarily.
+  va_start(args, fmt);
+  vsnprintf(str, n, fmt, args);
+  va_end(args);
+  error_offset_delta(offset, delta, str);
 }
 
 static SqType sqbasetype_from_type(Type type) {
@@ -750,7 +767,7 @@ static bool namesym_eq_func(void* void_nsp_a, void* void_nsp_b) {
 // Returns pointer into dict where Sym is stored by value, probably bad idea.
 static Sym* sym_new(SymKind kind, Str name, Type type) {
   ASSERT(parser.cur_scope);
-  // TODO: shouldn't be passing in {0} because it'll break the dict: ASSERT(!str_is_none(name));
+  ASSERT(!str_is_none(name));
   if (parser.cur_scope->is_full_dict) {
     NameSymPair nsp = {.name = name,
                       .sym = {
@@ -1367,6 +1384,32 @@ static void consume(TokenKind tok_kind, const char* message) {
     return;
   }
   error_offset(cur_offset(), message);
+}
+
+static Str gensym_var_name(void) {
+  ++parser.uniq_counter;
+  return str_internf("tmp_%d", parser.uniq_counter);
+}
+
+static SqRef emit_string_obj(StrView str) {
+  ++parser.uniq_counter;
+
+  sq_data_start(sq_linkage_default,
+                cstr_copy(parser.arena, str_internf("strdat_%d", parser.uniq_counter)));
+  for (uint32_t i = 0; i < str.size; ++i) {
+    sq_data_byte(str.data[i]);
+  }
+  sq_data_byte(0);
+  SqSymbol string_data = sq_data_end();
+
+  sq_data_start(sq_linkage_default,
+                cstr_copy(parser.arena, str_internf("strobj_%d", parser.uniq_counter)));
+  sq_data_ref(string_data, 0);
+  sq_data_long(str.size);
+  SqSymbol string_obj = sq_data_end();
+
+  sq_itemctx_activate(parser.cur_scope->func_item_ctx);
+  return sq_ref_for_symbol(string_obj);
 }
 
 // We need some constant propagation. Needed for fixed array sizes, making
@@ -2521,6 +2564,41 @@ static char* get_fmt_string_literal(void) {
   return copy;
 }
 
+#if 0
+static const char* fmtlex_token_kind_name(FmtTokenKind kind) {
+  switch (kind) {
+    case FMTTOK_LITERAL:
+      return "LITERAL";
+    case FMTTOK_LBRACE:
+      return "LBRACE";
+    case FMTTOK_RBRACE:
+      return "RBRACE";
+    case FMTTOK_FIELD_NAME:
+      return "FIELD_NAME";
+    case FMTTOK_CONVERSION:
+      return "CONVERSION";
+    case FMTTOK_COLON:
+      return "COLON";
+    case FMTTOK_FORMAT_SPEC:
+      return "FORMAT_SPEC";
+    case FMTTOK_DOT:
+      return "DOT";
+    case FMTTOK_LBRACKET:
+      return "LBRACKET";
+    case FMTTOK_RBRACKET:
+      return "RBRACKET";
+    case FMTTOK_ESCAPED_BRACE:
+      return "ESCAPED_BRACE";
+    case FMTTOK_EOF:
+      return "EOF";
+    case FMTTOK_ERROR:
+      return "ERROR";
+    default:
+      return "UNKNOWN";
+  }
+}
+#endif
+
 // The format string is currently required to be a constant so this can be more
 // like interpolation than runtime error-checked. Once the format language is
 // somewhat nice, should implement a separate path that takes a runtime str and
@@ -2540,42 +2618,55 @@ static Operand parse_fmt(bool can_assign, Type* expected) {
     args[num_args++] = parse_expression(NULL);
   }
 
-  //Sym* buffer = make_local_and_alloc(SYM_VAR, name, type_list(type_u8), NULL);
+  Sym* buf = make_local_and_alloc(SYM_VAR, gensym_var_name(), type_list(type_u8), NULL);
   // TODO: List$reserve(list, len(inside_quotes) + num_args*K, sizeof(u8));
 
 
   fmtlex_start(inside_quotes);
-  // Walk through inside_quotes and build tmp.append(literal)
-
-  // Figure out which arguments we need.
-
-
-  consume(TOK_LPAREN, "Expect ')' after fmt.");
-
-
-  /*
-  SqRef args_strs = sq_i_alloc8(sq_const_int(MAX_FMT_ARGS));
-  size_t num_args = 0;
-  while (!match(TOK_RPAREN)) {
-    consume(TOK_COMMA, "Expect ',' between fmt items.");
-    Operand item = parse_expression(NULL);
-    Sym* item_str_func = lookup_memfn(item.type, parser.static_str___str__);
-    if (!item_str_func) {
-      errorf("Don't know how to convert type %s to string for fmt.", type_as_str(item.type));
+  FmtToken tok;
+  bool in_braces = false;
+  int index = 0;
+  for (;;) {
+    tok = fmtlex_next();
+    //printf("TOK: %s\n", fmtlex_token_kind_name(tok.kind));
+    if (tok.kind == FMTTOK_LITERAL || tok.kind == FMTTOK_ESCAPED_BRACE) {
+      SqRef str = emit_string_obj(tok.data);
+      sq_i_call2(sq_type_void, sq_ref_extern("AppendToStringBufferList"),
+                 (SqCallArg){sq_type_long, buf->ref}, (SqCallArg){sq_type_long, str});
+    } else if (tok.kind == FMTTOK_LBRACE) {
+      if (in_braces) {
+        error_offset(string_offset, "todo; Nested braces?");
+      }
+      in_braces = true;
+    } else if (tok.kind == FMTTOK_RBRACE) {
+      in_braces = false;
+      if (index >= num_args) {
+        errorf_offset_delta(string_offset, tok.data.data - inside_quotes + 1,
+                            "Trying to use argument %d, but only %d provided.", index + 1,
+                            num_args);
+      }
+      Sym* item_str_func = lookup_memfn(args[index].type, parser.static_str___str__);
+      if (!item_str_func) {
+        errorf_offset(string_offset, "Don't know how to convert type %s to string for fmt.",
+                      type_as_str(args[index].type));
+      }
+      SqRef as_str = sq_i_call1(parser.sq_type_str, sqref_for_sym(item_str_func),
+                                (SqCallArg){sq_type_long, operand_to_sqref_lval(&args[index])});
+      sq_i_call2(sq_type_void, sq_ref_extern("AppendToStringBufferList"),
+                 (SqCallArg){sq_type_long, buf->ref}, (SqCallArg){sq_type_long, as_str});
+      ++index;
+    } else if (tok.kind == FMTTOK_EOF) {
+      break;
+    } else if (tok.kind == FMTTOK_ERROR) {
+      error_offset(string_offset, "Parse error in fmt string.");
+    } else {
+      error("todo; unhandled fmttok");
     }
-    SqRef as_str = sq_i_call1(parser.sq_type_str, sqref_for_sym(item_str_func),
-                              (SqCallArg){sq_type_long, operand_to_sqref_lval(&item)});
-    sq_i_storel(as_str, sq_i_add(sq_type_long, args_strs, sq_const_int(num_args * 8)));
-    ++num_args;
   }
 
-  return operand_rvalue_imm(type_str,
-                            sq_i_call3(parser.sq_type_str, sq_ref_extern("FmtImpl"),
-                                       (SqCallArg){sq_type_long, operand_to_sqref_lval(&fmtstr)},
-                                       (SqCallArg){sq_type_long, args_strs},
-                                       (SqCallArg){sq_type_long, sq_const_int(num_args)}));
-                                       */
-  return operand_none;
+  // Reinterpret []u8 as Str since the header is the same. This probably is a
+  // bad idea and something will break.
+  return operand_rvalue_imm(type_str, buf->ref);
 }
 
 static Operand parse_len(bool can_assign, Type* expected) {
@@ -2879,7 +2970,7 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
 
 
     // TODO: This is very bad, being inside the loop.
-    Sym* lval = make_local_and_alloc(SYM_VAR, (Str){0}, elem.type, NULL);
+    Sym* lval = make_local_and_alloc(SYM_VAR, gensym_var_name(), elem.type, NULL);
     copy_by_type(&elem, lval->ref);
 
     SqRef list_append_func = sq_ref_extern("List$append");
@@ -3207,27 +3298,6 @@ static Operand parse_sizeof(bool can_assign, Type* expected) {
   }
   consume(TOK_RPAREN, "Expect ')' after sizeof.");
   return operand_rvalue_imm(type_u64, sq_const_int(type_size(type)));
-}
-
-static SqRef emit_string_obj(StrView str) {
-  ++parser.str_counter;
-
-  sq_data_start(sq_linkage_default,
-                cstr_copy(parser.arena, str_internf("strdat_%d", parser.str_counter)));
-  for (uint32_t i = 0; i < str.size; ++i) {
-    sq_data_byte(str.data[i]);
-  }
-  sq_data_byte(0);
-  SqSymbol string_data = sq_data_end();
-
-  sq_data_start(sq_linkage_default,
-                cstr_copy(parser.arena, str_internf("strobj_%d", parser.str_counter)));
-  sq_data_ref(string_data, 0);
-  sq_data_long(str.size);
-  SqSymbol string_obj = sq_data_end();
-
-  sq_itemctx_activate(parser.cur_scope->func_item_ctx);
-  return sq_ref_for_symbol(string_obj);
 }
 
 static Operand parse_string(bool can_assign, Type* expected) {
@@ -4546,7 +4616,7 @@ static void parse_impl(Arena* main_arena,
   parser.static_str___exit__ = str_intern_len("__exit__", 8);
   parser.static_str_ret = str_intern_len("$ret", 4);
   parser.static_str_up = str_intern_len("$up", 3);
-  parser.str_counter = 0;
+  parser.uniq_counter = 0;
 
   SqConfiguration config = SQ_CONFIGURATION_DEFAULT;
   //config.target = SQ_TARGET_AMD64_APPLE;

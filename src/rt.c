@@ -55,7 +55,7 @@ void List$reserve(List* list, uint64_t capacity, uint64_t item_size) {
   list->data = realloc(list->data, list->capacity * item_size);
 }
 
-static void append_to_string_buffer_list(List* sb, Str* str) {
+void AppendToStringBufferList(List* sb, Str* str) {
   List$reserve(sb, sb->size + str->size, sizeof(unsigned char));
   memcpy(&sb->data[sb->size], str->data, str->size);
   sb->size += str->size;
@@ -65,9 +65,9 @@ Str str$join(Str* str, List* strings) {
   List string_buffer = {0};
   for (size_t i = 0; i < strings->size; ++i) {
     Str* item = (Str*)&strings->data[i * sizeof(Str)];
-    append_to_string_buffer_list(&string_buffer, item);
+    AppendToStringBufferList(&string_buffer, item);
     if (i < strings->size - 1) {
-      append_to_string_buffer_list(&string_buffer, str);
+      AppendToStringBufferList(&string_buffer, str);
     }
   }
 
@@ -230,19 +230,19 @@ Str Array$__str__(unsigned char* arr_base,
                   uint64_t item_size,
                   Str (*subtype___str__)(void* item)) {
   List string_buffer = {0};
-  append_to_string_buffer_list(&string_buffer, &(Str){"[", 1});
+  AppendToStringBufferList(&string_buffer, &(Str){"[", 1});
   for (size_t i = 0; i < arr_count; ++i) {
     if (!subtype___str__) {
-      append_to_string_buffer_list(&string_buffer, &(Str){"???", 3});
+      AppendToStringBufferList(&string_buffer, &(Str){"???", 3});
     } else {
       Str tmp = subtype___str__(&arr_base[i * item_size]);
-      append_to_string_buffer_list(&string_buffer, &tmp);
+      AppendToStringBufferList(&string_buffer, &tmp);
     }
     if (i < arr_count - 1) {
-      append_to_string_buffer_list(&string_buffer, &(Str){", ", 2});
+      AppendToStringBufferList(&string_buffer, &(Str){", ", 2});
     }
   }
-  append_to_string_buffer_list(&string_buffer, &(Str){"]", 1});
+  AppendToStringBufferList(&string_buffer, &(Str){"]", 1});
 
   return (Str){(const char*)string_buffer.data, string_buffer.size};
 }

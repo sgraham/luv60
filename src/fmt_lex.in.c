@@ -35,29 +35,29 @@ static FmtToken scan_literal(void) {
 
       "{{"  {
           scanner_.cursor = YYCURSOR;
-          return (FmtToken){FMTTOK_ESCAPED_BRACE, start, YYCURSOR - start};
+          return (FmtToken){FMTTOK_ESCAPED_BRACE, (StrView){start, YYCURSOR - start}};
       }
       "}}"  {
           scanner_.cursor = YYCURSOR;
-          return (FmtToken){FMTTOK_ESCAPED_BRACE, start, YYCURSOR - start};
+          return (FmtToken){FMTTOK_ESCAPED_BRACE, (StrView){start, YYCURSOR - start}};
       }
       "{"   {
           scanner_.cursor = YYCURSOR;
           scanner_.state = STATE_IN_BRACES;
           scanner_.brace_depth = 1;
-          return (FmtToken){FMTTOK_LBRACE, start, 1};
+          return (FmtToken){FMTTOK_LBRACE, (StrView){start, 1}};
       }
       [^\x00{}]+ {
           scanner_.cursor = YYCURSOR;
-          return (FmtToken){FMTTOK_LITERAL, start, YYCURSOR - start};
+          return (FmtToken){FMTTOK_LITERAL, (StrView){start, YYCURSOR - start}};
       }
       end   {
           scanner_.cursor = YYCURSOR;
-          return (FmtToken){FMTTOK_EOF, start, 0};
+          return (FmtToken){FMTTOK_EOF, (StrView){start, 0}};
       }
       *     {
           scanner_.cursor = YYCURSOR;
-          return (FmtToken){FMTTOK_ERROR, start, 1};
+          return (FmtToken){FMTTOK_ERROR, (StrView){start, 1}};
       }
   */
 }
@@ -76,40 +76,40 @@ FmtToken scan_in_braces(void) {
           scanner_.cursor = YYCURSOR;
           scanner_.state = STATE_LITERAL;
           scanner_.brace_depth = 0;
-          return (FmtToken){FMTTOK_RBRACE, start, 1};
+          return (FmtToken){FMTTOK_RBRACE, (StrView){start, 1}};
       }
       ":"   {
           scanner_.cursor = YYCURSOR;
           scanner_.state = STATE_IN_FORMAT_SPEC;
-          return (FmtToken){FMTTOK_COLON, start, 1};
+          return (FmtToken){FMTTOK_COLON, (StrView){start, 1}};
       }
       "!"[rsa] {
           scanner_.cursor = YYCURSOR;
-          return (FmtToken){FMTTOK_CONVERSION, start, YYCURSOR - start};
+          return (FmtToken){FMTTOK_CONVERSION, (StrView){start, YYCURSOR - start}};
       }
       "."   {
           scanner_.cursor = YYCURSOR;
-          return (FmtToken){FMTTOK_DOT, start, 1};
+          return (FmtToken){FMTTOK_DOT, (StrView){start, 1}};
       }
       "["   {
           scanner_.cursor = YYCURSOR;
-          return (FmtToken){FMTTOK_LBRACKET, start, 1};
+          return (FmtToken){FMTTOK_LBRACKET, (StrView){start, 1}};
       }
       "]"   {
           scanner_.cursor = YYCURSOR;
-          return (FmtToken){FMTTOK_RBRACKET, start, 1};
+          return (FmtToken){FMTTOK_RBRACKET, (StrView){start, 1}};
       }
       digit+ | alpha alnum* {
           scanner_.cursor = YYCURSOR;
-          return (FmtToken){FMTTOK_FIELD_NAME, start, YYCURSOR - start};
+          return (FmtToken){FMTTOK_FIELD_NAME, (StrView){start, YYCURSOR - start}};
       }
       end   {
           scanner_.cursor = YYCURSOR;
-          return (FmtToken){FMTTOK_ERROR, start, 0};
+          return (FmtToken){FMTTOK_ERROR, (StrView){start, 0}};
       }
       *     {
           scanner_.cursor = YYCURSOR;
-          return (FmtToken){FMTTOK_ERROR, start, 1};
+          return (FmtToken){FMTTOK_ERROR, (StrView){start, 1}};
       }
   */
 }
@@ -124,25 +124,25 @@ FmtToken scan_format_spec(void) {
           scanner_.cursor = YYCURSOR;
           scanner_.state = STATE_LITERAL;
           scanner_.brace_depth = 0;
-          return (FmtToken){FMTTOK_RBRACE, start, 1};
+          return (FmtToken){FMTTOK_RBRACE, (StrView){start, 1}};
       }
       "{"   {
           scanner_.cursor = YYCURSOR;
           scanner_.state = STATE_IN_BRACES;
           scanner_.brace_depth++;
-          return (FmtToken){FMTTOK_LBRACE, start, 1};
+          return (FmtToken){FMTTOK_LBRACE, (StrView){start, 1}};
       }
       [^\x00{}]+ {
           scanner_.cursor = YYCURSOR;
-          return (FmtToken){FMTTOK_FORMAT_SPEC, start, YYCURSOR - start};
+          return (FmtToken){FMTTOK_FORMAT_SPEC, (StrView){start, YYCURSOR - start}};
       }
       end   {
           scanner_.cursor = YYCURSOR;
-          return (FmtToken){FMTTOK_ERROR, start, 0};
+          return (FmtToken){FMTTOK_ERROR, (StrView){start, 0}};
       }
       *     {
           scanner_.cursor = YYCURSOR;
-          return (FmtToken){FMTTOK_ERROR, start, 1};
+          return (FmtToken){FMTTOK_ERROR, (StrView){start, 1}};
       }
   */
 }
@@ -156,6 +156,6 @@ FmtToken fmtlex_next(void) {
     case STATE_IN_FORMAT_SPEC:
       return scan_format_spec();
     default:
-      return (FmtToken){FMTTOK_ERROR, scanner_.cursor, 0};
+      return (FmtToken){FMTTOK_ERROR, (StrView){scanner_.cursor, 0}};
   }
 }

@@ -140,8 +140,7 @@ typedef enum {
 
 typedef struct {
   FmtTokenKind kind;
-  const char* start;
-  size_t length;
+  StrView data;
 } FmtToken;
 
 void fmtlex_start(const char* input_cstr);
