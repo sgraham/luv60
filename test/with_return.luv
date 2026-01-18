@@ -1,0 +1,21 @@
+# RET: 44
+# OUT: enter 4
+# OUT: will return
+# OUT: exit 4
+struct Mgr:
+    int a
+
+on Mgr def __enter__(self):
+    print fmt("enter {}", self.a)
+
+on Mgr def __exit__(self):
+    print fmt("exit {}", self.a)
+
+def Mgr make_it():
+    return Mgr(a=4)
+
+def int main():
+    with make_it():
+        print "will return"
+        return 44
+    return 0

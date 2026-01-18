@@ -4098,6 +4098,7 @@ static void with_statement(void) {
 
   Sym* enter_func = lookup_memfn(wobj.type, parser.static_str___enter__);
   Sym* exit_func = lookup_memfn(wobj.type, parser.static_str___exit__);
+  SqBlock block_exit = sq_block_declare();
 
   sq_i_call1(/*todo*/ sq_type_void, sqref_for_sym(enter_func),
              (SqCallArg){sq_type_long, operand_to_sqref_lval(&wobj)});
@@ -4108,26 +4109,36 @@ static void with_statement(void) {
   consume(TOK_INDENT, "Expect indent to start with.");
 
   LastStatementType lst = parse_block();
-  ASSERT(lst == LST_NON_RETURN && "todo");
 
+  sq_block_start(block_exit);
   sq_i_call1(/*todo*/ sq_type_void, sqref_for_sym(exit_func),
              (SqCallArg){sq_type_long, operand_to_sqref_lval(&wobj)});
+
+  if (lst != LST_NON_RETURN) {
+    sq_i_jmp(parser.cur_scope->return_block);
+    sq_block_declare_and_start();
+  }
 }
 
 static void print_statement(void) {
   Operand val = parse_expression(NULL);
 
-  // If __str__ exists for the type, call it, and then print the result.
-  Sym* sym = lookup_memfn(val.type, parser.static_str___str__);
-  if (sym) {
-    Operand as_str = operand_rvalue_imm(
-        type_str, sq_i_call1(parser.sq_type_str, sqref_for_sym(sym),
-                             (SqCallArg){sq_type_long, operand_to_sqref_lval(&val)}));
-
-    sq_i_call1(sq_type_void, sq_ref_extern("PrintStr"),
-               (SqCallArg){sq_type_long, operand_to_sqref_lval(&as_str)});
+  if (type_eq(val.type, type_str)) {
+      sq_i_call1(sq_type_void, sq_ref_extern("PrintStr"),
+                 (SqCallArg){sq_type_long, operand_to_sqref_lval(&val)});
   } else {
-    errorf("Don't know how to print type %s.", type_as_str(val.type));
+    // If __str__ exists for the type, call it, and then print the result.
+    Sym* sym = lookup_memfn(val.type, parser.static_str___str__);
+    if (sym) {
+      Operand as_str = operand_rvalue_imm(
+          type_str, sq_i_call1(parser.sq_type_str, sqref_for_sym(sym),
+                               (SqCallArg){sq_type_long, operand_to_sqref_lval(&val)}));
+
+      sq_i_call1(sq_type_void, sq_ref_extern("PrintStr"),
+                 (SqCallArg){sq_type_long, operand_to_sqref_lval(&as_str)});
+    } else {
+      errorf("Don't know how to print type %s.", type_as_str(val.type));
+    }
   }
   expect_end_of_statement("print");
 }
@@ -4156,6 +4167,9 @@ static LastStatementType parse_block(void) {
   LastStatementType lst = LST_NON_RETURN;
   while (!check(TOK_DEDENT)) {
     lst = parse_statement(/*toplevel=*/false);
+    if (lst != LST_NON_RETURN) {
+      break;
+    }
     skip_newlines();
   }
 

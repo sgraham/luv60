@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:8:9:        print "bad"
+# CERR: {ssss}             ^ error: Expect end of block.
+def int main():
+    if true:
+        print "will return"
+        return 44
+        print "bad"
+    return 0
