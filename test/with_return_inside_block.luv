@@ -1,0 +1,24 @@
+# RET: 22
+# OUT: enter 4
+# OUT: wee
+# OUT: exit 4
+struct Mgr:
+    int a
+
+on Mgr def __enter__(self):
+    print fmt("enter {}", self.a)
+
+on Mgr def __exit__(self):
+    print fmt("exit {}", self.a)
+
+def Mgr make_it():
+    return Mgr(a=4)
+
+def int main():
+    with make_it():
+        if true:
+            print "wee"
+            return 22
+        print "bad1"
+    print "bad2"
+    return 0

@@ -1,0 +1,16 @@
+# CRET: 1
+# CERR: {self}:14:18:    with make_it():
+# CERR: {ssss}                        ^ error: Type Mgr does not define an __exit__ for being used in 'with'.
+struct Mgr:
+    int a
+
+on Mgr def __enter__(self):
+    print fmt("enter {}", self.a)
+
+def Mgr make_it():
+    return Mgr(a=4)
+
+def int main():
+    with make_it():
+        print "hi"
+    return 0

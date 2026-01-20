@@ -55,6 +55,7 @@ typedef struct Sym {
 #define MAX_UPVALS 32
 #define MAX_PACKAGE_DEPTH 16
 #define MAX_FMT_ARGS 32
+#define MAX_EXIT_CALLS 32
 
 typedef enum ScopeResult {
   SCOPE_RESULT_GLOBAL,
@@ -91,11 +92,16 @@ static void flat_name_map_init(SmallFlatNameSymMap* nm) {
   nm->num_entries = 0;
 }
 
+typedef struct ExitCall {
+  SqRef func;
+  SqRef obj;
+} ExitCall;
+
 typedef struct Scope {
   // FuncData
   Sym* func_sym;
-  Sym* return_slot;
-  SqBlock return_block;
+  ExitCall exit_call_stack[MAX_EXIT_CALLS];  // TODO: maybe save bound Operand instead?
+  int num_exit_calls;
   SqItemCtx func_item_ctx;
   uint64_t arena_saved_pos;
   UpvalMap upval_map;
@@ -206,6 +212,12 @@ typedef struct Parser {
 } Parser;
 
 static Parser parser;
+
+static void push_exit_call(SqRef func, SqRef obj) {
+  ASSERT(parser.cur_scope->num_exit_calls < MAX_EXIT_CALLS);
+  parser.cur_scope->exit_call_stack[parser.cur_scope->num_exit_calls++] =
+      (ExitCall){.func = func, .obj = obj};
+}
 
 static inline FORCE_INLINE bool op_is_const(Operand op) {
   return op.kind == OPK_CONST;
@@ -1156,6 +1168,7 @@ static void enter_scope(bool is_module, bool is_function, Sym* funcsym) {
   parser.cur_scope = &parser.scopes[parser.num_scopes++];
   parser.cur_scope->func_sym = funcsym;
   //parser.cur_scope->arena_saved_pos = arena_pos(arena_ir);
+  parser.cur_scope->num_exit_calls = 0;
   parser.cur_scope->upval_map.num_upvals = 0;
   parser.cur_scope->arena_pos = arena_pos(parser.var_scope_arena);
   parser.cur_scope->is_function = is_function;
@@ -1205,14 +1218,6 @@ static void enter_function(Sym* sym,
     param_syms[i] = make_param(param_names[i], type_func_param(sym->type, i), i);
   }
 
-  if (type_eq(ret_type, type_void)) {
-    parser.cur_scope->return_slot = NULL;
-  } else {
-    parser.cur_scope->return_slot =
-        make_local_and_alloc(SYM_VAR, parser.static_str_ret, ret_type, NULL);
-  }
-  parser.cur_scope->return_block = sq_block_declare();
-
   if (is_nested) {
     ASSERT(str_eq(param_syms[0]->name, parser.static_str_up));
     ASSERT(type_kind(param_syms[0]->type) == TYPE_PTR);
@@ -1223,15 +1228,23 @@ static void enter_function(Sym* sym,
 
 static void leave_function(void) {
   Type ret_type = type_func_return_type(parser.cur_scope->func_sym->type);
-  sq_block_start(parser.cur_scope->return_block);
   if (type_eq(ret_type, type_void)) {
     sq_i_ret_void();
   } else {
-    if (type_is_aggregate(ret_type)) {
-      sq_i_ret(parser.cur_scope->return_slot->ref);
-    } else {
-      sq_i_ret(load_by_type_from(ret_type, parser.cur_scope->return_slot->ref));
-    }
+    // TODO: this is ugly. in the case that there's
+    //   if blah:
+    //     ...
+    //     return 1
+    // a new block is started by parse_block() when the child block (that does
+    // 'return 1' is parsed, otherwise, the higher level that's doing a jmp to
+    // the next block of work of the 'if' will cause a sqbe error because it's
+    // ret-then-jmp. but that also means if there's always an open unused block
+    // at the end after a final return. so we just return 0 here to make sqbe
+    // happy otherwise sqbe errors that the final block misses a jmp. but this
+    // always completely dead code so it doesn't matter either way. Make it a
+    // weird constant instead of 0 just to ensure we're not accidentally using
+    // it!
+    sq_i_ret(sq_const_int(0xbad));
   }
 
   parser.cur_scope->func_sym->global = sq_func_end();
@@ -4011,22 +4024,15 @@ static void if_statement(void) {
     sq_i_jnz(operand_to_sqref_imm(&opcond), true_block, false_block);
 
     sq_block_start(true_block);
-    LastStatementType lst = parse_block();
-    if (lst != LST_NON_RETURN) {
-      sq_i_jmp(parser.cur_scope->return_block);
-    } else {
-      sq_i_jmp(after_block);
-    }
+    parse_block();
+    sq_i_jmp(after_block);
 
     sq_block_start(false_block);
     if (match(TOK_ELSE)) {
       consume(TOK_COLON, "Expect ':' to start else.");
       consume(TOK_NEWLINE, "Expect newline after ':' to start else.");
       consume(TOK_INDENT, "Expect indent to start else.");
-      LastStatementType lst = parse_block();
-      if (lst != LST_NON_RETURN) {
-        sq_i_jmp(parser.cur_scope->return_block);
-      }
+      parse_block();
       sq_block_start(after_block);
       break;  // No more elifs.
     } else {
@@ -4060,12 +4066,7 @@ static void for_statement(void) {
       consume(TOK_COLON, "Expect ':' to start for.");
       consume(TOK_NEWLINE, "Expect newline after ':' to start for.");
       consume(TOK_INDENT, "Expect indent to start for.");
-      LastStatementType lst = parse_block();
-      if (lst != LST_NON_RETURN) {
-        sq_i_jmp(parser.cur_scope->return_block);
-        sq_block_declare_and_start();
-      }
-
+      parse_block();
       iteration_epilog(itd);
     } else {
       errorf("Unhandled for/in over type %s.", type_as_str(expr.type));
@@ -4097,27 +4098,33 @@ static void with_statement(void) {
   }
 
   Sym* enter_func = lookup_memfn(wobj.type, parser.static_str___enter__);
+  if (!enter_func) {
+    errorf("Type %s does not define an __enter__ for being used in 'with'.",
+           type_as_str(wobj.type));
+  }
   Sym* exit_func = lookup_memfn(wobj.type, parser.static_str___exit__);
-  SqBlock block_exit = sq_block_declare();
+  if (!exit_func) {
+    errorf("Type %s does not define an __exit__ for being used in 'with'.",
+           type_as_str(wobj.type));
+  }
 
   sq_i_call1(/*todo*/ sq_type_void, sqref_for_sym(enter_func),
              (SqCallArg){sq_type_long, operand_to_sqref_lval(&wobj)});
+
+  push_exit_call(sqref_for_sym(exit_func), operand_to_sqref_lval(&wobj));
+
   // TODO: bind return to the 'as' target
 
   consume(TOK_COLON, "Expect ':' to start with.");
   consume(TOK_NEWLINE, "Expect newline after ':' to start with.");
   consume(TOK_INDENT, "Expect indent to start with.");
 
-  LastStatementType lst = parse_block();
+  parse_block();
 
-  sq_block_start(block_exit);
-  sq_i_call1(/*todo*/ sq_type_void, sqref_for_sym(exit_func),
-             (SqCallArg){sq_type_long, operand_to_sqref_lval(&wobj)});
+  // TODO: handle break/continue!
 
-  if (lst != LST_NON_RETURN) {
-    sq_i_jmp(parser.cur_scope->return_block);
-    sq_block_declare_and_start();
-  }
+  ExitCall* ec = &parser.cur_scope->exit_call_stack[--parser.cur_scope->num_exit_calls];
+  sq_i_call1(sq_type_void, ec->func, (SqCallArg){sq_type_long, ec->obj});
 }
 
 static void print_statement(void) {
@@ -4168,6 +4175,7 @@ static LastStatementType parse_block(void) {
   while (!check(TOK_DEDENT)) {
     lst = parse_statement(/*toplevel=*/false);
     if (lst != LST_NON_RETURN) {
+      sq_block_declare_and_start();
       break;
     }
     skip_newlines();
@@ -4456,6 +4464,11 @@ static void parse_variable_statement(Type type) {
 }
 
 static LastStatementType return_statement(void) {
+  for (int i = parser.cur_scope->num_exit_calls - 1; i >= 0; --i) {
+    ExitCall* ec = &parser.cur_scope->exit_call_stack[i];
+    sq_i_call1(sq_type_void, ec->func, (SqCallArg){sq_type_long, ec->obj});
+  }
+
   Type func_ret = type_func_return_type(parser.cur_scope->func_sym->type);
   ASSERT(!type_is_none(func_ret));
   Operand op = operand_none;
@@ -4465,16 +4478,16 @@ static LastStatementType return_statement(void) {
       errorf("Cannot convert type %s to expected return type %s.", type_as_str(op.type),
              type_as_str(func_ret));
     }
+
     if (type_is_aggregate(func_ret)) {
-      store_by_type_val_into(op.type, operand_to_sqref_lval(&op),
-                             parser.cur_scope->return_slot->ref);
+      sq_i_ret(operand_to_sqref_lval(&op));
     } else {
-      store_by_type_val_into(op.type, operand_to_sqref_imm(&op),
-                             parser.cur_scope->return_slot->ref);
+      sq_i_ret(operand_to_sqref_imm(&op));
     }
     return LST_RETURN_VALUE;
   } else {
     consume(TOK_NEWLINE, "Expected newline after return in function with no return type.");
+    sq_i_ret_void();
     return LST_RETURN_VOID;
   }
 }
