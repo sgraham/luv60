@@ -214,6 +214,38 @@ Str double$__str__(double* self) {
   return str_copy_cstr(buf);
 }
 
+bool range$__contains__(Range* range, int64_t value) {
+  // Step cannot be zero
+  if (range->step == 0) {
+    return false;
+  }
+
+  // Check if value is outside the range bounds
+  if (range->step > 0) {
+    // Positive step: range goes from start (inclusive) to stop (exclusive)
+    if (value < range->start || value >= range->stop) {
+      return false;
+    }
+  } else {
+    // Negative step: range goes from start (inclusive) down to stop (exclusive)
+    if (value > range->start || value <= range->stop) {
+      return false;
+    }
+  }
+
+  // Check if value is on the correct stride
+  // value = start + n * step, where n >= 0
+  // So: (value - start) must be divisible by step
+  int64_t diff = value - range->start;
+
+  // If step divides diff evenly, and the quotient is non-negative, value is in range
+  if (diff % range->step == 0) {
+    return true;
+  }
+
+  return false;
+}
+
 Str range$__str__(Range* range) {
   char buf[256];
   if (range->step == 1) {

@@ -1,0 +1,76 @@
+# OUT: r 10
+# OUT: true
+# OUT: true
+# OUT: false
+# OUT: false
+# OUT: false
+# OUT: true
+# OUT: s 2,5
+# OUT: false
+# OUT: true
+# OUT: true
+# OUT: false
+# OUT: t 5,12,2
+# OUT: true
+# OUT: false
+# OUT: true
+# OUT: false
+# OUT: true
+# OUT: u -4,-10,-3
+# OUT: false
+# OUT: false
+# OUT: true
+# OUT: false
+# OUT: false
+# OUT: true
+# OUT: false
+# OUT: false
+# OUT: false
+# OUT: range(2,2)
+# OUT: false
+# OUT: false
+# OUT: false
+
+def int main():
+    print "r 10"
+    r = range(10)
+    print 0 in r
+    print 3 in r
+    print 10 in r
+    print -1 in r
+    print 5 not in r
+    print 10 not in r
+
+    print "s 2,5"
+    s = range(2,5)
+    print 0 in s
+    print 2 in s
+    print 4 in s
+    print 5 in s
+
+    print "t 5,12,2"
+    t = range(5,12,2)
+    print 5 in t
+    print 6 in t
+    print 9 in t
+    print 10 in t
+    print 11 in t
+
+    print "u -4,-10,-3"
+    u = range(-4,-10,-3)
+    print 0 in u
+    print -3 in u
+    print -4 in u
+    print -5 in u
+    print -6 in u
+    print -7 in u
+    print -9 in u
+    print -10 in u
+    print -11 in u
+
+    print "range(2,2)"
+    print 1 in range(2,2)
+    print 2 in range(2,2)
+    print 3 in range(2,2)
+
+    return 0

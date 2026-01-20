@@ -1072,17 +1072,20 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
   Sym* new = sym_new(kind, name, type);
   if (type_kind(type) == TYPE_STR) {
     new->ref = sq_i_alloc8(sq_const_int(type_size(type)));
+    ASSERT(type_size(type) == 16);
     if (initial_value) {
       SqRef init = operand_to_sqref_lval(initial_value);
-      sq_i_storel(sq_i_load(sq_type_long, init), new->ref);
-      sq_i_storel(sq_i_load(sq_type_long, sq_i_add(sq_type_long, init, sq_const_int(8))),
-                  sq_i_add(sq_type_long, new->ref, sq_const_int(8)));
+      copy_bytes(init, new->ref, type_size(type));
     } else {
       sq_i_storel(sq_const_int(0), new->ref);
       sq_i_storel(sq_const_int(0), sq_i_add(sq_type_long, new->ref, sq_const_int(8)));
     }
   } else if (type_kind(type) == TYPE_RANGE) {
-    ASSERT(false && "local alloc range");
+    ASSERT(initial_value);
+    ASSERT(type_size(type) == 24);
+    new->ref = sq_i_alloc8(sq_const_int(type_size(type)));
+    SqRef init = operand_to_sqref_lval(initial_value);
+    copy_bytes(init, new->ref, type_size(type));
   } else if (type_is_aggregate(type)) {
     if (initial_value) {
       if (!type_eq(initial_value->type, type)) {
@@ -2569,20 +2572,40 @@ static Operand parse_grouping(bool can_assign, Type* expected) {
   return operand_none;
 }
 static Operand parse_in_or_not_in(Operand left, bool can_assign, Type* expected) {
-  bool negated = match(TOK_NOT);
-  ASSERT(!negated && "todo");
-  //consume(TOK_IN, "Expect 'in'.");
-  Operand container = parse_expression(NULL);
+  TokenKind op = parser.cursor.prev_kind;
 
-  Sym* sym = lookup_memfn(container.type, parser.static_str___contains__);
+  bool negated = false;
+  Operand rhs;
+  if (op == TOK_IN) {
+    Rule* rule = get_rule(op);
+    rhs = parse_precedence(rule->prec_for_infix + 1, expected);
+  } else if (op == TOK_NOT && match(TOK_IN)) {
+    Rule* rule = get_rule(parser.cursor.prev_kind);
+    rhs = parse_precedence(rule->prec_for_infix + 1, expected);
+    negated = true;
+  } else {
+    error("Expected 'in' or 'not in'.");
+  }
+  Sym* sym = lookup_memfn(rhs.type, parser.static_str___contains__);
   if (sym) {
+    // TODO: need to move all the off-brand calls to a common location so they
+    // get argument conversion properly (esp sign extension)
+    if (!convert_operand(&left, type_func_param(sym->type, 1))) {
+      errorf("Can't convert %s to %s.\n", type_as_str(left.type),
+             type_as_str(type_func_param(sym->type, 1)));
+    }
     Operand res = operand_rvalue_imm(
         type_bool, sq_i_call2(sq_type_word, sqref_for_sym(sym),
-                              (SqCallArg){sq_type_long, operand_to_sqref_lval(&container)},
+                              (SqCallArg){sq_type_long, operand_to_sqref_lval(&rhs)},
                               (SqCallArg){type_to_sqtype(left.type), operand_to_sqref_imm(&left)}));
-    return res;
+    if (negated) {
+      return operand_rvalue_imm(
+          type_bool, sq_i_ceqw(sq_type_word, operand_to_sqref_imm(&res), sq_const_int(0)));
+    } else {
+      return res;
+    }
   } else {
-    errorf("Type %s does not define __contains__.", type_as_str(container.type));
+    errorf("Type %s does not define __contains__.", type_as_str(rhs.type));
   }
 }
 
@@ -4681,8 +4704,7 @@ static void declare_rt_foreign_memfn0(Type on, Type return_type, Str name) {
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
 }
 
-static void declare_rt_foreign_memfn1(Type on, Type return_type, const char* name_cstr, Type arg0) {
-  Str name = str_intern(name_cstr);
+static void declare_rt_foreign_memfn1(Type on, Type return_type, Str name, Type arg0) {
   Str memfn_name = memfn_name_from_type(on, name);
   Type param_types[] = { type_ptr(on), arg0 };
   Type functype =
@@ -4692,7 +4714,7 @@ static void declare_rt_foreign_memfn1(Type on, Type return_type, const char* nam
 }
 
 static void declare_all_rt_foreigns(void) {
-  declare_rt_foreign_memfn1(type_str, type_str, "join", type_list(type_str));
+  declare_rt_foreign_memfn1(type_str, type_str, str_intern("join"), type_list(type_str));
 
   declare_rt_foreign_memfn0(type_bool, type_str, parser.static_str___str__);
   declare_rt_foreign_memfn0(type_codept, type_str, parser.static_str___str__);
@@ -4708,6 +4730,8 @@ static void declare_all_rt_foreigns(void) {
   declare_rt_foreign_memfn0(type_double, type_str, parser.static_str___str__);
   declare_rt_foreign_memfn0(type_str, type_str, parser.static_str___str__);
   declare_rt_foreign_memfn0(type_range, type_str, parser.static_str___str__);
+
+  declare_rt_foreign_memfn1(type_range, type_bool, parser.static_str___contains__, type_i64);
 }
 
 static void parse_impl(Arena* main_arena,
