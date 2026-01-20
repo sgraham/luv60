@@ -1,0 +1,24 @@
+# OUT: hi
+# OUT: hi
+struct Mgr:
+    int a
+
+on Mgr def __enter__(self):
+    pass
+
+on Mgr def __exit__(self):
+    pass
+
+def Mgr make_it():
+    # comment here
+    return Mgr(a=0)
+
+def int main():
+    for i in range(2):
+        # stuff here
+        with make_it():
+            # test
+            if true:
+                # stuff and things
+                print "hi"
+    return 0

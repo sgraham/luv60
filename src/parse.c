@@ -1399,6 +1399,23 @@ static void consume(TokenKind tok_kind, const char* message) {
   error_offset(cur_offset(), message);
 }
 
+static void consumef(TokenKind tok_kind, const char* fmt, ...) {
+  if (parser.cursor.cur_kind == tok_kind) {
+    advance();
+    return;
+  }
+
+  va_list args;
+  va_start(args, fmt);
+  size_t n = 1 + vsnprintf(NULL, 0, fmt, args);
+  va_end(args);
+  char* str = malloc(n);  // just a simple malloc because we're going to base_exit() momentarily.
+  va_start(args, fmt);
+  vsnprintf(str, n, fmt, args);
+  va_end(args);
+  error_offset(cur_offset(), str);
+}
+
 static Str gensym_var_name(void) {
   ++parser.uniq_counter;
   return str_internf("tmp_%d", parser.uniq_counter);
@@ -1813,6 +1830,13 @@ static uint32_t parse_func_params(bool is_nested,
 static void skip_newlines(void) {
   while (match(TOK_NEWLINE)) {
   }
+}
+
+static void consume_block_header(const char* for_what) {
+  consumef(TOK_COLON, "Expect ':' to start %s.", for_what);
+  consumef(TOK_NEWLINE, "Expect newline after ':' to start %s.", for_what);
+  skip_newlines();
+  consumef(TOK_INDENT, "Expect indent to to start %s.", for_what);
 }
 
 #if 0
@@ -4006,9 +4030,7 @@ static Operand if_statement_cond_helper(void) {
   if (!type_is_condition(cond.type)) {
     errorf("Result of condition expression cannot be type %s.", type_as_str(cond.type));
   }
-  consume(TOK_COLON, "Expect ':' to start if/elif.");
-  consume(TOK_NEWLINE, "Expect newline after ':' to start if/elif.");
-  consume(TOK_INDENT, "Expect indent to start if/elif.");
+  consume_block_header("if/elif");
   return cond;
 }
 
@@ -4029,9 +4051,7 @@ static void if_statement(void) {
 
     sq_block_start(false_block);
     if (match(TOK_ELSE)) {
-      consume(TOK_COLON, "Expect ':' to start else.");
-      consume(TOK_NEWLINE, "Expect newline after ':' to start else.");
-      consume(TOK_INDENT, "Expect indent to start else.");
+      consume_block_header("else");
       parse_block();
       sq_block_start(after_block);
       break;  // No more elifs.
@@ -4063,9 +4083,7 @@ static void for_statement(void) {
         expr_type == TYPE_STR) {
       IterationData itd = iteration_prolog(it_name, &expr);
 
-      consume(TOK_COLON, "Expect ':' to start for.");
-      consume(TOK_NEWLINE, "Expect newline after ':' to start for.");
-      consume(TOK_INDENT, "Expect indent to start for.");
+      consume_block_header("for");
       parse_block();
       iteration_epilog(itd);
     } else {
@@ -4115,9 +4133,7 @@ static void with_statement(void) {
 
   // TODO: bind return to the 'as' target
 
-  consume(TOK_COLON, "Expect ':' to start with.");
-  consume(TOK_NEWLINE, "Expect newline after ':' to start with.");
-  consume(TOK_INDENT, "Expect indent to start with.");
+  consume_block_header("with");
 
   parse_block();
 
@@ -4205,10 +4221,7 @@ static void def_statement(void) {
   uint32_t num_params =
       parse_func_params(is_nested, /*memfn_self=*/NULL, (Str){0}, param_types, param_names);
 
-  consume(TOK_COLON, "Expect ':' before function body.");
-  consume(TOK_NEWLINE, "Expect newline before function body. (TODO: single line)");
-  skip_newlines();
-  consume(TOK_INDENT, "Expect indent before function body. (TODO: single line)");
+  consume_block_header("function body");
 
   Type functype =
       type_function(param_types, num_params, return_type, is_nested ? TFF_NESTED : TFF_NONE);
@@ -4295,11 +4308,7 @@ static void on_statement(void) {
                                           param_types, param_names);
 
   if (!is_foreign) {
-    consume(TOK_COLON, "Expect ':' before function body.");
-    consume(TOK_NEWLINE, "Expect newline before function body. (TODO: single line)");
-    while (match(TOK_NEWLINE)) {
-    }
-    consume(TOK_INDENT, "Expect indented function body.");
+    consume_block_header("function body");
   }
 
 
@@ -4331,9 +4340,7 @@ static void on_statement(void) {
 
 static void struct_statement() {
   Str name = parse_type_name("Expect struct type name.");
-  consume(TOK_COLON, "Expect ':' after struct name.");
-  consume(TOK_NEWLINE, "Expect newline to start struct.");
-  consume(TOK_INDENT, "Expect indented struct body.");
+  consume_block_header("struct");
 
   sq_type_struct_start(cstr_copy(parser.arena, name), 0);
 
