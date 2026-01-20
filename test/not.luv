@@ -1,0 +1,6 @@
+# OUT: hi
+def int main():
+    bool b
+    if not b:
+        print "hi"
+    return 0

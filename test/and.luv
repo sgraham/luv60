@@ -1,0 +1,8 @@
+# OUT: no
+def int main():
+    bool b
+    if b and true:
+        print "hi"
+        return 0
+    print "no"
+    return 0
