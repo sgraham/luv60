@@ -1,0 +1,9 @@
+# OUT: 380
+def int main():
+    x = 0
+    for i in range(40):
+        if i % 2 == 1:
+            continue
+        x = x + i
+    print x
+    return 0

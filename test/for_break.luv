@@ -1,0 +1,8 @@
+# OUT: 13
+def int main():
+    for i in range(40):
+        if i == 14:
+            break
+        x = i
+    print x
+    return 0

@@ -56,6 +56,7 @@ typedef struct Sym {
 #define MAX_PACKAGE_DEPTH 16
 #define MAX_FMT_ARGS 32
 #define MAX_EXIT_CALLS 32
+#define MAX_ITERATION_DATAS 32
 
 typedef enum ScopeResult {
   SCOPE_RESULT_GLOBAL,
@@ -97,11 +98,15 @@ typedef struct ExitCall {
   SqRef obj;
 } ExitCall;
 
+typedef struct IterationData IterationData;
+
 typedef struct Scope {
   // FuncData
   Sym* func_sym;
   ExitCall exit_call_stack[MAX_EXIT_CALLS];  // TODO: maybe save bound Operand instead?
   int num_exit_calls;
+  IterationData* iteration_datas[MAX_ITERATION_DATAS];
+  int num_iteration_datas;
   SqItemCtx func_item_ctx;
   uint64_t arena_saved_pos;
   UpvalMap upval_map;
@@ -1169,6 +1174,7 @@ static void enter_scope(bool is_module, bool is_function, Sym* funcsym) {
   parser.cur_scope->func_sym = funcsym;
   //parser.cur_scope->arena_saved_pos = arena_pos(arena_ir);
   parser.cur_scope->num_exit_calls = 0;
+  parser.cur_scope->num_iteration_datas = 0;
   parser.cur_scope->upval_map.num_upvals = 0;
   parser.cur_scope->arena_pos = arena_pos(parser.var_scope_arena);
   parser.cur_scope->is_function = is_function;
@@ -2795,11 +2801,12 @@ typedef enum IterationKind {
   ITK_RANGE,
 } IterationKind;
 
-typedef struct IterationData {
+struct IterationData {
   IterationKind kind;
   Sym* itsym;
   SqBlock loop_start;
-  SqBlock loop_done;
+  SqBlock loop_continue;   // Used for continue
+  SqBlock loop_done;       // Used for normal exit and break
   Type it_type;
   union {
     struct {
@@ -2812,7 +2819,7 @@ typedef struct IterationData {
       SqRef is_neg;
     } RANGE;
   };
-} IterationData;
+};
 
 static IterationData iteration_prolog(Str it, Operand* over) {
   IterationData itd = {0};
@@ -2871,6 +2878,7 @@ static IterationData iteration_prolog(Str it, Operand* over) {
   }
 
   itd.loop_start = sq_block_declare_and_start();
+  itd.loop_continue = sq_block_declare();
 
   SqBlock block_body = sq_block_declare();
   itd.loop_done = sq_block_declare();
@@ -2919,6 +2927,8 @@ static IterationData iteration_prolog(Str it, Operand* over) {
 }
 
 static void iteration_epilog(IterationData itd) {
+  sq_block_start(itd.loop_continue);
+
   if (itd.kind == ITK_ARRAY || itd.kind == ITK_LIST) {
     sq_i_storel(sq_i_add(sq_type_long, sq_i_load(sq_type_long, itd.CONTIG.ptr),
                          sq_const_int(type_size(itd.it_type))),
@@ -4083,13 +4093,40 @@ static void for_statement(void) {
         expr_type == TYPE_STR) {
       IterationData itd = iteration_prolog(it_name, &expr);
 
+      // TODO: maybe move this into iteration_prolog, but not needed for
+      // comprehensions, so maybe it makes more sense here.
+      parser.cur_scope->iteration_datas[parser.cur_scope->num_iteration_datas++] = &itd;
+
       consume_block_header("for");
       parse_block();
       iteration_epilog(itd);
+
+      --parser.cur_scope->num_iteration_datas;
+
     } else {
       errorf("Unhandled for/in over type %s.", type_as_str(expr.type));
     }
   }
+}
+
+static void break_statement(void) {
+  consume(TOK_NEWLINE, "Expecting newline after 'break'.");
+  if (parser.cur_scope->num_iteration_datas == 0) {
+    error("Cannot 'break' outside of loop.");
+  }
+  IterationData* itd = parser.cur_scope->iteration_datas[parser.cur_scope->num_iteration_datas - 1];
+  sq_i_jmp(itd->loop_done);
+  sq_block_declare_and_start();
+}
+
+static void continue_statement(void) {
+  consume(TOK_NEWLINE, "Expecting newline after 'continue'.");
+  if (parser.cur_scope->num_iteration_datas == 0) {
+    error("Cannot 'continue' outside of loop.");
+  }
+  IterationData* itd = parser.cur_scope->iteration_datas[parser.cur_scope->num_iteration_datas - 1];
+  sq_i_jmp(itd->loop_continue);
+  sq_block_declare_and_start();
 }
 
 //   with EXPR as TARGET:
@@ -4517,6 +4554,7 @@ static LastStatementType parse_statement(bool toplevel) {
 
   skip_newlines();
 
+  // TODO: de-dupe this mess.
   switch (parser.cursor.cur_kind) {
     case TOK_DEF:
       advance();
@@ -4551,6 +4589,16 @@ static LastStatementType parse_statement(bool toplevel) {
       advance();
       if (toplevel) error("for statement not allowed at top level.");
       for_statement();
+      break;
+    case TOK_BREAK:
+      advance();
+      if (toplevel) error("break statement not allowed at top level.");
+      break_statement();
+      break;
+    case TOK_CONTINUE:
+      advance();
+      if (toplevel) error("continue statement not allowed at top level.");
+      continue_statement();
       break;
     case TOK_WITH:
       advance();
