@@ -1,0 +1,44 @@
+# OUT: [1, 2, -4, 8]
+# OUT: ---in
+# OUT: false
+# OUT: true
+# OUT: false
+# OUT: true
+# OUT: true
+# OUT: false
+# OUT: ---not
+# OUT: true
+# OUT: false
+# OUT: true
+# OUT: false
+# OUT: false
+# OUT: true
+def int main():
+    []i64 nums
+
+    nums.append(1)
+    nums.append(2)
+    nums.append(-4)
+    nums.append(8)
+
+    print nums
+
+    print "---in"
+
+    print 0 in nums
+    print 1 in nums
+    print -1 in nums
+    print -4 in nums
+    print 8 in nums
+    print 9 in nums
+
+    print "---not"
+
+    print 0 not in nums
+    print 1 not in nums
+    print -1 not in nums
+    print -4 not in nums
+    print 8 not in nums
+    print 9 not in nums
+
+    return 0

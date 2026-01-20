@@ -205,6 +205,7 @@ typedef struct Parser {
   Str static_str___str__;
   Str static_str___contains__;
   Str static_str___enter__;
+  Str static_str___eq__;
   Str static_str___exit__;
   Str static_str_ret;
   Str static_str_up;
@@ -933,9 +934,43 @@ static Sym* gen_list_append(Type type) {
 //     tmp = item
 //     List$__contains__(self, &tmp, sizeof(T), &T::__eq__)
 static Sym* gen_list___contains__(Type type) {
-  // TODO: Need __eq__, otherwise at least special cases for basic value types
-  // and then something for str.
-  error("todo; generic list __contains__");
+  Type subtype = type_list_subtype(type);
+  Str full_name = memfn_name_from_type_name(str_internf("List_%s", type_as_str(subtype)),
+                                            parser.static_str___contains__);
+
+  sq_func_start(sq_linkage_default, sq_type_void, cstr_copy(parser.arena, full_name));
+
+  SqRef self = sq_func_param(sq_type_long);
+
+  SqType sqsubtype = type_to_sqtype(subtype);
+  SqRef item = sq_func_param(sqsubtype);
+
+  uint64_t subtype_size = type_size(subtype);
+
+  // This is needed to pass the address, but also accomplishes sign extension if
+  // e.g. -4i32 is passed to an i64 method.
+  SqRef tmp = sq_i_alloc8(sq_const_int(subtype_size));
+  store_by_type_val_into(subtype, item, tmp);
+
+  Sym* sub_eq_func = lookup_memfn(subtype, parser.static_str___eq__);
+
+  sq_i_call4(
+      sq_type_void, sq_ref_extern("List$__contains__"), (SqCallArg){sq_type_long, self},
+      (SqCallArg){sq_type_long, tmp}, (SqCallArg){sq_type_long, sq_const_int(subtype_size)},
+      (SqCallArg){sq_type_long, sub_eq_func ? sqref_for_sym(sub_eq_func) : sq_const_int(0)});
+  sq_i_ret_void();
+  SqSymbol contains_func = sq_func_end();
+
+  Type param_types[] = { type_ptr(type_list(subtype)), subtype };
+  Type functype = type_function(param_types, COUNTOF(param_types), type_void, TFF_MEMFN);
+
+  Sym* funcsym = sym_new(SYM_FUNC, full_name, functype);
+  funcsym->global = contains_func;
+  funcsym->scope_decl = SSD_DECLARED_GLOBAL;
+
+  sq_itemctx_activate(parser.cur_scope->func_item_ctx);
+
+  return funcsym;
 }
 
 // on []T def str __str__(self):
@@ -4768,6 +4803,7 @@ static void parse_impl(Arena* main_arena,
   parser.static_str___str__ = str_intern_len("__str__", 7);
   parser.static_str___contains__ = str_intern_len("__contains__", 12);
   parser.static_str___enter__ = str_intern_len("__enter__", 9);
+  parser.static_str___eq__ = str_intern_len("__eq__", 6);
   parser.static_str___exit__ = str_intern_len("__exit__", 8);
   parser.static_str_ret = str_intern_len("$ret", 4);
   parser.static_str_up = str_intern_len("$up", 3);

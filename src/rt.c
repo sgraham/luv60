@@ -140,6 +140,28 @@ void List$insert(List* list, int64_t index, void* item, uint64_t item_size) {
   list->size++;
 }
 
+// subtype___eq__ might be null if there's none defined.
+bool List$__contains__(List* list,
+                       void* item,
+                       uint64_t item_size,
+                       bool (*subtype___eq__)(void* self, void* other)) {
+  unsigned char* arr_base = list->data;
+  for (uint64_t i = 0; i < list->size; ++i) {
+    bool eq;
+    void* a = &arr_base[i * item_size];
+    if (!subtype___eq__) {
+      eq = memcmp(a, item, item_size) == 0;
+    } else {
+      eq = subtype___eq__(a, item);
+    }
+    if (eq) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 Str i8$__str__(int8_t* self) {
   char buf[40];
   snprintf(buf, sizeof(buf), "%d", *self);
