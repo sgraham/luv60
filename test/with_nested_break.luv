@@ -1,0 +1,25 @@
+# OUT: enter CustomManager, value=a
+# OUT: enter CustomManager, value=b
+# OUT: exit CustomManager, value=b
+# OUT: outer
+# OUT: exit CustomManager, value=a
+
+struct CustomManager:
+    str value
+
+on CustomManager def __enter__(self):
+    print fmt("enter CustomManager, value={}", self.value)
+
+on CustomManager def __exit__(self):
+    print fmt("exit CustomManager, value={}", self.value)
+
+def CustomManager manager(str x):
+    return CustomManager(x)
+
+def int main():
+    with manager("a"):
+        for i in range(10):
+            with manager("b"):
+                break
+        print "outer"
+    return 0

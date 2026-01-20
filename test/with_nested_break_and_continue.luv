@@ -1,0 +1,41 @@
+# OUT: enter CustomManager, value=a
+# OUT: enter CustomManager, value=b
+# OUT: enter CustomManager, value=c
+# OUT: continuing
+# OUT: exit CustomManager, value=c
+# OUT: exit CustomManager, value=b
+# OUT: enter CustomManager, value=b
+# OUT: enter CustomManager, value=c
+# OUT: continuing
+# OUT: exit CustomManager, value=c
+# OUT: exit CustomManager, value=b
+# OUT: outer2
+# OUT: exit CustomManager, value=a
+# OUT: outer3
+
+struct CustomManager:
+    str value
+
+on CustomManager def __enter__(self):
+    print fmt("enter CustomManager, value={}", self.value)
+
+on CustomManager def __exit__(self):
+    print fmt("exit CustomManager, value={}", self.value)
+
+def CustomManager manager(str x):
+    return CustomManager(x)
+
+def int main():
+    for j in range(10):
+        with manager("a"):
+            for i in range(2):
+                with manager("b"):
+                    with manager("c"):
+                        print "continuing"
+                        continue
+                print "outer1"
+            print "outer2"
+            break
+            print "outer2.5"
+    print "outer3"
+    return 0
