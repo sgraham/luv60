@@ -1,0 +1,35 @@
+# OUT: enter 0
+# OUT: body 0
+# OUT: exit 0
+# OUT: enter 1
+# OUT: body 1
+# OUT: exit 1
+# OUT: enter 2
+# OUT: body 2
+# OUT: exit 2
+# OUT: enter 3
+# OUT: body 3
+# OUT: exit 3
+# OUT: enter 4
+# OUT: exit 4
+
+struct Mgr:
+    int a
+
+on Mgr def __enter__(self):
+    print fmt("enter {}", self.a)
+
+on Mgr def __exit__(self):
+    print fmt("exit {}", self.a)
+
+def Mgr make_it(int val):
+    return Mgr(a=val)
+
+def int main():
+    for i in range(10):
+        with make_it(i):
+            if i == 4:
+                break
+            print fmt("body {}", i)
+
+    return 0

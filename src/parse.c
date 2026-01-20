@@ -2807,6 +2807,7 @@ struct IterationData {
   SqBlock loop_start;
   SqBlock loop_continue;   // Used for continue
   SqBlock loop_done;       // Used for normal exit and break
+  int exit_call_mark_for_break_continue;
   Type it_type;
   union {
     struct {
@@ -2879,6 +2880,7 @@ static IterationData iteration_prolog(Str it, Operand* over) {
 
   itd.loop_start = sq_block_declare_and_start();
   itd.loop_continue = sq_block_declare();
+  itd.exit_call_mark_for_break_continue = parser.cur_scope->num_exit_calls;
 
   SqBlock block_body = sq_block_declare();
   itd.loop_done = sq_block_declare();
@@ -4115,6 +4117,13 @@ static void break_statement(void) {
     error("Cannot 'break' outside of loop.");
   }
   IterationData* itd = parser.cur_scope->iteration_datas[parser.cur_scope->num_iteration_datas - 1];
+
+  for (int i = parser.cur_scope->num_exit_calls - 1; i >= itd->exit_call_mark_for_break_continue;
+       --i) {
+    ExitCall* ec = &parser.cur_scope->exit_call_stack[i];
+    sq_i_call1(sq_type_void, ec->func, (SqCallArg){sq_type_long, ec->obj});
+  }
+
   sq_i_jmp(itd->loop_done);
   sq_block_declare_and_start();
 }
@@ -4125,6 +4134,13 @@ static void continue_statement(void) {
     error("Cannot 'continue' outside of loop.");
   }
   IterationData* itd = parser.cur_scope->iteration_datas[parser.cur_scope->num_iteration_datas - 1];
+
+  for (int i = parser.cur_scope->num_exit_calls - 1; i >= itd->exit_call_mark_for_break_continue;
+       --i) {
+    ExitCall* ec = &parser.cur_scope->exit_call_stack[i];
+    sq_i_call1(sq_type_void, ec->func, (SqCallArg){sq_type_long, ec->obj});
+  }
+
   sq_i_jmp(itd->loop_continue);
   sq_block_declare_and_start();
 }
