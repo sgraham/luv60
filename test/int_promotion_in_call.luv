@@ -1,0 +1,20 @@
+# TODO: if fewer of those casts are mandatory, make sure list compr promotes args when calling
+#       internal runtime functions.
+# OUT: [1, 2, -4, 8]
+# OUT: [0, -1, -2, -3, -4, -5, -6, -7, -8, -9]
+def int main():
+    []i64 nums
+
+    nums.append(1)
+    nums.append(2)
+    nums.append(-4)
+    nums.append(8)
+
+    print nums
+
+
+    []i32 initial_nums = [cast i32 x for x in range(10)]
+    []i64 compr_nums = [cast i64 x*-1 for x in initial_nums]
+    print compr_nums
+
+    return 0

@@ -907,6 +907,8 @@ static Sym* gen_list_append(Type type) {
 
   uint64_t subtype_size = type_size(subtype);
 
+  // This is needed to pass the address, but also accomplishes sign extension if
+  // e.g. -4i32 is passed to an i64 method.
   SqRef tmp = sq_i_alloc8(sq_const_int(subtype_size));
   store_by_type_val_into(subtype, item, tmp);
 
@@ -3074,6 +3076,9 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
     copy_by_type(&elem, lval->ref);
 
     SqRef list_append_func = sq_ref_extern("List$append");
+
+    // TODO: I can't come up with a case yet where promotion is needed, but it
+    // seems like it might be here.
     sq_i_call3(sq_type_void, list_append_func, (SqCallArg){sq_type_long, untyped_list},
                (SqCallArg){sq_type_long, lval->ref},
                (SqCallArg){sq_type_long, sq_const_int(type_size(elem.type))});
