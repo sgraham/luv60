@@ -1599,6 +1599,8 @@ static bool is_convertible(Operand* operand, Type dest) {
     // and return the right type if it fits?
     //&& type_rank(dest) >= type_rank(src) && type_signs_match(dest, src)) {
     return true;
+  } else if (type_eq(src, type_codept) && type_eq(dest, type_str)) {
+    return true;
   } else if (memcmp(operand, &parser.op_null_ptr, sizeof(Operand)) == 0) {
     return true;
   // TODO: various pointer, etc.
@@ -1695,7 +1697,16 @@ static bool cast_operand(Operand* operand, Type type) {
     if (!is_castable(operand, type)) {
       return false;
     }
-    if (op_is_const(*operand)) {
+
+    if (type_eq(operand->type, type_codept) && type_eq(type, type_str)) {
+      // hacky codept to str conversion, maybe should require this in code
+      // rather than making automatic. mostly for `ch in "abc"`.
+      Sym* sym = lookup_memfn(type_codept, parser.static_str___str__);
+      ASSERT(sym);
+      *operand = operand_rvalue_imm(
+          type_str, sq_i_call1(parser.sq_type_str, sqref_for_sym(sym),
+                               (SqCallArg){sq_type_long, operand_to_sqref_lval(operand)}));
+    } else if (op_is_const(*operand)) {
       // TODO: enums
       TypeKind from_type_kind = type_kind(operand->type);
       TypeKind to_type_kind = type_kind(type);
@@ -4768,6 +4779,7 @@ static void declare_rt_foreign_memfn1(Type on, Type return_type, Str name, Type 
 static void declare_all_rt_foreigns(void) {
   declare_rt_foreign_memfn1(type_str, type_str, str_intern("join"), type_list(type_str));
   declare_rt_foreign_memfn1(type_str, type_bool, parser.static_str___eq__, type_str);
+  declare_rt_foreign_memfn1(type_str, type_bool, parser.static_str___contains__, type_str);
 
   declare_rt_foreign_memfn0(type_bool, type_str, parser.static_str___str__);
   declare_rt_foreign_memfn0(type_codept, type_str, parser.static_str___str__);

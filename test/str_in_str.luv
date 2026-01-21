@@ -1,0 +1,20 @@
+# OUT: -- codept loop
+# OUT: false
+# OUT: false
+# OUT: true
+# OUT: true
+# OUT: -- literals
+# OUT: true
+# OUT: true
+# OUT: false
+def int main():
+    print "-- codept loop"
+    for x in "abcd":
+        print x in "cdef"
+
+    print "-- literals"
+    print "ab" in "abcd"
+    print "bc" in "abcd"
+    print "cdef" in "abcd"
+
+    return 0

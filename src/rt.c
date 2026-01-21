@@ -81,6 +81,11 @@ Str str$join(Str* str, List* strings) {
   return (Str){(const char*)string_buffer.data, string_buffer.size};
 }
 
+bool str$__contains__(Str* self, Str other) {
+  // TODO: probably unicode utf8 blah blah
+  return memmem(self->data, self->size, other.data, other.size) != NULL;
+}
+
 #define RT_CHECK(cond) if (!(cond)) { fprintf(stderr, "%s\n", #cond); CheckFailed(); }
 
 #if 0
