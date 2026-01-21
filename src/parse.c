@@ -949,8 +949,13 @@ static Sym* gen_list___contains__(Type type) {
 
   // This is needed to pass the address, but also accomplishes sign extension if
   // e.g. -4i32 is passed to an i64 method.
-  SqRef tmp = sq_i_alloc8(sq_const_int(subtype_size));
-  store_by_type_val_into(subtype, item, tmp);
+  SqRef tmp;
+  if (type_is_aggregate(subtype)) {
+    tmp = item;
+  } else {
+    tmp = sq_i_alloc8(sq_const_int(subtype_size));
+    store_by_type_val_into(subtype, item, tmp);
+  }
 
   Sym* sub_eq_func = lookup_memfn(subtype, parser.static_str___eq__);
 
@@ -2631,10 +2636,14 @@ static Operand parse_in_or_not_in(Operand left, bool can_assign, Type* expected)
       errorf("Can't convert %s to %s.\n", type_as_str(left.type),
              type_as_str(type_func_param(sym->type, 1)));
     }
+
+    SqRef arg =
+        type_is_aggregate(left.type) ? operand_to_sqref_lval(&left) : operand_to_sqref_imm(&left);
+
     Operand res = operand_rvalue_imm(
         type_bool, sq_i_call2(sq_type_word, sqref_for_sym(sym),
                               (SqCallArg){sq_type_long, operand_to_sqref_lval(&rhs)},
-                              (SqCallArg){type_to_sqtype(left.type), operand_to_sqref_imm(&left)}));
+                              (SqCallArg){type_to_sqtype(left.type), arg}));
     if (negated) {
       return operand_rvalue_imm(
           type_bool, sq_i_ceqw(sq_type_word, operand_to_sqref_imm(&res), sq_const_int(0)));
@@ -3443,6 +3452,9 @@ static Operand parse_sizeof(bool can_assign, Type* expected) {
 static Operand parse_string(bool can_assign, Type* expected) {
   StrView strview = get_strview_for_offsets(prev_offset(), cur_offset());
   StrView inside_quotes = {strview.data + 1, strview.size - 2};
+  while (inside_quotes.data[inside_quotes.size] != '"') {
+    --inside_quotes.size;
+  }
   if (memchr(strview.data, '\\', strview.size) != NULL) {  // worthwhile?
     // Mutates source buffer!
     uint32_t new_len = str_process_escapes((char*)inside_quotes.data, inside_quotes.size);
@@ -4755,6 +4767,7 @@ static void declare_rt_foreign_memfn1(Type on, Type return_type, Str name, Type 
 
 static void declare_all_rt_foreigns(void) {
   declare_rt_foreign_memfn1(type_str, type_str, str_intern("join"), type_list(type_str));
+  declare_rt_foreign_memfn1(type_str, type_bool, parser.static_str___eq__, type_str);
 
   declare_rt_foreign_memfn0(type_bool, type_str, parser.static_str___str__);
   declare_rt_foreign_memfn0(type_codept, type_str, parser.static_str___str__);

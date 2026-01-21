@@ -61,6 +61,13 @@ void AppendToStringBufferList(List* sb, Str* str) {
   sb->size += str->size;
 }
 
+bool str$__eq__(Str* self, Str* other) {
+  if (self->size != other->size) {
+    return false;
+  }
+  return memcmp(self->data, other->data, self->size) == 0;
+}
+
 Str str$join(Str* str, List* strings) {
   List string_buffer = {0};
   for (size_t i = 0; i < strings->size; ++i) {
