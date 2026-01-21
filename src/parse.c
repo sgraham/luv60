@@ -891,7 +891,7 @@ static Sym* gen_array___str__(Type type) {
   return funcsym;
 }
 
-// on [N]T def __contains__(self, T item):
+// on [N]T def bool __contains__(self, T item):
 //   tmp = item
 //   return Array$__contains__(self, N, &tmp, sizeof(T), &T::__eq__)
 static Sym* gen_array___contains__(Type type) {
@@ -900,7 +900,7 @@ static Sym* gen_array___contains__(Type type) {
   Str full_name = memfn_name_from_type_name(
       str_internf("Array_%s_%lu", type_as_str(subtype), count), parser.static_str___contains__);
 
-  sq_func_start(sq_linkage_default, parser.sq_type_str, cstr_copy(parser.arena, full_name));
+  sq_func_start(sq_linkage_default, sq_type_ubyte, cstr_copy(parser.arena, full_name));
 
   SqRef self = sq_func_param(sq_type_long);
 
@@ -917,9 +917,8 @@ static Sym* gen_array___contains__(Type type) {
   store_by_type_val_into(subtype, item, tmp);
 
   SqRef ret = sq_i_call5(
-      parser.sq_type_str, sq_ref_extern("Array$__contains__"), (SqCallArg){sq_type_long, self},
-      (SqCallArg){sq_type_long, sq_const_int(count)},
-      (SqCallArg){sq_type_long, tmp},
+      sq_type_ubyte, sq_ref_extern("Array$__contains__"), (SqCallArg){sq_type_long, self},
+      (SqCallArg){sq_type_long, sq_const_int(count)}, (SqCallArg){sq_type_long, tmp},
       (SqCallArg){sq_type_long, sq_const_int(subtype_size)},
       (SqCallArg){sq_type_long, sub_eq_func ? sqref_for_sym(sub_eq_func) : sq_const_int(0)});
   sq_i_ret(ret);
