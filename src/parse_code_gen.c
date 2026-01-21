@@ -1,5 +1,3 @@
-#define ENABLE_CODE_GEN 1
-
 #include "../third_party/sqbe/sqbe.h"
 
 #include "parse.c"

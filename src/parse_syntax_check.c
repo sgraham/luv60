@@ -4,8 +4,6 @@
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 #pragma GCC diagnostic ignored "-Wunused-function"
 
-#define ENABLE_CODE_GEN 0
-
 #define sq_init(config) (void)config
 #define sq_shutdown() true
 

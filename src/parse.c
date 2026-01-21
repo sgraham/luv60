@@ -4884,7 +4884,7 @@ static void parse_impl(Arena* main_arena,
   config.output = out_file;
   config.output_function = sqbe_callback_output_function;
   if (verbose == 1) {
-    config.debug_flags = "P";
+    config.debug_flags = "PT";
   } else if (verbose > 1) {
     config.debug_flags = "PMNCFKAILSRT";
   }

@@ -43,7 +43,7 @@ static void parse_commandline(int argc,
     base_writef_stderr("No input file specified.\n");
     base_exit(1);
   }
-  if (!*output && !*syntax_only) {
+  if (!*output && !*syntax_only && !*verbose) {
     base_writef_stderr("No output file specified.\n");
     base_exit(1);
   }
@@ -71,10 +71,13 @@ int main(int argc, char** argv) {
   if (syntax_only) {
     parse_syntax_check(main_arena, parse_temp_arena, input, file, verbose);
   } else {
-    FILE* out_file = fopen(output, "wb");
-    if (!out_file) {
-      base_writef_stderr("Couldn't open '%s' for output.\n", out_file);
-      return 1;
+    FILE* out_file = NULL;
+    if (!verbose) {
+      out_file = fopen(output, "wb");
+      if (!out_file) {
+        base_writef_stderr("Couldn't open '%s' for output.\n", out_file);
+        return 1;
+      }
     }
     parse_code_gen(main_arena, parse_temp_arena, input, file, verbose, out_file);
   }
