@@ -891,6 +891,51 @@ static Sym* gen_array___str__(Type type) {
   return funcsym;
 }
 
+// on [N]T def __contains__(self, T item):
+//   tmp = item
+//   return Array$__contains__(self, N, &tmp, sizeof(T), &T::__eq__)
+static Sym* gen_array___contains__(Type type) {
+  Type subtype = type_array_subtype(type);
+  size_t count = type_array_count(type);
+  Str full_name = memfn_name_from_type_name(
+      str_internf("Array_%s_%lu", type_as_str(subtype), count), parser.static_str___contains__);
+
+  sq_func_start(sq_linkage_default, parser.sq_type_str, cstr_copy(parser.arena, full_name));
+
+  SqRef self = sq_func_param(sq_type_long);
+
+  SqType sqsubtype = type_to_sqtype(subtype);
+  SqRef item = sq_func_param(sqsubtype);
+
+  uint64_t subtype_size = type_size(subtype);
+
+  Sym* sub_eq_func = lookup_memfn(subtype, parser.static_str___eq__);
+
+  // This is needed to pass the address, but also accomplishes sign extension if
+  // e.g. -4i32 is passed to an i64 method.
+  SqRef tmp = sq_i_alloc8(sq_const_int(subtype_size));
+  store_by_type_val_into(subtype, item, tmp);
+
+  SqRef ret = sq_i_call5(
+      parser.sq_type_str, sq_ref_extern("Array$__contains__"), (SqCallArg){sq_type_long, self},
+      (SqCallArg){sq_type_long, sq_const_int(count)},
+      (SqCallArg){sq_type_long, tmp},
+      (SqCallArg){sq_type_long, sq_const_int(subtype_size)},
+      (SqCallArg){sq_type_long, sub_eq_func ? sqref_for_sym(sub_eq_func) : sq_const_int(0)});
+  sq_i_ret(ret);
+  SqSymbol contains_func = sq_func_end();
+
+  Type param_types[] = {type_ptr(type_array(subtype, count)), subtype};
+  Type functype = type_function(param_types, COUNTOF(param_types), type_bool, TFF_MEMFN);
+
+  Sym* funcsym = sym_new(SYM_FUNC, full_name, functype);
+  funcsym->global = contains_func;
+  funcsym->scope_decl = SSD_DECLARED_GLOBAL;
+
+  sq_itemctx_activate(parser.cur_scope->func_item_ctx);
+  return funcsym;
+}
+
 // on []T def append(self, T item):
 //     tmp = item
 //     List$append(self, &tmp, sizeof(T))
@@ -1017,13 +1062,14 @@ typedef struct GenericThunkCreators {
 } GenericThunkCreators;
 
 static GenericThunkCreators generic_array_functions[] = {
+    {"__contains__", gen_array___contains__},
     {"__str__", gen_array___str__},
 };
 
 static GenericThunkCreators generic_list_functions[] = {
-    {"append", gen_list_append},
     {"__contains__", gen_list___contains__},
     {"__str__", gen_list___str__},
+    {"append", gen_list_append},
 };
 
 static Sym* lookup_memfn(Type type, Str name) {

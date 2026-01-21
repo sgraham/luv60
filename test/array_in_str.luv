@@ -1,0 +1,11 @@
+# OUT: true
+# OUT: true
+# OUT: false
+# OUT: false
+def int main():
+    [5]str some_strs = ["abcd", "efg", "hijkl", "mn", "opqrstuv"]
+    print "abcd" in some_strs
+    print "mno" not in some_strs
+    print "abcd" not in some_strs
+    print "mno" in some_strs
+    return 0

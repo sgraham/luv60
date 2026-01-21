@@ -191,12 +191,12 @@ void List$insert(List* list, int64_t index, void* item, uint64_t item_size) {
 }
 
 // subtype___eq__ might be null if there's none defined.
-bool List$__contains__(List* list,
-                       void* item,
-                       uint64_t item_size,
-                       bool (*subtype___eq__)(void* self, void* other)) {
-  unsigned char* arr_base = list->data;
-  for (uint64_t i = 0; i < list->size; ++i) {
+bool Array$__contains__(unsigned char* arr_base,
+                        uint64_t arr_count,
+                        void* item,
+                        uint64_t item_size,
+                        bool (*subtype___eq__)(void* self, void* other)) {
+  for (uint64_t i = 0; i < arr_count; ++i) {
     bool eq;
     void* a = &arr_base[i * item_size];
     if (!subtype___eq__) {
@@ -210,6 +210,13 @@ bool List$__contains__(List* list,
   }
 
   return false;
+}
+
+bool List$__contains__(List* list,
+                       void* item,
+                       uint64_t item_size,
+                       bool (*subtype___eq__)(void* self, void* other)) {
+  return Array$__contains__(list->data, list->size, item, item_size, subtype___eq__);
 }
 
 Str i8$__str__(int8_t* self) {
@@ -360,13 +367,6 @@ void List$unchecked_get(List* list, int64_t index, void* into, uint64_t item_siz
   RT_CHECK(index >= 0 && "todo; negative index");
   memcpy(into, &list->data[index * item_size], item_size);
 }
-
-#if 0
-// eq_func can be null, which then instead uses memcmp. If provided it must be
-// the typed function, not the erased.
-bool List$__contains__(List* list, void* item, uint64_t item_size, bool (*eq_func)(void*, void*)) {
-}
-#endif
 
 #if 0
 void List$__contains__()
