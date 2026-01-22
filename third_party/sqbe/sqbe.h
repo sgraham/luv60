@@ -59,6 +59,7 @@ typedef struct SqConfiguration {
   // - N: ssa construction
   // - C: copy elimination
   // - F: constant folding
+  // - K: if-conversion
   // - A: abi lowering
   // - I: instruction selection
   // - L: liveness
@@ -392,6 +393,7 @@ void sq_i_dbgloc(SqRef arg0 /*weee*/, SqRef arg1 /*weee*/);
 #endif
 
 #endif  /* SQBE_H_INCLUDED_ */
+
 // --------------------
 //    IMPLEMENTATION
 // --------------------
@@ -9528,7 +9530,7 @@ amd64_sysv_emitfn(Fn *fn, FILE *f)
 			fputs("\tret\n", f);
 			break;
 		case Jjmp:
-		lblJmp:
+		Label_Jmp:
 			if (b->s1 != b->link)
 				fprintf(f, "\tjmp %sbb%d\n",
 					GC(T).asloc, G(amd64_sysv_emitfn_id0)+b->s1->id);
@@ -9546,7 +9548,7 @@ amd64_sysv_emitfn(Fn *fn, FILE *f)
 					c = cmpneg(c);
 				fprintf(f, "\tj%s %sbb%d\n", ctoa[c],
 					GC(T).asloc, G(amd64_sysv_emitfn_id0)+b->s2->id);
-				goto lblJmp;
+				goto Label_Jmp;
 			}
 			die("unhandled jump %d", b->jmp.type);
 		}
@@ -9644,7 +9646,7 @@ amd64_winabi_emitfn(Fn *fn, FILE *f)
 			fputs("\tret\n", f);
 			break;
 		case Jjmp:
-		lblJmp:
+		Label_Jmp:
 			if (b->s1 != b->link)
 				fprintf(f, "\tjmp %sbb%d\n",
 					GC(T).asloc, G(amd64_winabi_emitfn_id0)+b->s1->id);
@@ -9662,7 +9664,7 @@ amd64_winabi_emitfn(Fn *fn, FILE *f)
 					c = cmpneg(c);
 				fprintf(f, "\tj%s %sbb%d\n", ctoa[c],
 					GC(T).asloc, G(amd64_winabi_emitfn_id0)+b->s2->id);
-				goto lblJmp;
+				goto Label_Jmp;
 			}
 			die("unhandled jump %d", b->jmp.type);
 		}
@@ -9770,6 +9772,14 @@ qbe_amd64_isel_fixarg(Ref *r, int k, Ins *i, Fn *fn)
 		snprintf(buf, sizeof(buf), "\"%sfp%d\"", GC(T).asloc, n);
 		a.offset.sym.id = intern(buf);
 		fn->mem[fn->nmem-1] = a;
+	}
+	else if (op == Ocall && r == &i->arg[0]
+	&& rtype(r0) == RCon && fn->con[r0.val].type != CAddr) {
+		/* use a temporary register so that we
+		 * produce an indirect call
+		 */
+		r1 = newtmp("isel", Kl, fn);
+		emit(Ocopy, Kl, r1, r0, NULL_R);
 	}
 	else if (op != Ocopy && k == Kl && qbe_amd64_isel_noimm(r0, fn)) {
 		/* load constants that do not fit in
@@ -13933,7 +13943,7 @@ arm64_emitfn(Fn *fn, FILE *out)
 			fprintf(e->f, "\tret\n");
 			break;
 		case Jjmp:
-		lblJmp:
+		Label_Jmp:
 			if (b->s1 != b->link)
 				fprintf(e->f,
 					"\tb\t%s%d\n",
@@ -13956,7 +13966,7 @@ arm64_emitfn(Fn *fn, FILE *out)
 				"\tb%s\t%s%d\n",
 				ctoa[c], GC(T).asloc, G(arm64_emitfn_id0)+b->s2->id
 			);
-			goto lblJmp;
+			goto Label_Jmp;
 		}
 	}
 	G(arm64_emitfn_id0) += e->fn->nblk;
@@ -15562,7 +15572,7 @@ rv64_emitfn(Fn *fn, FILE *f)
 			);
 			break;
 		case Jjmp:
-		lblJmp:
+		Label_Jmp:
 			if (b->s1 != b->link)
 				fprintf(f, "\tj .L%d\n", G(rv64_emitfn_id0)+b->s1->id);
 			else
@@ -15588,7 +15598,7 @@ rv64_emitfn(Fn *fn, FILE *f)
 				qbe_rv64_emit_rname[b->jmp.arg.val],
 				G(rv64_emitfn_id0)+b->s2->id
 			);
-			goto lblJmp;
+			goto Label_Jmp;
 		}
 	}
 	G(rv64_emitfn_id0) += fn->nblk;
@@ -17637,6 +17647,249 @@ void sq_i_dbgloc(SqRef arg0 /*weee*/, SqRef arg1 /*weee*/) { _normal_two_op_void
 #endif
 #endif // SQBE_IMPLEMENTATION
 
+
+#ifdef SQBE_NOOP
+#undef SQBE_NOOP
+
+// --------------------------
+//    NO-OP IMPLEMENTATION
+// --------------------------
+
+#define sq_i_add(s, a0, a1) (SqRef){0}
+#define sq_i_add_into(into, s, a0, a1)
+#define sq_i_sub(s, a0, a1) (SqRef){0}
+#define sq_i_sub_into(into, s, a0, a1)
+#define sq_i_neg(s, a0) (SqRef){0}
+#define sq_i_neg_into(into, s, a0)
+#define sq_i_div(s, a0, a1) (SqRef){0}
+#define sq_i_div_into(into, s, a0, a1)
+#define sq_i_rem(s, a0, a1) (SqRef){0}
+#define sq_i_rem_into(into, s, a0, a1)
+#define sq_i_udiv(s, a0, a1) (SqRef){0}
+#define sq_i_udiv_into(into, s, a0, a1)
+#define sq_i_urem(s, a0, a1) (SqRef){0}
+#define sq_i_urem_into(into, s, a0, a1)
+#define sq_i_mul(s, a0, a1) (SqRef){0}
+#define sq_i_mul_into(into, s, a0, a1)
+#define sq_i_and(s, a0, a1) (SqRef){0}
+#define sq_i_and_into(into, s, a0, a1)
+#define sq_i_or(s, a0, a1) (SqRef){0}
+#define sq_i_or_into(into, s, a0, a1)
+#define sq_i_xor(s, a0, a1) (SqRef){0}
+#define sq_i_xor_into(into, s, a0, a1)
+#define sq_i_sar(s, a0, a1) (SqRef){0}
+#define sq_i_sar_into(into, s, a0, a1)
+#define sq_i_shr(s, a0, a1) (SqRef){0}
+#define sq_i_shr_into(into, s, a0, a1)
+#define sq_i_shl(s, a0, a1) (SqRef){0}
+#define sq_i_shl_into(into, s, a0, a1)
+#define sq_i_ceqw(s, a0, a1) (SqRef){0}
+#define sq_i_ceqw_into(into, s, a0, a1)
+#define sq_i_cnew(s, a0, a1) (SqRef){0}
+#define sq_i_cnew_into(into, s, a0, a1)
+#define sq_i_csgew(s, a0, a1) (SqRef){0}
+#define sq_i_csgew_into(into, s, a0, a1)
+#define sq_i_csgtw(s, a0, a1) (SqRef){0}
+#define sq_i_csgtw_into(into, s, a0, a1)
+#define sq_i_cslew(s, a0, a1) (SqRef){0}
+#define sq_i_cslew_into(into, s, a0, a1)
+#define sq_i_csltw(s, a0, a1) (SqRef){0}
+#define sq_i_csltw_into(into, s, a0, a1)
+#define sq_i_cugew(s, a0, a1) (SqRef){0}
+#define sq_i_cugew_into(into, s, a0, a1)
+#define sq_i_cugtw(s, a0, a1) (SqRef){0}
+#define sq_i_cugtw_into(into, s, a0, a1)
+#define sq_i_culew(s, a0, a1) (SqRef){0}
+#define sq_i_culew_into(into, s, a0, a1)
+#define sq_i_cultw(s, a0, a1) (SqRef){0}
+#define sq_i_cultw_into(into, s, a0, a1)
+#define sq_i_ceql(s, a0, a1) (SqRef){0}
+#define sq_i_ceql_into(into, s, a0, a1)
+#define sq_i_cnel(s, a0, a1) (SqRef){0}
+#define sq_i_cnel_into(into, s, a0, a1)
+#define sq_i_csgel(s, a0, a1) (SqRef){0}
+#define sq_i_csgel_into(into, s, a0, a1)
+#define sq_i_csgtl(s, a0, a1) (SqRef){0}
+#define sq_i_csgtl_into(into, s, a0, a1)
+#define sq_i_cslel(s, a0, a1) (SqRef){0}
+#define sq_i_cslel_into(into, s, a0, a1)
+#define sq_i_csltl(s, a0, a1) (SqRef){0}
+#define sq_i_csltl_into(into, s, a0, a1)
+#define sq_i_cugel(s, a0, a1) (SqRef){0}
+#define sq_i_cugel_into(into, s, a0, a1)
+#define sq_i_cugtl(s, a0, a1) (SqRef){0}
+#define sq_i_cugtl_into(into, s, a0, a1)
+#define sq_i_culel(s, a0, a1) (SqRef){0}
+#define sq_i_culel_into(into, s, a0, a1)
+#define sq_i_cultl(s, a0, a1) (SqRef){0}
+#define sq_i_cultl_into(into, s, a0, a1)
+#define sq_i_ceqs(s, a0, a1) (SqRef){0}
+#define sq_i_ceqs_into(into, s, a0, a1)
+#define sq_i_cges(s, a0, a1) (SqRef){0}
+#define sq_i_cges_into(into, s, a0, a1)
+#define sq_i_cgts(s, a0, a1) (SqRef){0}
+#define sq_i_cgts_into(into, s, a0, a1)
+#define sq_i_cles(s, a0, a1) (SqRef){0}
+#define sq_i_cles_into(into, s, a0, a1)
+#define sq_i_clts(s, a0, a1) (SqRef){0}
+#define sq_i_clts_into(into, s, a0, a1)
+#define sq_i_cnes(s, a0, a1) (SqRef){0}
+#define sq_i_cnes_into(into, s, a0, a1)
+#define sq_i_cos(s, a0, a1) (SqRef){0}
+#define sq_i_cos_into(into, s, a0, a1)
+#define sq_i_cuos(s, a0, a1) (SqRef){0}
+#define sq_i_cuos_into(into, s, a0, a1)
+#define sq_i_ceqd(s, a0, a1) (SqRef){0}
+#define sq_i_ceqd_into(into, s, a0, a1)
+#define sq_i_cged(s, a0, a1) (SqRef){0}
+#define sq_i_cged_into(into, s, a0, a1)
+#define sq_i_cgtd(s, a0, a1) (SqRef){0}
+#define sq_i_cgtd_into(into, s, a0, a1)
+#define sq_i_cled(s, a0, a1) (SqRef){0}
+#define sq_i_cled_into(into, s, a0, a1)
+#define sq_i_cltd(s, a0, a1) (SqRef){0}
+#define sq_i_cltd_into(into, s, a0, a1)
+#define sq_i_cned(s, a0, a1) (SqRef){0}
+#define sq_i_cned_into(into, s, a0, a1)
+#define sq_i_cod(s, a0, a1) (SqRef){0}
+#define sq_i_cod_into(into, s, a0, a1)
+#define sq_i_cuod(s, a0, a1) (SqRef){0}
+#define sq_i_cuod_into(into, s, a0, a1)
+#define sq_i_storeb(a0, a1)
+#define sq_i_storeh(a0, a1)
+#define sq_i_storew(a0, a1)
+#define sq_i_storel(a0, a1)
+#define sq_i_stores(a0, a1)
+#define sq_i_stored(a0, a1)
+#define sq_i_loadsb(s, a0) (SqRef){0}
+#define sq_i_loadsb_into(into, s, a0)
+#define sq_i_loadub(s, a0) (SqRef){0}
+#define sq_i_loadub_into(into, s, a0)
+#define sq_i_loadsh(s, a0) (SqRef){0}
+#define sq_i_loadsh_into(into, s, a0)
+#define sq_i_loaduh(s, a0) (SqRef){0}
+#define sq_i_loaduh_into(into, s, a0)
+#define sq_i_loadsw(s, a0) (SqRef){0}
+#define sq_i_loadsw_into(into, s, a0)
+#define sq_i_loaduw(s, a0) (SqRef){0}
+#define sq_i_loaduw_into(into, s, a0)
+#define sq_i_load(s, a0) (SqRef){0}
+#define sq_i_load_into(into, s, a0)
+#define sq_i_extsb(s, a0) (SqRef){0}
+#define sq_i_extsb_into(into, s, a0)
+#define sq_i_extub(s, a0) (SqRef){0}
+#define sq_i_extub_into(into, s, a0)
+#define sq_i_extsh(s, a0) (SqRef){0}
+#define sq_i_extsh_into(into, s, a0)
+#define sq_i_extuh(s, a0) (SqRef){0}
+#define sq_i_extuh_into(into, s, a0)
+#define sq_i_extsw(a0) (SqRef){0}
+#define sq_i_extsw_into(into, a0)
+#define sq_i_extuw(a0) (SqRef){0}
+#define sq_i_extuw_into(into, a0)
+#define sq_i_exts(a0) (SqRef){0}
+#define sq_i_exts_into(into, a0)
+#define sq_i_truncd(a0) (SqRef){0}
+#define sq_i_truncd_into(into, a0)
+#define sq_i_stosi(s, a0) (SqRef){0}
+#define sq_i_stosi_into(into, s, a0)
+#define sq_i_stoui(s, a0) (SqRef){0}
+#define sq_i_stoui_into(into, s, a0)
+#define sq_i_dtosi(s, a0) (SqRef){0}
+#define sq_i_dtosi_into(into, s, a0)
+#define sq_i_dtoui(s, a0) (SqRef){0}
+#define sq_i_dtoui_into(into, s, a0)
+#define sq_i_swtof(s, a0) (SqRef){0}
+#define sq_i_swtof_into(into, s, a0)
+#define sq_i_uwtof(s, a0) (SqRef){0}
+#define sq_i_uwtof_into(into, s, a0)
+#define sq_i_sltof(s, a0) (SqRef){0}
+#define sq_i_sltof_into(into, s, a0)
+#define sq_i_ultof(s, a0) (SqRef){0}
+#define sq_i_ultof_into(into, s, a0)
+#define sq_i_cast(s, a0) (SqRef){0}
+#define sq_i_cast_into(into, s, a0)
+#define sq_i_alloc4(a0) (SqRef){0}
+#define sq_i_alloc4_into(into, a0)
+#define sq_i_alloc8(a0) (SqRef){0}
+#define sq_i_alloc8_into(into, a0)
+#define sq_i_alloc16(a0) (SqRef){0}
+#define sq_i_alloc16_into(into, a0)
+#define sq_i_vaarg(s, a0) (SqRef){0}
+#define sq_i_vaarg_into(into, s, a0)
+#define sq_i_vastart(a0) (SqRef){0}
+#define sq_i_vastart_into(into, a0)
+#define sq_i_copy(s, a0) (SqRef){0}
+#define sq_i_copy_into(into, s, a0)
+#define sq_i_dbgloc(a0, a1)
+#define sq_init(config)
+#define sq_shutdown() true
+
+#define sq_linkage_create(alignment, exported, tls, common, section_name, section_flags) (SqLinkage){0}
+
+#define sq_type_struct_start(name, align)
+#define sq_type_add_field(field)
+#define sq_type_add_field_with_count(field, count)
+#define sq_type_struct_end() (SqType){0}
+
+#define sq_itemctx_activate(ctx)
+
+#define sq_data_start(linkage, name) (SqItemCtx){0}
+#define sq_data_byte(val)
+#define sq_data_half(val)
+#define sq_data_word(val)
+#define sq_data_long(val)
+#define sq_data_string(str)
+#define sq_data_single(f)
+#define sq_data_double(d)
+#define sq_data_ref(ref, offset)
+#define sq_data_end(void) (SqSymbol){0}
+
+#define sq_func_start(linkage, return_type, name) (SqItemCtx){0}
+#define sq_func_end() (SqSymbol){0}
+
+#define sq_func_get_entry_block() (SqBlock){0}
+
+#define sq_const_int(i) (SqRef){0}
+#define sq_const_single(f) (SqRef){0}
+#define sq_const_double(d) (SqRef){0}
+
+#define sq_ref_for_symbol(sym) (SqRef){0}
+
+#define sq_ref_declare() (SqRef){0}
+
+#define sq_ref_extern(name) (SqRef){0}
+
+#define sq_func_param_named(type, name) (SqRef){0}
+
+#define sq_block_declare_named(name) (SqBlock){0}
+
+#define sq_block_start(block)
+
+#define sq_block_declare_and_start_named(name) (SqBlock){0}
+
+#define sq_i_ret_void();
+#define sq_i_ret(val);
+#define sq_i_jmp(block);
+#define sq_i_jnz(cond, if_true, if_false)
+
+#define sq_i_phi(size_class, block0, val0, block1, val1) (SqRef){0}
+
+#define sq_i_blit(from, to, num_bytes)
+
+#define sq_i_calla(result, func, num_args, cas) (SqRef){0}
+
+#define sq_i_call0 sq_i_call_noop
+#define sq_i_call1 sq_i_call_noop
+#define sq_i_call2 sq_i_call_noop
+#define sq_i_call3 sq_i_call_noop
+#define sq_i_call4 sq_i_call_noop
+#define sq_i_call5 sq_i_call_noop
+#define sq_i_call6 sq_i_call_noop
+static inline SqRef sq_i_call_noop(SqType result, ...) { return (SqRef){0}; }
+
+#endif // SQBE_NOOP
+
 /*
 
 QBE LICENSE:
@@ -17664,7 +17917,7 @@ DEALINGS IN THE SOFTWARE.
 ---
 
 All other sqbe code under the same license,
-© 2025 Scott Graham <scott.sqbe@h4ck3r.net>
+© 2026 Scott Graham <scott.sqbe@h4ck3r.net>
 
 */
 
