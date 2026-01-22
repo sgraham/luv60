@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:10:    nums.append(4)
+# CERR: {ssss}               ^ error: Undefined member function append on type [3]i32.
+def int main():
+    nums = [1, 2, 3]
+    nums.append(4)
+    return 0

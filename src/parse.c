@@ -2630,7 +2630,8 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
 
     Sym* func_sym = lookup_memfn(new_left.type, name);
     if (!func_sym) {
-      errorf("Undefined member function %s.", cstr_copy(parser.arena, name));
+      errorf("Undefined member function %s on type %s.", cstr_copy(parser.arena, name),
+             type_as_str(new_left.type));
     }
 
     if (type_kind(func_sym->type) != TYPE_FUNC) {
