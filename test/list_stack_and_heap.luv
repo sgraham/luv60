@@ -1,0 +1,9 @@
+# OUT: [1, 2, 3]
+# OUT: [1, 2, 3, 4, 5]
+def int main():
+    []int nums = [1, 2, 3]
+    print nums
+    nums.append(4)
+    nums.append(5)
+    print nums
+    return 0

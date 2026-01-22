@@ -3241,9 +3241,17 @@ static Operand parse_list_literal(Type* expected) {
       copy_by_type(&next_item, target);
     }
     if (expected && type_kind(*expected) == TYPE_LIST) {
-      SqRef list_obj = sq_i_alloc8(sq_const_int(type_size(*expected)));
-      sq_i_storel(arr_base, list_obj);
-      sq_i_storel(sq_const_int(elems.size), sq_i_add(sq_type_long, list_obj, sq_const_int(8)));
+      // TODO: worse to make the array on the stack first if it's big?
+      size_t list_size = type_size(*expected);
+      SqRef list_obj = sq_i_alloc8(sq_const_int(list_size));
+      SqRef memset_func = sq_ref_extern("memset");
+      sq_i_call3(sq_type_void, memset_func, (SqCallArg){sq_type_long, list_obj},
+                 (SqCallArg){sq_type_word, sq_const_int(0)},
+                 (SqCallArg){sq_type_long, sq_const_int(list_size)});
+      sq_i_call4(sq_type_void, sq_ref_extern("List$init_from_array"),
+                 (SqCallArg){sq_type_long, list_obj}, (SqCallArg){sq_type_long, arr_base},
+                 (SqCallArg){sq_type_long, sq_const_int(elems.size)},
+                 (SqCallArg){sq_type_long, sq_const_int(type_size(first_item.type))});
       return operand_rvalue_imm(type_list(first_item.type), list_obj);
     } else {
       return operand_rvalue_imm(type_array(first_item.type, elems.size), arr_base);

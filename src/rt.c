@@ -163,12 +163,14 @@ uint64_t _impl_NothingRetrieveRAX(void) {}
 #define LOAD_LIST_DATA() uint64_t item_size; GET_ENV_DATA(item_size)
 #endif
 
+#if 0
 void List$free(List* list) {
   free(list->data);
   list->data = NULL;
   list->size = 0;
   list->capacity = 0;
 }
+#endif
 
 uint64_t List$len(List* list) {
   return list->size;
@@ -178,6 +180,14 @@ void List$append(List* list, void* item, uint64_t item_size) {
   List$reserve(list, list->size + 1, item_size);
   memcpy(&list->data[list->size * item_size], item, item_size);
   list->size++;
+}
+
+// TODO: this is like a list.extend() but that should really take an iterator,
+// not a contiguous block like this.
+void List$init_from_array(List* list, void* arr_base, size_t arr_count, uint64_t item_size) {
+  List$reserve(list, list->size + arr_count, item_size);
+  memcpy(&list->data[list->size * item_size], arr_base, arr_count * item_size);
+  list->size += arr_count;
 }
 
 void List$insert(List* list, int64_t index, void* item, uint64_t item_size) {
