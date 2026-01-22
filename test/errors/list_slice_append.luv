@@ -1,0 +1,7 @@
+# RET: 127
+# ERR: check failed!
+def int main():
+    []int nums = [1,2,3,4,5]
+    sl = nums[2:]
+    sl.append(6)
+    return 0

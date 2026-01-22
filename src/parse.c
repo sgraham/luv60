@@ -3244,11 +3244,8 @@ static Operand parse_list_literal(Type* expected) {
       // TODO: worse to make the array on the stack first if it's big?
       size_t list_size = type_size(*expected);
       SqRef list_obj = sq_i_alloc8(sq_const_int(list_size));
-      SqRef memset_func = sq_ref_extern("memset");
-      sq_i_call3(sq_type_void, memset_func, (SqCallArg){sq_type_long, list_obj},
-                 (SqCallArg){sq_type_word, sq_const_int(0)},
-                 (SqCallArg){sq_type_long, sq_const_int(list_size)});
-      sq_i_call4(sq_type_void, sq_ref_extern("List$init_from_array"),
+      initialize_aggregate(list_obj, *expected);
+      sq_i_call4(sq_type_void, sq_ref_extern("List$copy_from_array"),
                  (SqCallArg){sq_type_long, list_obj}, (SqCallArg){sq_type_long, arr_base},
                  (SqCallArg){sq_type_long, sq_const_int(elems.size)},
                  (SqCallArg){sq_type_long, sq_const_int(type_size(first_item.type))});
@@ -3540,35 +3537,81 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
   SqRef target_addr;
   Type subtype;
 
+  TypeKind left_type_kind = type_kind(left.type);
+  // TODO: type_generic_subtype for array/list/str/ptr maybe
+
   if (match(TOK_COLON)) {
     if (check(TOK_RSQUARE)) {  // [:]
       // slice(left, NULL, NULL);
+      // Not really that useful? Maybe just disallow to avoid thinking it's
+      // solving anything to do with memory allocation.
       error("TODO: [:]");
     } else {  // [:x]
       // slice(left, NULL, parse_expression())
-      error("TODO: [:x]");
+      if (left_type_kind == TYPE_LIST) {
+        subtype = type_list_subtype(left.type);
+        Operand subscript = parse_expression(NULL);
+        if (!type_is_integer(subscript.type)) {
+          errorf("Cannot subscript using type %s.", type_as_str(subscript.type));
+        }
+        consume(TOK_RSQUARE, "Expecting ']' to end slicing expression.");
+        return operand_rvalue_imm(
+            type_list(subtype),
+            sq_i_call4(parser.sq_type_list, sq_ref_extern("List$slice_from_list"),
+                       (SqCallArg){sq_type_long, left.ref},
+                       (SqCallArg){sq_type_long, sq_const_int(type_size(subtype))},
+                       (SqCallArg){sq_type_long, sq_const_int(0)},
+                       (SqCallArg){sq_type_long, operand_to_sqref_imm(&subscript)}));
+      } else {
+        error("TODO: [:x] for other type");
+      }
     }
   } else {
     Operand subscript = parse_expression(NULL);
+    if (!type_is_integer(subscript.type)) {
+      errorf("Cannot subscript using type %s.", type_as_str(subscript.type));
+    }
     if (match(TOK_COLON)) {
-      if (check(TOK_RSQUARE)) {  // [x:]
+      if (match(TOK_RSQUARE)) {  // [x:]
         // slice(left, subscript, NULL)
-        error("TODO: [x:]");
+        if (left_type_kind == TYPE_LIST) {
+          subtype = type_list_subtype(left.type);
+          return operand_rvalue_imm(
+              type_list(subtype),
+              sq_i_call4(parser.sq_type_list, sq_ref_extern("List$slice_from_list"),
+                         (SqCallArg){sq_type_long, left.ref},
+                         (SqCallArg){sq_type_long, sq_const_int(type_size(subtype))},
+                         (SqCallArg){sq_type_long, operand_to_sqref_imm(&subscript)},
+                         (SqCallArg){sq_type_long, sq_const_int(INT64_MAX)}));
+        } else {
+          error("TODO: [x:] for other type");
+        }
       } else {  // [x:y]
         // slice(left, subscript, parse_expression());
-        error("TODO: [x:y]");
+        if (left_type_kind == TYPE_LIST) {
+          subtype = type_list_subtype(left.type);
+          Operand subscript2 = parse_expression(NULL);
+          if (!type_is_integer(subscript2.type)) {
+            errorf("Cannot subscript using type %s.", type_as_str(subscript2.type));
+          }
+          consume(TOK_RSQUARE, "Expecting ']' to end slicing expression.");
+          return operand_rvalue_imm(
+              type_list(subtype),
+              sq_i_call4(parser.sq_type_list, sq_ref_extern("List$slice_from_list"),
+                         (SqCallArg){sq_type_long, left.ref},
+                         (SqCallArg){sq_type_long, sq_const_int(type_size(subtype))},
+                         (SqCallArg){sq_type_long, operand_to_sqref_imm(&subscript)},
+                         (SqCallArg){sq_type_long, operand_to_sqref_imm(&subscript2)}));
+        }
+        error("TODO: [x:y] for other type");
       }
     } else {
       // Regular subscript.
-      TypeKind left_type_kind = type_kind(left.type);
       switch (left_type_kind) {
         case TYPE_ARRAY:
         case TYPE_LIST:
         case TYPE_PTR:
         case TYPE_STR: {
-          if (!type_is_integer(subscript.type)) {
-            errorf("Cannot subscript using type %s.", type_as_str(subscript.type));
-          }
           if (left_type_kind == TYPE_ARRAY) {
             subtype = type_array_subtype(left.type);
             target_addr = sq_i_add(sq_type_long, left.ref,

@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:18:    print nums[1:"bad"]
+# CERR: {ssss}                       ^ error: Cannot subscript using type str.
+def int main():
+    []int nums = [1, 2, 3]
+    print nums[1:"bad"]
+    return 0

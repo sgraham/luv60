@@ -85,6 +85,9 @@ void PrintStr(Str* str) {
 
 void List$reserve(List* list, uint64_t capacity, uint64_t item_size) {
   if (capacity <= list->capacity) {
+    if (list->capacity == UINT64_MAX) {
+      CheckFailed();
+    }
     return;
   }
   while (list->capacity < capacity) {
@@ -182,12 +185,44 @@ void List$append(List* list, void* item, uint64_t item_size) {
   list->size++;
 }
 
+List List$slice_from_array(void* arr_base, size_t arr_count, uint64_t item_size) {
+  return (List){arr_base, arr_count, UINT64_MAX};
+}
+
 // TODO: this is like a list.extend() but that should really take an iterator,
 // not a contiguous block like this.
-void List$init_from_array(List* list, void* arr_base, size_t arr_count, uint64_t item_size) {
+void List$copy_from_array(List* list, void* arr_base, size_t arr_count, uint64_t item_size) {
   List$reserve(list, list->size + arr_count, item_size);
   memcpy(&list->data[list->size * item_size], arr_base, arr_count * item_size);
   list->size += arr_count;
+}
+
+List List$slice_from_list(List* list, uint64_t item_size, int64_t start, int64_t end) {
+  if (start < 0) {
+    start = list->size + start;
+  }
+  if (start < 0) {
+    start = 0;
+  }
+  if (start > list->size) {
+    start = list->size;
+  }
+
+  if (end < 0) {
+    end = list->size + end;
+  }
+  if (end < 0) {
+    end = 0;
+  }
+  if (end > list->size) {
+    end = list->size;
+  }
+
+  if (end < start) {
+    end = start;
+  }
+
+  return (List){&list->data[start * item_size], end - start, UINT64_MAX};
 }
 
 void List$insert(List* list, int64_t index, void* item, uint64_t item_size) {
