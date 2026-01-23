@@ -11992,7 +11992,7 @@ static Ins* lower_call(Fn* func,
       return_copy->link = (*pextra_alloc);
       *pextra_alloc = return_copy;
       Ref copy = newtmp("abi.copy", Kl, func);
-      emit(Ostorel, Kl, NULL_R, copy, call_instr->to);
+      emit(Ostorel, 0, NULL_R, copy, call_instr->to);
       emit(Ocopy, Kl, copy, TMP(QBE_AMD64_RAX), NULL_R);
       reg_usage.rax_returned = true;
     } else if (is_integer_type(call_instr->cls)) {
@@ -12067,11 +12067,11 @@ static Ins* lower_call(Fn* func,
           // slot. (And, remember that these are emitted backwards, so store,
           // then load.)
           Ref smalltmp = newtmp("abi.smalltmp", arg->cls, func);
-          emit(Ostorel, Kl, NULL_R, smalltmp, slot);
+          emit(Ostorel, 0, NULL_R, smalltmp, slot);
           emit(Oload, arg->cls, smalltmp, instr->arg[1], NULL_R);
         } else {
           // Stash the value into the stack slot.
-          emit(Ostorel, Kl, NULL_R, instr->arg[0], slot);
+          emit(Ostorel, 0, NULL_R, instr->arg[0], slot);
         }
         emit(Oadd, Kl, slot, arg_stack_slots, getcon(slot_offset, func));
         slot_offset += arg->size;
@@ -12097,7 +12097,7 @@ static Ins* lower_call(Fn* func,
         } else {
           SQ_ASSERT(arg->style == APS_CopyAndPointerOnStack);
           Ref slot = newtmp("abi.off", Kl, func);
-          emit(Ostorel, Kl, NULL_R, copy_ref, slot);
+          emit(Ostorel, 0, NULL_R, copy_ref, slot);
           emit(Oadd, Kl, slot, arg_stack_slots, getcon(slot_offset, func));
           slot_offset += 8;
         }
@@ -12179,7 +12179,7 @@ static void lower_vastart(Fn* func,
   // that were actually passed.
 
   Ref offset = newtmp("abi.vastart", Kl, func);
-  emit(Ostorel, Kl, NULL_R, offset, valist);
+  emit(Ostorel, 0, NULL_R, offset, valist);
 
   // *8 for sizeof(u64), +16 because the return address and rbp have been pushed
   // by the time we get to the body of the function.
@@ -12193,7 +12193,7 @@ static void lower_vaarg(Fn* func, Ins* vaarg_instr) {
   // (All emitted backwards as usual.)
   Ref inc = newtmp("abi.vaarg.inc", Kl, func);
   Ref ptr = newtmp("abi.vaarg.ptr", Kl, func);
-  emit(Ostorel, Kl, NULL_R, inc, vaarg_instr->arg[0]);
+  emit(Ostorel, 0, NULL_R, inc, vaarg_instr->arg[0]);
   emit(Oadd, Kl, inc, ptr, getcon(8, func));
   emit(Oload, vaarg_instr->cls, vaarg_instr->to, ptr, NULL_R);
   emit(Oload, Kl, ptr, vaarg_instr->arg[0], NULL_R);
@@ -12307,7 +12307,7 @@ static QBE_AMD64_WINABI_RegisterUsage lower_func_parameters(Fn* func) {
         // an alloca so we have something to point at (same for InlineOnStack).
         if (instr->op == Oparc) {
           arg->ref = newtmp("abi", Kl, func);
-          emit(Ostorel, Kl, NULL_R, arg->ref, instr->to);
+          emit(Ostorel, 0, NULL_R, arg->ref, instr->to);
           emit(Ocopy, instr->cls, arg->ref, from, NULL_R);
           emit(Oalloc8, Kl, instr->to, getcon(arg->size, func), NULL_R);
         } else {
@@ -12318,7 +12318,7 @@ static QBE_AMD64_WINABI_RegisterUsage lower_func_parameters(Fn* func) {
       case APS_InlineOnStack:
         if (instr->op == Oparc) {
           arg->ref = newtmp("abi", Kl, func);
-          emit(Ostorel, Kl, NULL_R, arg->ref, instr->to);
+          emit(Ostorel, 0, NULL_R, arg->ref, instr->to);
           emit(Ocopy, instr->cls, arg->ref, SLOT(-slot_offset), NULL_R);
           emit(Oalloc8, Kl, instr->to, getcon(arg->size, func), NULL_R);
         } else {
