@@ -1300,8 +1300,9 @@ static void enter_function(Sym* sym,
 
   enter_scope(/*is_module=*/false, /*is_function=*/true, sym);
 
-  SqLinkage linkage =
-      str_eq(sym->name, parser.static_str_main) ? sq_linkage_export : sq_linkage_default;
+  bool is_main = str_eq(sym->name, parser.static_str_main);
+  // TODO maybe keep this as default, but @export or something, packages, etc.
+  SqLinkage linkage = is_main ? sq_linkage_export : sq_linkage_default;
 
   Type ret_type = type_func_return_type(sym->type);
 
@@ -1319,6 +1320,10 @@ static void enter_function(Sym* sym,
     ASSERT(type_kind(param_syms[0]->type) == TYPE_PTR);
     ASSERT(type_eq(type_ptr_subtype(param_syms[0]->type), type_void));
     parser.cur_scope->upval_base = param_syms[0]->ref;
+  }
+
+  if (is_main) {
+    sq_i_call0(sq_type_void, sq_ref_extern("RtPreMain"));
   }
 }
 

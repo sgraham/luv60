@@ -5,8 +5,14 @@
 #include <string.h>
 
 #define COUNTOF(a) (sizeof(a)/sizeof(a[0]))
+#define COUNTOFI(a) ((int)(sizeof(a)/sizeof(a[0])))
+#define CHECK(c)     \
+  do {               \
+    if (!(c))        \
+      CheckFailed(); \
+  } while (0)
 
-#if defined(_MSC_VER)
+#if defined(_WIN32)
 
 void* memmem(const void* haystack, size_t haystacklen, const void* needle, size_t needlelen) {
   const unsigned char* h = haystack;
@@ -42,11 +48,19 @@ void* memmem(const void* haystack, size_t haystacklen, const void* needle, size_
   return NULL;  // Not found
 }
 
-#endif // _MSC_VER
+#endif // _WIN32
 
 void CheckFailed(void) {
   fprintf(stderr, "check failed!\n");
   exit(127);
+}
+
+#include "rt_zone.c"
+
+void RtPreMain(void) {
+  atexit(at_exit_handler);
+  int backing_zone = zone_create();
+  CHECK(backing_zone == 0);
 }
 
 typedef struct Str {
@@ -69,7 +83,7 @@ typedef struct List {
 static Str str_copy_cstr(const char* cstr) {
   // Note, no NUL, not sure if this will be annoying in practice.
   size_t size = strlen(cstr);
-  Str ret = {malloc(size), size};
+  Str ret = {zone_malloc(size), size};
   memcpy((void*)ret.data, cstr, size);
   return ret;
 }
@@ -93,7 +107,7 @@ void List$reserve(List* list, uint64_t capacity, uint64_t item_size) {
   while (list->capacity < capacity) {
     list->capacity = list->capacity > 0 ? list->capacity * 2 : 16;
   }
-  list->data = realloc(list->data, list->capacity * item_size);
+  list->data = zone_realloc(list->data, list->capacity * item_size);
 }
 
 void AppendToStringBufferList(List* sb, Str* str) {

@@ -1,0 +1,27 @@
+foreign int zone_create()
+foreign int zone_set_default(int zone)
+foreign zone_destroy(int zone)
+
+struct ScopedHeap:
+    int zone
+    int prev_zone
+
+on ScopedHeap def __enter__(self):
+    self.prev_zone = zone_set_default(self.zone)
+
+on ScopedHeap def __exit__(self):
+    zone_set_default(self.prev_zone)
+    zone_destroy(self.zone)
+
+def ScopedHeap new_scoped_zone():
+    return ScopedHeap(zone_create())
+
+def str func([]int nums):
+    return fmt("result: {}", nums)
+
+def int main():
+    with new_scoped_zone():
+        []int a = [1,2,3]
+        x = func(a)
+        print x
+    return 0
