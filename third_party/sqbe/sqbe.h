@@ -119,6 +119,8 @@ typedef enum SqTypeKind {
   SQ_TYPE_0 = 9,          // void
   SQ_TYPE_E = -2,         // error
   SQ_TYPE_M = SQ_TYPE_L,  // memory
+  SQ_TYPE_VARARGS = -3,   // for sq_varargs_begin (not in qbe)
+  SQ_TYPE_ENV = -4,       // for sq_type_env (not in qbe)
 } SqTypeKind;
 
 #define sq_type_void ((SqType){SQ_TYPE_0})
@@ -132,6 +134,7 @@ typedef enum SqTypeKind {
 #define sq_type_shalf ((SqType){SQ_TYPE_SH})
 #define sq_type_ubyte ((SqType){SQ_TYPE_UB})
 #define sq_type_uhalf ((SqType){SQ_TYPE_UH})
+#define sq_type_env ((SqType){SQ_TYPE_ENV})
 
 void sq_type_struct_start(const char* name, int align /*=0 for natural*/);
 void sq_type_add_field(SqType field);
@@ -205,7 +208,7 @@ typedef struct SqCallArg {
   SqRef value;
 } SqCallArg;
 
-#define sq_varargs_begin (SqCallArg){sq_type_void, (SqRef){0}}
+#define sq_varargs_begin (SqCallArg){(SqType){SQ_TYPE_VARARGS},(SqRef){0}}
 
 SqRef sq_i_calla(SqType result,
                  SqRef func,
@@ -16768,16 +16771,20 @@ void sq_itemctx_activate(SqItemCtx itemctx) {
 SqRef sq_func_param_named(SqType type, const char* name) {
   SQ_ERR_CHECK((SqRef){0});
   int ty;
-  int k = _sqtype_to_cls_and_ty(type, &ty);
   Ref r = newtmp(0, Kx, G(curf));
   SQ_NAMED_IF_DEBUG(G(curf)->tmp[r.val].name, name);
-  // TODO: env ptr, varargs
-  if (k == Kc) {
-    *GC(curi) = (Ins){Oparc, Kl, r, {TYPE(ty)}};
-  } else if (k >= Ksb) {
-    *GC(curi) = (Ins){Oparsb + (k - Ksb), Kw, r, {NULL_R}};
+  if ((int32_t)type.u == SQ_TYPE_ENV) {
+    *GC(curi) = (Ins){Opare, Kl, r, {NULL_R}};
   } else {
-    *GC(curi) = (Ins){Opar, k, r, {NULL_R}};
+    int k = _sqtype_to_cls_and_ty(type, &ty);
+    // TODO: varargs
+    if (k == Kc) {
+      *GC(curi) = (Ins){Oparc, Kl, r, {TYPE(ty)}};
+    } else if (k >= Ksb) {
+      *GC(curi) = (Ins){Oparsb + (k - Ksb), Kw, r, {NULL_R}};
+    } else {
+      *GC(curi) = (Ins){Opar, k, r, {NULL_R}};
+    }
   }
   ++GC(curi);
   return _internal_ref_to_sqref(r);
@@ -16940,18 +16947,23 @@ SqRef sq_i_calla(SqType result, SqRef func, int num_args, SqCallArg* cas) {
   for (int i = 0; i < num_args; ++i) {
     SQ_ASSERT(GC(curi) - GC(insb) < NIns);
     int ty;
-    int k = _sqtype_to_cls_and_ty(cas[i].type, &ty);
+    int k;
     Ref r = _sqref_to_internal_ref(cas[i].value);
-    // TODO: env
-    if (k == K0 && req(r, NULL_R)) {
-      // This is our hacky special case for where '...' would appear in the call.
+    if ((int32_t)cas[i].type.u == SQ_TYPE_VARARGS) {
       *GC(curi) = (Ins){.op = Oargv};
-    } else if (k == Kc) {
-      *GC(curi) = (Ins){Oargc, Kl, NULL_R, {TYPE(ty), r}};
-    } else if (k >= Ksb) {
-      *GC(curi) = (Ins){Oargsb + (k - Ksb), Kw, NULL_R, {r}};
+    } else if ((int32_t)cas[i].type.u == SQ_TYPE_ENV) {
+      *GC(curi) = (Ins){Oarge, Kl, NULL_R, {r}};
     } else {
-      *GC(curi) = (Ins){Oarg, k, NULL_R, {r}};
+      k = _sqtype_to_cls_and_ty(cas[i].type, &ty);
+      if (k == K0 && req(r, NULL_R)) {
+        // This is our hacky special case for where '...' would appear in the call.
+      } else if (k == Kc) {
+        *GC(curi) = (Ins){Oargc, Kl, NULL_R, {TYPE(ty), r}};
+      } else if (k >= Ksb) {
+        *GC(curi) = (Ins){Oargsb + (k - Ksb), Kw, NULL_R, {r}};
+      } else {
+        *GC(curi) = (Ins){Oarg, k, NULL_R, {r}};
+      }
     }
     ++GC(curi);
   }
