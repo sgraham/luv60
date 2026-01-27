@@ -872,6 +872,7 @@ static Sym* gen_array___str__(Type type) {
 
   Sym* sub_str_func = lookup_memfn(subtype, parser.static_str___str__);
 
+  // XXX ENV
   SqRef ret = sq_i_call4(
       parser.sq_type_str, sq_ref_extern("Array$__str__"), (SqCallArg){sq_type_long, self},
       (SqCallArg){sq_type_long, sq_const_int(count)},
@@ -916,6 +917,7 @@ static Sym* gen_array___contains__(Type type) {
   SqRef tmp = sq_i_alloc8(sq_const_int(subtype_size));
   store_by_type_val_into(subtype, item, tmp);
 
+  // XXX ENV
   SqRef ret = sq_i_call5(
       sq_type_ubyte, sq_ref_extern("Array$__contains__"), (SqCallArg){sq_type_long, self},
       (SqCallArg){sq_type_long, sq_const_int(count)}, (SqCallArg){sq_type_long, tmp},
@@ -957,6 +959,7 @@ static Sym* gen_list_append(Type type) {
   SqRef tmp = sq_i_alloc8(sq_const_int(subtype_size));
   store_by_type_val_into(subtype, item, tmp);
 
+  // XXX ENV
   sq_i_call3(sq_type_void, sq_ref_extern("List$append"), (SqCallArg){sq_type_long, self},
              (SqCallArg){sq_type_long, tmp}, (SqCallArg){sq_type_long, sq_const_int(subtype_size)});
   sq_i_ret_void();
@@ -1003,6 +1006,7 @@ static Sym* gen_list___contains__(Type type) {
 
   Sym* sub_eq_func = lookup_memfn(subtype, parser.static_str___eq__);
 
+  // XXX ENV
   sq_i_call4(
       sq_type_void, sq_ref_extern("List$__contains__"), (SqCallArg){sq_type_long, self},
       (SqCallArg){sq_type_long, tmp}, (SqCallArg){sq_type_long, sq_const_int(subtype_size)},
@@ -1037,6 +1041,7 @@ static Sym* gen_list___str__(Type type) {
 
   Sym* sub_str_func = lookup_memfn(subtype, parser.static_str___str__);
 
+  // XXX ENV
   SqRef ret = sq_i_call3(
       parser.sq_type_str, sq_ref_extern("List$__str__"), (SqCallArg){sq_type_long, self},
       (SqCallArg){sq_type_long, sq_const_int(subtype_size)},
@@ -1325,9 +1330,13 @@ static void enter_function(Sym* sym,
   if (is_main) {
     sq_i_call0(sq_type_void, sq_ref_extern("RtPreMain"));
   }
+
+  sq_i_call0(sq_type_void, sq_ref_extern("ZoneEnterFunction"));
 }
 
 static void leave_function(void) {
+  sq_i_call0(sq_type_void, sq_ref_extern("ZoneExitFunction"));
+
   Type ret_type = type_func_return_type(parser.cur_scope->func_sym->type);
   if (type_eq(ret_type, type_void)) {
     sq_i_ret_void();
@@ -1753,6 +1762,7 @@ static bool cast_operand(Operand* operand, Type type) {
       // rather than making automatic. mostly for `ch in "abc"`.
       Sym* sym = lookup_memfn(type_codept, parser.static_str___str__);
       ASSERT(sym);
+      // XXX ENV
       *operand = operand_rvalue_imm(
           type_str, sq_i_call1(parser.sq_type_str, sqref_for_sym(sym),
                                (SqCallArg){sq_type_long, operand_to_sqref_lval(operand)}));
@@ -2506,6 +2516,7 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
 
   consume(TOK_RPAREN, "Expect ')' after arguments.");
   Type ret_type = type_func_return_type(left.type);
+  // XXX ENV
   return operand_rvalue_imm(ret_type,
                             sq_i_calla(type_to_sqtype(ret_type), left.ref, num_args, arg_values));
 }
@@ -2702,6 +2713,7 @@ static Operand parse_in_or_not_in(Operand left, bool can_assign, Type* expected)
     SqRef arg =
         type_is_aggregate(left.type) ? operand_to_sqref_lval(&left) : operand_to_sqref_imm(&left);
 
+    // XXX ENV
     Operand res = operand_rvalue_imm(
         type_bool, sq_i_call2(sq_type_word, sqref_for_sym(sym),
                               (SqCallArg){sq_type_long, operand_to_sqref_lval(&rhs)},
@@ -2813,6 +2825,7 @@ static Operand parse_fmt(bool can_assign, Type* expected) {
     //printf("TOK: %s\n", fmtlex_token_kind_name(tok.kind));
     if (tok.kind == FMTTOK_LITERAL || tok.kind == FMTTOK_ESCAPED_BRACE) {
       SqRef str = emit_string_obj(tok.data);
+      // XXX ENV
       sq_i_call2(sq_type_void, sq_ref_extern("AppendToStringBufferList"),
                  (SqCallArg){sq_type_long, buf->ref}, (SqCallArg){sq_type_long, str});
     } else if (tok.kind == FMTTOK_LBRACE) {
@@ -2839,8 +2852,10 @@ static Operand parse_fmt(bool can_assign, Type* expected) {
         errorf_offset(string_offset, "Don't know how to convert type %s to string for fmt.",
                       type_as_str(args[index].type));
       }
+      // XXX ENV
       SqRef as_str = sq_i_call1(parser.sq_type_str, sqref_for_sym(item_str_func),
                                 (SqCallArg){sq_type_long, operand_to_sqref_lval(&args[index])});
+      // XXX ENV
       sq_i_call2(sq_type_void, sq_ref_extern("AppendToStringBufferList"),
                  (SqCallArg){sq_type_long, buf->ref}, (SqCallArg){sq_type_long, as_str});
       if (indexing_state == IS_DEFAULT) {
@@ -3185,6 +3200,7 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
 
     // TODO: I can't come up with a case yet where promotion is needed, but it
     // seems like it might be here.
+    // XXX ENV
     sq_i_call3(sq_type_void, list_append_func, (SqCallArg){sq_type_long, untyped_list},
                (SqCallArg){sq_type_long, lval->ref},
                (SqCallArg){sq_type_long, sq_const_int(type_size(elem.type))});
@@ -3250,6 +3266,7 @@ static Operand parse_list_literal(Type* expected) {
       size_t list_size = type_size(*expected);
       SqRef list_obj = sq_i_alloc8(sq_const_int(list_size));
       initialize_aggregate(list_obj, *expected);
+      // XXX ENV
       sq_i_call4(sq_type_void, sq_ref_extern("List$copy_from_array"),
                  (SqCallArg){sq_type_long, list_obj}, (SqCallArg){sq_type_long, arr_base},
                  (SqCallArg){sq_type_long, sq_const_int(elems.size)},
@@ -3562,6 +3579,7 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
         consume(TOK_RSQUARE, "Expecting ']' to end slicing expression.");
         return operand_rvalue_imm(
             type_list(subtype),
+            // XXX ENV
             sq_i_call4(parser.sq_type_list, sq_ref_extern("List$slice_from_list"),
                        (SqCallArg){sq_type_long, left.ref},
                        (SqCallArg){sq_type_long, sq_const_int(type_size(subtype))},
@@ -3581,6 +3599,7 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
         // slice(left, subscript, NULL)
         if (left_type_kind == TYPE_LIST) {
           subtype = type_list_subtype(left.type);
+          // XXX ENV
           return operand_rvalue_imm(
               type_list(subtype),
               sq_i_call4(parser.sq_type_list, sq_ref_extern("List$slice_from_list"),
@@ -3600,6 +3619,7 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
             errorf("Cannot subscript using type %s.", type_as_str(subscript2.type));
           }
           consume(TOK_RSQUARE, "Expecting ']' to end slicing expression.");
+          // XXX ENV
           return operand_rvalue_imm(
               type_list(subtype),
               sq_i_call4(parser.sq_type_list, sq_ref_extern("List$slice_from_list"),
@@ -4309,6 +4329,7 @@ static void break_statement(void) {
   for (int i = parser.cur_scope->num_exit_calls - 1; i >= itd->exit_call_mark_for_break_continue;
        --i) {
     ExitCall* ec = &parser.cur_scope->exit_call_stack[i];
+    // XXX ENV
     sq_i_call1(sq_type_void, ec->func, (SqCallArg){sq_type_long, ec->obj});
   }
 
@@ -4326,6 +4347,7 @@ static void continue_statement(void) {
   for (int i = parser.cur_scope->num_exit_calls - 1; i >= itd->exit_call_mark_for_break_continue;
        --i) {
     ExitCall* ec = &parser.cur_scope->exit_call_stack[i];
+    // XXX ENV
     sq_i_call1(sq_type_void, ec->func, (SqCallArg){sq_type_long, ec->obj});
   }
 
@@ -4367,6 +4389,7 @@ static void with_statement(void) {
            type_as_str(wobj.type));
   }
 
+  // XXX ENV
   sq_i_call1(/*todo*/ sq_type_void, sqref_for_sym(enter_func),
              (SqCallArg){sq_type_long, operand_to_sqref_lval(&wobj)});
 
@@ -4381,6 +4404,7 @@ static void with_statement(void) {
   // TODO: handle break/continue!
 
   ExitCall* ec = &parser.cur_scope->exit_call_stack[--parser.cur_scope->num_exit_calls];
+  // XXX ENV
   sq_i_call1(sq_type_void, ec->func, (SqCallArg){sq_type_long, ec->obj});
 }
 
@@ -4388,16 +4412,19 @@ static void print_statement(void) {
   Operand val = parse_expression(NULL);
 
   if (type_eq(val.type, type_str)) {
+    // XXX ENV
       sq_i_call1(sq_type_void, sq_ref_extern("PrintStr"),
                  (SqCallArg){sq_type_long, operand_to_sqref_lval(&val)});
   } else {
     // If __str__ exists for the type, call it, and then print the result.
     Sym* sym = lookup_memfn(val.type, parser.static_str___str__);
     if (sym) {
+      // XXX ENV
       Operand as_str = operand_rvalue_imm(
           type_str, sq_i_call1(parser.sq_type_str, sqref_for_sym(sym),
                                (SqCallArg){sq_type_long, operand_to_sqref_lval(&val)}));
 
+      // XXX ENV
       sq_i_call1(sq_type_void, sq_ref_extern("PrintStr"),
                  (SqCallArg){sq_type_long, operand_to_sqref_lval(&as_str)});
     } else {
@@ -4421,6 +4448,7 @@ static void check_statement(void) {
 
   sq_block_start(fail_block);
   // TODO: file/line would be nice!
+  // XXX ENV
   sq_i_call0(sq_type_void, sq_ref_extern("CheckFailed"));
 
   sq_block_start(after_block);
@@ -4714,8 +4742,10 @@ static void parse_variable_statement(Type type) {
 static LastStatementType return_statement(void) {
   for (int i = parser.cur_scope->num_exit_calls - 1; i >= 0; --i) {
     ExitCall* ec = &parser.cur_scope->exit_call_stack[i];
+    // XXX ENV
     sq_i_call1(sq_type_void, ec->func, (SqCallArg){sq_type_long, ec->obj});
   }
+  sq_i_call0(sq_type_void, sq_ref_extern("ZoneExitFunction"));
 
   Type func_ret = type_func_return_type(parser.cur_scope->func_sym->type);
   ASSERT(!type_is_none(func_ret));

@@ -1,0 +1,19 @@
+# DISABLED
+# RET: 0
+struct Thing:
+    str ident
+    int num
+
+def []Thing get_stuff(^into):
+    []Thing ret
+    for i in range(10):
+        name = fmt(^into, "name{i}", i)
+        ret.append(^into, Thing(ident=name, num=i*100))
+    return ret
+
+def int main():
+    []Thing things = get_stuff(^func)
+    for t in things:
+        print fmt("ident: {}, num: {}", t.ident, t.num)
+    print "done"
+    return 0

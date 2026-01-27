@@ -81,16 +81,13 @@ hi def link     luvBuiltins Function
 syn region      luvDecorator start=+@+ end=+\w\++
 hi def link     luvDecorator         Macro
 
+syn region      luvZone start=+\^+ end=+\w\++
+hi def link     luvZone Function
+
 " Strings
-syn region luvString start=/"/ skip=/\\\\\|\\"/ end=/"/ contains=luvInterpolatedWrapper oneline
-syn region luvInterpolatedWrapper start='\v(^|[^\\])\zs\\\(\s*' end='\v\s*\)' contained containedin=luvString contains=luvInterpolatedString,luvString oneline
-" TODO: It'd be nice to have this turn back on syns above for CONST to get
-" highlighting in e.g.: "stuff: \(CONST)"
-syn match luvInterpolatedString "\v\w+(\(\))?" contained containedin=luvInterpolatedWrapper oneline
+syn region luvString start=/"/ skip=/\\\\\|\\"/ end=/"/ oneline
 syn region luvRawString  start=+r'''+ skip=+\\'+ end=+'''+ keepend contains=@Spell
 
-
-hi default link luvInterpolatedWrapper Delimiter
 hi def link     luvString            String
 hi def link     luvRawString         String
 

@@ -3,14 +3,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
+#include <time.h>
 
 #define COUNTOF(a) (sizeof(a)/sizeof(a[0]))
 #define COUNTOFI(a) ((int)(sizeof(a)/sizeof(a[0])))
-#define CHECK(c)     \
-  do {               \
-    if (!(c))        \
-      CheckFailed(); \
-  } while (0)
+#define RT_CHECK(cond) if (!(cond)) { fprintf(stderr, "%s\n", #cond); CheckFailed(); }
+
 
 #if defined(_WIN32)
 
@@ -55,12 +54,65 @@ void CheckFailed(void) {
   exit(127);
 }
 
+static uint64_t base_timer_now(void) {
+  return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000;
+}
+
 #include "rt_zone.c"
 
+// These are scratch zones for ^func.
+static Zone* scratch_zones[1024];
+static int scratch_zone_depth;
+
+// This is the currently active zone, often one of the above, but also
+// user-created Zones for longer lived allocations.
+static Zone* zone_stack[1024];
+static int zone_stack_pos;
+
 void RtPreMain(void) {
-  atexit(at_exit_handler);
-  int backing_zone = zone_create();
-  CHECK(backing_zone == 0);
+  //uint64_t before = base_timer_now();
+
+  for (int i = 0; i < COUNTOFI(scratch_zones); ++i) {
+    scratch_zones[i] = zone_create();
+  }
+  scratch_zone_depth = 0;
+  zone_stack_pos = 0;
+
+  //uint64_t after = base_timer_now();
+  //printf("%lld nanos\n", after - before);
+}
+
+void ZonePush(Zone* zone) {
+  RT_CHECK(zone_stack_pos < COUNTOFI(zone_stack));
+  zone_stack[zone_stack_pos++] = zone;
+}
+
+void ZonePop(void) {
+  RT_CHECK(zone_stack_pos > 0);
+  zone_pop_to(zone_stack[zone_stack_pos - 1], 0);
+  zone_stack_pos--;
+}
+
+void ZoneEnterFunction(void) {
+  RT_CHECK(scratch_zone_depth < COUNTOFI(scratch_zones));
+  Zone* z = scratch_zones[scratch_zone_depth++];
+  zone_guard_read_write(z);
+  ZonePush(z);
+  //printf("zone enter %d\n", scratch_zone_depth);
+}
+
+void ZoneExitFunction(void) {
+  //printf("zone exit %d\n", scratch_zone_depth);
+  RT_CHECK(scratch_zone_depth > 0);
+  RT_CHECK(zone_stack_pos > 0);
+  RT_CHECK(scratch_zones[scratch_zone_depth - 1] == zone_stack[zone_stack_pos - 1]);
+  scratch_zone_depth--;
+  ZonePop();
+  zone_guard_no_access(scratch_zones[scratch_zone_depth]);
+}
+
+Zone* ZoneTop(void) {
+  return zone_stack[zone_stack_pos - 1];
 }
 
 typedef struct Str {
@@ -83,7 +135,7 @@ typedef struct List {
 static Str str_copy_cstr(const char* cstr) {
   // Note, no NUL, not sure if this will be annoying in practice.
   size_t size = strlen(cstr);
-  Str ret = {zone_malloc(size), size};
+  Str ret = {zone_push(ZoneTop(), size, 8), size};
   memcpy((void*)ret.data, cstr, size);
   return ret;
 }
@@ -107,7 +159,10 @@ void List$reserve(List* list, uint64_t capacity, uint64_t item_size) {
   while (list->capacity < capacity) {
     list->capacity = list->capacity > 0 ? list->capacity * 2 : 16;
   }
-  list->data = zone_realloc(list->data, list->capacity * item_size);
+
+  unsigned char* newptr = zone_push(ZoneTop(), list->capacity * item_size, 8 /* todo */);
+  memcpy(newptr, list->data, list->size * item_size);
+  list->data = newptr;
 }
 
 void AppendToStringBufferList(List* sb, Str* str) {
@@ -141,45 +196,6 @@ bool str$__contains__(Str* self, Str other) {
   return memmem(self->data, self->size, other.data, other.size) != NULL;
 }
 
-#define RT_CHECK(cond) if (!(cond)) { fprintf(stderr, "%s\n", #cond); CheckFailed(); }
-
-#if 0
-// The QBE %env is stashed in RAX on x64, or in x9 on aarch64. This is used to
-// pass additional data to the type-erased implementations of the generic
-// functions without needing to generate more complex thunks for each function
-// per type instantiation.
-
-#if defined(__amd64__) || defined(__amd64) || defined(__x86_64__) || defined(__x86_64)
-
-#  ifdef _MSC_VER
-
-// This is a pretty hokey implementation, might need to make a "0xC3 ret"
-// somewhere in the code segment instead that we can extern here instead so that
-// we can be sure that the C compiler doesn't inline/opt/whatever this and make
-// it not retrieve RAX.
-#    pragma warning(push)
-#    pragma warning(disable : 4716)
-uint64_t _impl_NothingRetrieveRAX(void) {}
-#    pragma warning(pop)
-
-#    define GET_ENV_DATA(into) \
-      { into = _impl_NothingRetrieveRAX(); }
-
-#  else
-#    error port non-msvc win
-#  endif
-
-#elif defined(__aarch64__)
-
-#  define GET_ENV_DATA(into) asm volatile("mov %0, x9" : "=r"(into)::);
-
-#else
-#  error port
-#endif
-
-#define LOAD_LIST_DATA() uint64_t item_size; GET_ENV_DATA(item_size)
-#endif
-
 #if 0
 void List$free(List* list) {
   free(list->data);
@@ -205,7 +221,10 @@ List List$slice_from_array(void* arr_base, size_t arr_count, uint64_t item_size)
 
 // TODO: this is like a list.extend() but that should really take an iterator,
 // not a contiguous block like this.
-void List$copy_from_array(List* list, void* arr_base, size_t arr_count, uint64_t item_size) {
+void List$copy_from_array(List* list,
+                          void* arr_base,
+                          size_t arr_count,
+                          uint64_t item_size) {
   List$reserve(list, list->size + arr_count, item_size);
   memcpy(&list->data[list->size * item_size], arr_base, arr_count * item_size);
   list->size += arr_count;

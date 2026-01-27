@@ -23,4 +23,3 @@ def int main():
     print q[0]
 
     return 0
-

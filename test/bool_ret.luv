@@ -5,8 +5,9 @@ def bool stuff():
 def bool stuff2():
     return false
 
-def main():
+def int main():
     if stuff():
         print "ok"
     if stuff2():
         print "bad"
+    return 0

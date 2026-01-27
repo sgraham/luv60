@@ -1,11 +1,13 @@
-bool leak_check_backing_zone = true;
-
+#define ZONE_HEADER_SIZE 128
 typedef struct Zone {
-  void* ptr;
-  void* reserve_base;
-  void* reserve_end;
-  void* commit_end;
+  uint64_t original_commit_size;
+  uint64_t original_reserve_size;
+  uint64_t cur_pos;
+  uint64_t cur_commit;
+  uint64_t cur_reserve;
 } Zone;
+
+_Static_assert(sizeof(Zone) < ZONE_HEADER_SIZE, "Zone too large");
 
 #ifdef _WIN32
 
@@ -18,159 +20,148 @@ extern int __stdcall VirtualFree(void* addr, size_t size, int free_type);
 #define PAGE_READWRITE 0x04
 #define MEM_RELEASE 0x00008000
 
-static void* alloc_large_slab(size_t size) {
-  return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+uint64_t base_page_size(void) {
+  SYSTEM_INFO sysInfo;
+  GetSystemInfo(&sysInfo);
+  return sysInfo.dwPageSize;
 }
 
-static void free_large_slab(void* p, size_t size) {
-  VirtualFree(p, 0, MEM_RELEASE);
+static void* base_mem_reserve(uint64_t size) {
+  return VirtualAlloc(NULL, size, MEM_RESERVE, PAGE_NOACCESS);
+}
+
+static bool base_mem_commit(void* ptr, uint64_t size) {
+  return VirtualAlloc(ptr, size, MEM_COMMIT, PAGE_READWRITE) != 0;
+}
+
+static void base_mem_release(void* ptr, uint64_t size) {
+  VirtualFree(ptr, 0, MEM_RELEASE);
 }
 
 #else
 
-#include <sys/mman.h> // TODO
+#include <sys/mman.h>
+#include <unistd.h>
 
-static void* alloc_large_slab(size_t size) {
-  return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
+static uint64_t base_page_size(void) {
+  return sysconf(_SC_PAGE_SIZE);
 }
 
-static void free_large_slab(void* p, size_t size) {
-  munmap(p, size);
+void* base_mem_reserve(uint64_t size) {
+  void* result = mmap(0, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (result == MAP_FAILED) {
+    result = NULL;
+  }
+  return result;
+}
+
+bool base_mem_commit(void* ptr, uint64_t size) {
+  mprotect(ptr, size, PROT_READ|PROT_WRITE);
+  return true;
+}
+
+void base_mem_guard_no_access(void* ptr, uint64_t size) {
+  mprotect(ptr, size, PROT_NONE);
+}
+
+void base_mem_guard_read_write(void* ptr, uint64_t size) {
+  mprotect(ptr, size, PROT_READ|PROT_WRITE);
+}
+
+void base_mem_release(void* ptr, uint64_t size) {
+  munmap(ptr, size);
 }
 
 #endif
 
-#define ZONE_DEFAULT_RESERVE (1024*1024*1024)
+#define ZONE_DEFAULT_RESERVE (128*1024*1024)
+#define ZONE_DEFAULT_COMMIT (16*1024)
 
 #define ALIGN_DOWN(n, a) ((n) & ~((a)-1))
 #define ALIGN_UP(n, a) ALIGN_DOWN((n) + (a)-1, (a))
 
-#define PREFIX_SIZE sizeof(size_t)
-#define MAX_ALLOC_SIZE 0xffffffffffffff
-#define GET_PREFIX_DATA(p) (*(size_t*)(p - PREFIX_SIZE))
-#define SET_PREFIX_DATA(p, v) do { (*(size_t*)(p - PREFIX_SIZE)) = v; } while(0);
-#define GET_SIZE_FROM_PTR(p) (GET_PREFIX_DATA(p) >> 8)
+#define MIN(x, y) ((x) <= (y) ? (x) : (y))
+#define MAX(x, y) ((x) >= (y) ? (x) : (y))
+#define CLAMP_MAX(x, max) MIN(x, max)
+#define CLAMP_MIN(x, min) MAX(x, min)
 
-static Zone zones[16];
-static int cur_zone;
+Zone* zone_create(void) {
+  // TODO: probably make these args
+  uint64_t provided_reserve_size = ZONE_DEFAULT_RESERVE;
+  uint64_t provided_commit_size = ZONE_DEFAULT_COMMIT;
 
-static int find_unused_zone(void) {
-  for (int i = 0; i < COUNTOF(zones); ++i) {
-    if (zones[i].ptr == NULL) {
-      return i;
-    }
+  uint64_t commit_size = ALIGN_UP(provided_commit_size, base_page_size());
+  uint64_t reserve_size = ALIGN_UP(provided_reserve_size, base_page_size());
+
+  void* base = base_mem_reserve(reserve_size);
+  RT_CHECK(base);
+  RT_CHECK(base_mem_commit(base, commit_size));
+
+  Zone* zone = base;
+  zone->original_commit_size = provided_commit_size;
+  zone->original_reserve_size = provided_reserve_size;
+  zone->cur_pos = ZONE_HEADER_SIZE;
+  zone->cur_commit = commit_size;
+  zone->cur_reserve = reserve_size;
+
+  // TODO: ASAN
+
+  //fprintf(stderr, "ZONE %p, %" PRIu64 " reserve %" PRIu64 " commit\n", zone, reserve_size, commit_size);
+  return zone;
+}
+
+void zone_destroy(Zone* zone) {
+  base_mem_release(zone, zone->cur_reserve);
+}
+
+void* zone_push(Zone* zone, uint64_t size, uint64_t align) {
+  uint64_t pos_pre = ALIGN_UP(zone->cur_pos, align);
+  uint64_t pos_post = pos_pre + size;
+  //fprintf(stderr, "ZONE %p, at %" PRIu64 ", push %" PRIu64 "\n", zone, zone->cur_pos, size);
+
+  // Extend committed range, if necessary.
+  if (zone->cur_commit < pos_post) {
+    uint64_t commit_post_aligned = pos_post + zone->original_commit_size - 1;
+    commit_post_aligned -= commit_post_aligned % zone->original_commit_size;
+    uint64_t commit_post_clamped = CLAMP_MAX(commit_post_aligned, zone->cur_reserve);
+    uint64_t commit_size = commit_post_clamped - zone->cur_commit;
+    uint8_t* commit_ptr = (uint8_t*)zone + zone->cur_commit;
+    base_mem_commit(commit_ptr, commit_size);
+    zone->cur_commit = commit_post_clamped;
   }
-  CheckFailed();
-  return 0;
-}
 
-int zone_create(void) {
-  int ret = find_unused_zone();
-  zones[ret].reserve_base = alloc_large_slab(ZONE_DEFAULT_RESERVE);
-  zones[ret].ptr = zones[ret].reserve_base;
-  zones[ret].reserve_end = zones[ret].reserve_base + ZONE_DEFAULT_RESERVE;
-  zones[ret].commit_end = zones[ret].reserve_end;  // TODO: incrementally grow commit!
-  printf("ZONE CREATE %d at %p\n", ret, zones[ret].ptr);
-  return ret;
-}
-
-void zone_destroy(int zone) {
-  CHECK(zone >= 0 && zone < COUNTOFI(zones));
-  CHECK(zones[zone].ptr != NULL);
-  free_large_slab(zones[zone].reserve_base, zones[zone].reserve_end - zones[zone].reserve_base);
-  memset(&zones[zone], 0, sizeof(Zone));
-}
-
-int zone_set_default(int zone) {
-  int ret = cur_zone;
-  cur_zone = zone;
-  CHECK(cur_zone >= 0 && cur_zone < COUNTOFI(zones));
-  return ret;
-}
-
-void zone_free(void* ptr) {
-  size_t data = GET_PREFIX_DATA(ptr);
-#if 1  // TODO: DEBUG
-  size_t size = data >> 8;
-  memset(ptr, 0xdd, size);
-#endif
-  data &= ~0xff;
-  data |= 0xfe;
-  SET_PREFIX_DATA(ptr, data);
-}
-
-#define AllocAlign 8
-
-void* zone_malloc(size_t len) {
-  size_t len_with_prefix = ALIGN_UP(len + PREFIX_SIZE, AllocAlign);
-  if (len_with_prefix >= MAX_ALLOC_SIZE) {
-    return NULL;
+  void* result = NULL;
+  if (zone->cur_commit >= pos_post) {
+    result = (uint8_t*)zone + pos_pre;
+    zone->cur_pos = pos_post;
   }
-#if 0
-  if (current_zone.ptr + len_with_prefix >= current_zone.commit_end) {
-    // TODO: update commit more and update commit_end
-  }
-#endif
-  void* ret = zones[cur_zone].ptr + PREFIX_SIZE;
-  zones[cur_zone].ptr += len_with_prefix;
-  size_t data = (len << 8) | 0xa1;
-  SET_PREFIX_DATA(ret, data);
-  printf("ZONE MALLOC %zu bytes -> %p\n", len, ret);
-  return ret;
+
+  RT_CHECK(result != NULL);
+
+  // TODO: ASAN
+
+  return result;
 }
 
-void* zone_realloc(void* old, size_t new_size) {
-  if (!old) {
-    return zone_malloc(new_size);
-  }
-  size_t old_size = GET_SIZE_FROM_PTR(old);
-  if (new_size <= old_size) {
-    return old;
-  }
-  void* p = zone_malloc(new_size);
-  memcpy(p, old, old_size);
-  zone_free(old);
-  return p;
+uint64_t zone_pos(Zone* zone) {
+  return zone->cur_pos;
 }
 
-bool zone_ptr_is_valid(void* ptr) {
-  for (int i = 0; i < COUNTOFI(zones); ++i) {
-    if (zones[i].ptr != NULL) {
-      if (ptr >= zones[i].reserve_base && ptr < zones[i].commit_end) {
-        size_t data = GET_PREFIX_DATA(ptr);
-        return (data & 0xff) == 0xa1;
-      }
-    }
-  }
-  return false;
+void zone_guard_no_access(Zone* zone) {
+  uint8_t* ptr = (uint8_t*)zone;
+  base_mem_guard_no_access(ptr, ALIGN_DOWN(zone->cur_commit, base_page_size()));
 }
 
-size_t zone_ptr_alloc_size(void* ptr) {
-  size_t data = GET_PREFIX_DATA(ptr);
-  return data >> 8;
+void zone_guard_read_write(Zone* zone) {
+  uint8_t* ptr = (uint8_t*)zone;
+  base_mem_guard_read_write(ptr, base_page_size());
+  base_mem_guard_read_write(ptr, ALIGN_DOWN(zone->cur_commit, base_page_size()));
 }
 
-int zone_print_active_blocks(void) {
-  int num_found = 0;
-  void* p = zones[cur_zone].reserve_base;
-  while (p < zones[cur_zone].ptr) {
-    void* user_p = p + PREFIX_SIZE;
-    size_t size = zone_ptr_alloc_size(user_p);
-    if (zone_ptr_is_valid(user_p)) {
-      printf("block allocated at %p of size %zu\n", user_p, size);
-      ++num_found;
-    }
-    p += ALIGN_UP(size + PREFIX_SIZE, sizeof(void*));
-  }
-  return num_found;
-}
-
-static void at_exit_handler(void) {
-  if (leak_check_backing_zone) {
-    cur_zone = 0;
-    int count = zone_print_active_blocks();
-    if (count) {
-      _Exit(0xbd);
-    }
-  }
+void zone_pop_to(Zone* zone, uint64_t pos) {
+  uint64_t cpos = CLAMP_MIN(ZONE_HEADER_SIZE, pos);
+  zone->cur_pos = cpos;
+  //memset(((uint8_t*)zone + zone->cur_pos), 0xdd, 128);
+  //fprintf(stderr, "ZONE %p, pop to %" PRIu64 "\n", zone, zone->cur_pos);
+  //  TODO: ASAN
 }
