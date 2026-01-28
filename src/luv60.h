@@ -64,7 +64,7 @@ typedef struct Str {
   uint64_t i;
 } Str;
 
-void str_intern_pool_init(Arena* arena, char* parse_buffer, size_t buffer_size);
+void str_intern_pool_init(Arena* arena);
 void str_intern_pool_destroy_for_tests(void);
 
 Str str_intern_len(const char* str, uint32_t len);
@@ -77,14 +77,8 @@ const char* str_raw_ptr_impl_long_string(Str str);
 #define str_raw_ptr(str) \
   ((((str).i) >> 63) ? str_raw_ptr_impl_long_string(str) : (const char*)&(str).i)
 
-bool str_eq_impl_long_strings(Str a, Str b);
-
 static inline FORCE_INLINE bool str_eq(Str a, Str b) {
-  if ((a.i >> 63) + (b.i >> 63) == 0) {
-    return a.i == b.i;
-  } else {
-    return str_eq_impl_long_strings(a, b);
-  }
+  return a.i == b.i;
 }
 
 static inline FORCE_INLINE bool str_is_none(Str s) {

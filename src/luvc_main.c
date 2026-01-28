@@ -24,14 +24,14 @@ static void parse_commandline(int argc,
       ++i;
     } else if (strcmp(argv[i], "-o") == 0) {
       if (*output) {
-        base_writef_stderr("Can only specify a single output file.\n");
+        base_writef_stderr("Can only specify a single output directory.\n");
         base_exit(1);
       }
       *output = argv[i + 1];
       i += 2;
     } else {
       if (*input) {
-        base_writef_stderr("Can only specify a single input file.\n");
+        base_writef_stderr("Can only specify a single main input file.\n");
         base_exit(1);
       }
       *input = argv[i];
@@ -40,11 +40,11 @@ static void parse_commandline(int argc,
   }
 
   if (!*input) {
-    base_writef_stderr("No input file specified.\n");
+    base_writef_stderr("No main input file specified.\n");
     base_exit(1);
   }
   if (!*output && !*syntax_only && !*verbose) {
-    base_writef_stderr("No output file specified.\n");
+    base_writef_stderr("No output directory specified.\n");
     base_exit(1);
   }
 }
@@ -66,7 +66,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  str_intern_pool_init(str_arena, (char*)file.buffer, file.file_size);
+  str_intern_pool_init(str_arena);
 
   if (syntax_only) {
     parse_syntax_check(main_arena, parse_temp_arena, input, file, verbose);

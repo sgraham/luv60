@@ -7,6 +7,8 @@
  * size and \0 after the string data for simple/fast cstr(). The Str object was
  * just a u32 containing the index into large buffer.
  *
+ *
+ *
  * Revised design more suited to compiler usage (maybe?). Str becomes a u64,
  * and:
  * - A zero-length string is disallowed.
@@ -28,32 +30,40 @@
  * keywords.
  * Drawbacks:
  * - larger representation (64 instead of 32)
- * - some complexity in representing longer strings, esp. "new" ones. (TODO:
- *   Possibly just don't allow new strings for now?)
+ * - some complexity in representing longer strings, esp. "new" ones.
+ *
+ *
+ *
+ * Revised^2 design is the same for <= 8 length, but we no longer use the parse
+ * buffer for longer strings. Instead, they're always like "new" strings where
+ * the data is pushed into an aux buffer, and the .i is the index and length
+ * into that buffer. There's a DictImpl holding a set of Str, so equality can
+ * just compare the .i still, *and* the Strs are not tied to their parse buffer
+ * so Str from different translation units can be compared to each other.
+ * "new" is renamed to "aux".
  */
 
 #define TOP_BIT_U64 (0x8000000000000000ull)
-#define SECOND_TOP_BIT_U64 (0x4000000000000000ull)
-static char* parse_buffer_;
-static size_t parse_buffer_size_;
 
-#define STR_NEW_BUFFER_SIZE (MiB(1))
-static char* new_buffer_;
-static size_t new_buffer_size_;
-static size_t new_buffer_insert_location_;
+#define STR_AUX_BUFFER_SIZE (MiB(1))
+static char* aux_buffer_;
+static size_t aux_buffer_size_;
+static size_t aux_buffer_insert_location_;
+
+static DictImpl aux_str_set_;
 
 static Arena* arena_;
 
-void str_intern_pool_init(Arena* arena, char* parse_buffer, size_t buffer_size) {
+void str_intern_pool_init(Arena* arena) {
   arena_ = arena;
-  new_buffer_ = arena_push(arena, STR_NEW_BUFFER_SIZE, 8);
-  new_buffer_size_ = STR_NEW_BUFFER_SIZE;
-  new_buffer_insert_location_ = 1;
-  parse_buffer_ = parse_buffer;
-  parse_buffer_size_ = buffer_size;
+  aux_buffer_ = arena_push(arena, STR_AUX_BUFFER_SIZE, 8);
+  aux_buffer_size_ = STR_AUX_BUFFER_SIZE;
+  aux_buffer_insert_location_ = 1;
+  aux_str_set_ = dict_new(arena, 4096, sizeof(Str), _Alignof(Str));
 }
 
 void str_intern_pool_destroy_for_tests(void) {
+  dict_destroy(&aux_str_set_);
 }
 
 #define MAKE_SHORT_STR_VAL(a, b, c, d, e, f, g, h)          \
@@ -66,16 +76,39 @@ void str_intern_pool_destroy_for_tests(void) {
    ((uint64_t)(g) << 48ULL) | /* */                         \
    ((uint64_t)(h) << 56ULL) /* highest, byte 8 */)
 
-#define MAKE_PARSE_BUFFER_STR_VAL(index, len)               \
+#define MAKE_AUX_BUFFER_STR_VAL(index, len)                 \
   (TOP_BIT_U64 |                          /* top bit */     \
    (((index) & 0x3fffffffull) << 32ull) | /* 30bit index */ \
    (((len) & 0x3fffffffull)) /* 30bit len */)
 
-#define MAKE_NEW_BUFFER_STR_VAL(index, len)                    \
-  (TOP_BIT_U64 |                          /* top bit */        \
-   SECOND_TOP_BIT_U64 |                   /* second top bit */ \
-   (((index) & 0x3fffffffull) << 32ull) | /* 30bit index */    \
-   (((len) & 0x3fffffffull)) /* 30bit len */)
+static size_t str_hash_func(void* strvoid) {
+  Str a = *(Str*)strvoid;
+  size_t hash = 0;
+  dict_hash_write(&hash, (void*)str_raw_ptr(a), str_len(a));
+  return hash;
+}
+
+static bool str_full_eq_func(void* avoid, void* bvoid) {
+  Str a = *(Str*)avoid;
+  Str b = *(Str*)bvoid;
+  if ((a.i & TOP_BIT_U64) == 0 && (b.i & TOP_BIT_U64) == 0) {
+    return a.i == b.i;
+  }
+  ASSERT((a.i & TOP_BIT_U64) || (b.i & TOP_BIT_U64)); // One must be a long string here.
+  if ((a.i >> 63) ^ (b.i >> 63)) {
+    // If one is, and one isn't then they don't match.
+    return false;
+  } else {
+    uint32_t alen = a.i & 0x3fffffff;
+    uint32_t blen = b.i & 0x3fffffff;
+    if (alen != blen) return false;
+    const char* ap = str_raw_ptr(a);
+    const char* bp = str_raw_ptr(b);
+    // TODO: not actually interning long strings, check to see whether
+    // interning them actually performs better or not.
+    return strncmp(ap, bp, alen) == 0;
+  }
+}
 
 Str str_intern_len(const char* p, uint32_t len) {
   switch (len) {
@@ -97,20 +130,29 @@ Str str_intern_len(const char* p, uint32_t len) {
     case 7:
       return (Str){MAKE_SHORT_STR_VAL(p[0], p[1], p[2], p[3], p[4], p[5], p[6], 0)};
     case 8:
-      // TODO: bail if 0x80 of p[7] is set
-      return (Str){MAKE_SHORT_STR_VAL(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7])};
-    default:
-      if (p >= parse_buffer_ && p < parse_buffer_ + parse_buffer_size_) {
-        ASSERT(len <= 0x3fffffff);
-        return (Str){MAKE_PARSE_BUFFER_STR_VAL(p - parse_buffer_, len)};
+      if (!(p[7] & 0x80)) {
+        return (Str){MAKE_SHORT_STR_VAL(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7])};
       }
-
-      uint32_t new_loc = new_buffer_insert_location_;
-      new_buffer_insert_location_ += len;
-      ASSERT(new_buffer_insert_location_ < new_buffer_size_);
-      char* strp = &new_buffer_[new_loc];
+      // FALLTHROUGH for high bit of p[7] set.
+    default: {
+      size_t rewind_location = aux_buffer_insert_location_;
+      uint32_t aux_loc = aux_buffer_insert_location_;
+      aux_buffer_insert_location_ += len;
+      char* strp = &aux_buffer_[aux_loc];
       memcpy(strp, p, len);
-      return (Str){MAKE_NEW_BUFFER_STR_VAL(new_loc, len)};
+      Str temp = {MAKE_AUX_BUFFER_STR_VAL(aux_loc, len)};
+
+      DictInsert res = dict_deferred_insert(&aux_str_set_, &temp, str_hash_func, str_full_eq_func,
+                                            sizeof(Str), _Alignof(Str));
+      Str* ptrstr = (Str*)dict_rawiter_get(&res.iter);
+      if (res.inserted) {
+        ptrstr->i = temp.i;
+        return temp;
+      } else {
+        aux_buffer_insert_location_ = rewind_location;
+        return *ptrstr;
+      }
+    }
   }
 }
 
@@ -138,28 +180,7 @@ uint32_t str_len(Str str) {
 
 const char* str_raw_ptr_impl_long_string(Str str) {
   ASSERT(str.i & TOP_BIT_U64);
-  if (str.i & SECOND_TOP_BIT_U64) {
-    return &new_buffer_[(str.i >> 32ull) & 0x3fffffff];
-  } else {
-    return &parse_buffer_[(str.i >> 32ull) & 0x3fffffff];
-  }
-}
-
-bool str_eq_impl_long_strings(Str a, Str b) {
-  ASSERT((a.i & TOP_BIT_U64) || (b.i & TOP_BIT_U64)); // One must be a long string here.
-  if ((a.i >> 63) ^ (b.i >> 63)) {
-    // If one is, and one isn't then they don't match.
-    return false;
-  } else {
-    uint32_t alen = a.i & 0x3fffffff;
-    uint32_t blen = b.i & 0x3fffffff;
-    if (alen != blen) return false;
-    const char* ap = str_raw_ptr(a);
-    const char* bp = str_raw_ptr(b);
-    // TODO: not actually interning long strings, check to see whether
-    // interning them actually performs better or not.
-    return strncmp(ap, bp, alen) == 0;
-  }
+  return &aux_buffer_[(str.i >> 32ull) & 0x3fffffff];
 }
 
 Str str_intern(const char* ptr) {

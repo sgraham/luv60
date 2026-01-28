@@ -4675,6 +4675,7 @@ static void import_statement(void) {
       break;
     }
   }
+  printf("IMPORT: %.*s\n", str_len(parts[0]), str_raw_ptr(parts[0]));
 
   // TODO: many things
   // The end result from the imported package is a DictImpl containing
