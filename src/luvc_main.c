@@ -69,8 +69,10 @@ int main(int argc, char** argv) {
   str_intern_pool_init(str_arena);
 
   if (syntax_only) {
-    parse_syntax_check(main_arena, parse_temp_arena, input, file, verbose);
+    parse_one_time_initialization_syntax_check(main_arena);
+    parse_syntax_check(parse_temp_arena, input, file, verbose);
   } else {
+    parse_one_time_initialization_code_gen(main_arena);
     FILE* out_file = NULL;
     if (!verbose) {
       out_file = fopen(output, "wb");
@@ -79,7 +81,7 @@ int main(int argc, char** argv) {
         return 1;
       }
     }
-    parse_code_gen(main_arena, parse_temp_arena, input, file, verbose, out_file);
+    parse_code_gen(parse_temp_arena, input, file, verbose, out_file);
   }
   return 0;
 }

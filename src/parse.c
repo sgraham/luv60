@@ -175,8 +175,15 @@ typedef struct Operand {
   SqRef ref2; // Used for fat function pointers and $up.
 } Operand;
 
-typedef struct Parser {
+typedef struct CompilerGlobals {
   Arena* arena;
+  DictImpl generics_thunk_cache;
+  int uniq_counter;
+} CompilerGlobals;
+
+static CompilerGlobals glob;
+
+typedef struct TranslationUnit {
   Arena* var_scope_arena;
   const char* cur_filename;
 
@@ -195,8 +202,6 @@ typedef struct Parser {
   int num_scopes;
   Scope* cur_scope;
 
-  DictImpl generics_thunk_cache;
-
   Operand op_null_ptr;
 
   int verbose;
@@ -213,15 +218,13 @@ typedef struct Parser {
   SqType sq_type_str;
   SqType sq_type_list;
   SqType sq_type_range;
+} TranslationUnit;
 
-  int uniq_counter;
-} Parser;
-
-static Parser parser;
+static TranslationUnit tu;
 
 static void push_exit_call(SqRef func, SqRef obj) {
-  ASSERT(parser.cur_scope->num_exit_calls < MAX_EXIT_CALLS);
-  parser.cur_scope->exit_call_stack[parser.cur_scope->num_exit_calls++] =
+  ASSERT(tu.cur_scope->num_exit_calls < MAX_EXIT_CALLS);
+  tu.cur_scope->exit_call_stack[tu.cur_scope->num_exit_calls++] =
       (ExitCall){.func = func, .obj = obj};
 }
 
@@ -327,13 +330,13 @@ static LastStatementType parse_block(void);
 
 static SqType type_to_sqtype(Type type) {
   if (type_kind(type) == TYPE_STR) {
-    return parser.sq_type_str;
+    return tu.sq_type_str;
   }
   if (type_kind(type) == TYPE_RANGE) {
-    return parser.sq_type_range;
+    return tu.sq_type_range;
   }
   if (type_kind(type) == TYPE_LIST) {
-    return parser.sq_type_list;
+    return tu.sq_type_list;
   }
   if (type_is_aggregate(type)) {
     return type_struct_sqtype(type);
@@ -415,26 +418,26 @@ static Operand operand_const(Type type, Val val) {
 }
 
 static inline uint32_t cur_offset(void) {
-  return parser.token_offsets[parser.cursor.token_index];
+  return tu.token_offsets[tu.cursor.token_index];
 }
 
 static inline uint32_t prev_offset(void) {
-  return parser.token_offsets[parser.cursor.token_index - 1];
+  return tu.token_offsets[tu.cursor.token_index - 1];
 }
 
 static StrView get_strview_for_offsets(uint32_t from, uint32_t to) {
-  return (StrView){(const char*)&parser.file_contents[from], to - from};
+  return (StrView){(const char*)&tu.file_contents[from], to - from};
 }
 
 static void get_location_and_line_slow(uint32_t offset,
                                        uint32_t* loc_line,
                                        uint32_t* loc_column,
                                        StrView* contents) {
-  const char* line_start = (const char*)&parser.file_contents[0];
+  const char* line_start = (const char*)&tu.file_contents[0];
   uint32_t line = 1;
   uint32_t col = 1;
-  const char* find = (const char*)&parser.file_contents[offset];
-  for (const char* p = (const char*)&parser.file_contents[0];; ++p) {
+  const char* find = (const char*)&tu.file_contents[offset];
+  for (const char* p = (const char*)&tu.file_contents[0];; ++p) {
     ASSERT(*p != 0);
     if (p == find) {
       const char* line_end = strchr(p, '\n');  // TODO: error on file w/o newline
@@ -459,7 +462,7 @@ NORETURN static void error_offset_delta(uint32_t offset, int delta, const char* 
   StrView line;
   get_location_and_line_slow(offset, &loc_line, &loc_column, &line);
   loc_column += delta;
-  int indent = base_writef_stderr("%s:%d:%d:", parser.cur_filename, loc_line, loc_column);
+  int indent = base_writef_stderr("%s:%d:%d:", tu.cur_filename, loc_line, loc_column);
   base_writef_stderr("%.*s\n", (int)line.size, line.data);
   base_writef_stderr("%*s", indent + loc_column - 1, "");
   base_writef_stderr("^ error: %s\n", message);
@@ -757,7 +760,7 @@ static void copy_by_type(Operand* from, SqRef into) {
 
 static SqRef sqref_for_sym(Sym* sym) {
   if (type_kind(sym->type) == TYPE_FUNC && type_func_flags(sym->type) & TFF_FOREIGN) {
-    return sq_ref_extern(cstr_copy(parser.arena, sym->name));
+    return sq_ref_extern(cstr_copy(glob.arena, sym->name));
   } else {
     return sq_ref_for_symbol(sym->global);
   }
@@ -784,20 +787,20 @@ static bool namesym_eq_func(void* void_nsp_a, void* void_nsp_b) {
 
 // Returns pointer into dict where Sym is stored by value, probably bad idea.
 static Sym* sym_new(SymKind kind, Str name, Type type) {
-  ASSERT(parser.cur_scope);
+  ASSERT(tu.cur_scope);
   ASSERT(!str_is_none(name));
-  if (parser.cur_scope->is_full_dict) {
+  if (tu.cur_scope->is_full_dict) {
     NameSymPair nsp = {.name = name,
                       .sym = {
                           .kind = kind,
                           .name = name,
                           .type = type,
                       }};
-    DictInsert res = dict_insert(&parser.cur_scope->sym_dict, &nsp, namesym_hash_func,
+    DictInsert res = dict_insert(&tu.cur_scope->sym_dict, &nsp, namesym_hash_func,
                                 namesym_eq_func, sizeof(NameSymPair), _Alignof(NameSymPair));
     return &((NameSymPair*)dict_rawiter_get(&res.iter))->sym;
   } else {
-    SmallFlatNameSymMap* nm = &parser.cur_scope->flat_map;
+    SmallFlatNameSymMap* nm = &tu.cur_scope->flat_map;
     int count = nm->num_entries;
 
     if (count == COUNTOFI(nm->names)) {
@@ -805,7 +808,7 @@ static Sym* sym_new(SymKind kind, Str name, Type type) {
 
       // Can't immediately put into cur_scope because the flat_map and
       // dict_sym are a union.
-      DictImpl new_dict = dict_new(parser.var_scope_arena, COUNTOFI(nm->names) * 4,
+      DictImpl new_dict = dict_new(tu.var_scope_arena, COUNTOFI(nm->names) * 4,
                                    sizeof(NameSymPair), _Alignof(NameSymPair));
       for (int i = 0; i < count; ++i) {
         NameSymPair nsp = {.name = nm->names[i], .sym = nm->syms[i]};
@@ -815,8 +818,8 @@ static Sym* sym_new(SymKind kind, Str name, Type type) {
 
       // Now flat_map is dead, overrwrite with the dict and update the bool to
       // indicate we have a full dict.
-      parser.cur_scope->is_full_dict = true;
-      parser.cur_scope->sym_dict = new_dict;
+      tu.cur_scope->is_full_dict = true;
+      tu.cur_scope->sym_dict = new_dict;
 
       // Call the other branch to actually insert the new sym.
       return sym_new(kind, name, type);
@@ -862,18 +865,18 @@ static Sym* gen_array___str__(Type type) {
   Type subtype = type_array_subtype(type);
   size_t count = type_array_count(type);
   Str full_name = memfn_name_from_type_name(
-      str_internf("Array_%s_%lu", type_as_str(subtype), count), parser.static_str___str__);
+      str_internf("Array_%s_%lu", type_as_str(subtype), count), tu.static_str___str__);
 
-  sq_func_start(sq_linkage_default, parser.sq_type_str, cstr_copy(parser.arena, full_name));
+  sq_func_start(sq_linkage_default, tu.sq_type_str, cstr_copy(glob.arena, full_name));
 
   SqRef self = sq_func_param(sq_type_long);
 
   uint64_t subtype_size = type_size(subtype);
 
-  Sym* sub_str_func = lookup_memfn(subtype, parser.static_str___str__);
+  Sym* sub_str_func = lookup_memfn(subtype, tu.static_str___str__);
 
   SqRef ret = sq_i_call4(
-      parser.sq_type_str, sq_ref_extern("Array$__str__"), (SqCallArg){sq_type_long, self},
+      tu.sq_type_str, sq_ref_extern("Array$__str__"), (SqCallArg){sq_type_long, self},
       (SqCallArg){sq_type_long, sq_const_int(count)},
       (SqCallArg){sq_type_long, sq_const_int(subtype_size)},
       (SqCallArg){sq_type_long, sub_str_func ? sqref_for_sym(sub_str_func) : sq_const_int(0)});
@@ -887,7 +890,7 @@ static Sym* gen_array___str__(Type type) {
   funcsym->global = str_func;
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
 
-  sq_itemctx_activate(parser.cur_scope->func_item_ctx);
+  sq_itemctx_activate(tu.cur_scope->func_item_ctx);
   return funcsym;
 }
 
@@ -898,9 +901,9 @@ static Sym* gen_array___contains__(Type type) {
   Type subtype = type_array_subtype(type);
   size_t count = type_array_count(type);
   Str full_name = memfn_name_from_type_name(
-      str_internf("Array_%s_%lu", type_as_str(subtype), count), parser.static_str___contains__);
+      str_internf("Array_%s_%lu", type_as_str(subtype), count), tu.static_str___contains__);
 
-  sq_func_start(sq_linkage_default, sq_type_ubyte, cstr_copy(parser.arena, full_name));
+  sq_func_start(sq_linkage_default, sq_type_ubyte, cstr_copy(glob.arena, full_name));
 
   SqRef self = sq_func_param(sq_type_long);
 
@@ -909,7 +912,7 @@ static Sym* gen_array___contains__(Type type) {
 
   uint64_t subtype_size = type_size(subtype);
 
-  Sym* sub_eq_func = lookup_memfn(subtype, parser.static_str___eq__);
+  Sym* sub_eq_func = lookup_memfn(subtype, tu.static_str___eq__);
 
   // This is needed to pass the address, but also accomplishes sign extension if
   // e.g. -4i32 is passed to an i64 method.
@@ -931,7 +934,7 @@ static Sym* gen_array___contains__(Type type) {
   funcsym->global = contains_func;
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
 
-  sq_itemctx_activate(parser.cur_scope->func_item_ctx);
+  sq_itemctx_activate(tu.cur_scope->func_item_ctx);
   return funcsym;
 }
 
@@ -943,7 +946,7 @@ static Sym* gen_list_append(Type type) {
   Str full_name = memfn_name_from_type_name(str_internf("List_%s", type_as_str(subtype)),
                                             str_intern_len("append", 6));
 
-  sq_func_start(sq_linkage_default, sq_type_void, cstr_copy(parser.arena, full_name));
+  sq_func_start(sq_linkage_default, sq_type_void, cstr_copy(glob.arena, full_name));
 
   SqRef self = sq_func_param(sq_type_long);
 
@@ -969,7 +972,7 @@ static Sym* gen_list_append(Type type) {
   funcsym->global = append_func;
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
 
-  sq_itemctx_activate(parser.cur_scope->func_item_ctx);
+  sq_itemctx_activate(tu.cur_scope->func_item_ctx);
 
   return funcsym;
 }
@@ -980,9 +983,9 @@ static Sym* gen_list_append(Type type) {
 static Sym* gen_list___contains__(Type type) {
   Type subtype = type_list_subtype(type);
   Str full_name = memfn_name_from_type_name(str_internf("List_%s", type_as_str(subtype)),
-                                            parser.static_str___contains__);
+                                            tu.static_str___contains__);
 
-  sq_func_start(sq_linkage_default, sq_type_void, cstr_copy(parser.arena, full_name));
+  sq_func_start(sq_linkage_default, sq_type_void, cstr_copy(glob.arena, full_name));
 
   SqRef self = sq_func_param(sq_type_long);
 
@@ -1001,7 +1004,7 @@ static Sym* gen_list___contains__(Type type) {
     store_by_type_val_into(subtype, item, tmp);
   }
 
-  Sym* sub_eq_func = lookup_memfn(subtype, parser.static_str___eq__);
+  Sym* sub_eq_func = lookup_memfn(subtype, tu.static_str___eq__);
 
   sq_i_call4(
       sq_type_void, sq_ref_extern("List$__contains__"), (SqCallArg){sq_type_long, self},
@@ -1017,7 +1020,7 @@ static Sym* gen_list___contains__(Type type) {
   funcsym->global = contains_func;
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
 
-  sq_itemctx_activate(parser.cur_scope->func_item_ctx);
+  sq_itemctx_activate(tu.cur_scope->func_item_ctx);
 
   return funcsym;
 }
@@ -1027,18 +1030,18 @@ static Sym* gen_list___contains__(Type type) {
 static Sym* gen_list___str__(Type type) {
   Type subtype = type_list_subtype(type);
   Str full_name = memfn_name_from_type_name(str_internf("List_%s", type_as_str(subtype)),
-                                            parser.static_str___str__);
+                                            tu.static_str___str__);
 
-  sq_func_start(sq_linkage_default, parser.sq_type_str, cstr_copy(parser.arena, full_name));
+  sq_func_start(sq_linkage_default, tu.sq_type_str, cstr_copy(glob.arena, full_name));
 
   SqRef self = sq_func_param(sq_type_long);
 
   uint64_t subtype_size = type_size(subtype);
 
-  Sym* sub_str_func = lookup_memfn(subtype, parser.static_str___str__);
+  Sym* sub_str_func = lookup_memfn(subtype, tu.static_str___str__);
 
   SqRef ret = sq_i_call3(
-      parser.sq_type_str, sq_ref_extern("List$__str__"), (SqCallArg){sq_type_long, self},
+      tu.sq_type_str, sq_ref_extern("List$__str__"), (SqCallArg){sq_type_long, self},
       (SqCallArg){sq_type_long, sq_const_int(subtype_size)},
       (SqCallArg){sq_type_long, sub_str_func ? sqref_for_sym(sub_str_func) : sq_const_int(0)});
   sq_i_ret(ret);
@@ -1051,7 +1054,7 @@ static Sym* gen_list___str__(Type type) {
   funcsym->global = str_func;
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
 
-  sq_itemctx_activate(parser.cur_scope->func_item_ctx);
+  sq_itemctx_activate(tu.cur_scope->func_item_ctx);
   return funcsym;
 }
 
@@ -1079,7 +1082,7 @@ static Sym* lookup_memfn(Type type, Str name) {
     case TYPE_DICT: {
       NameTypeSymP ntsp_lookup = {name, type, NULL};
       DictRawIter iter =
-          dict_find(&parser.generics_thunk_cache, &ntsp_lookup, nametypesymp_hash_func,
+          dict_find(&glob.generics_thunk_cache, &ntsp_lookup, nametypesymp_hash_func,
                     nametypesymp_eq_func, sizeof(NameTypeSymP));
       NameTypeSymP* nstp = (NameTypeSymP*)dict_rawiter_get(&iter);
       if (nstp) {
@@ -1113,7 +1116,7 @@ static Sym* lookup_memfn(Type type, Str name) {
 
       NameTypeSymP ntsp_insert = {name, type, new_func};
       DictInsert res =
-          dict_insert(&parser.generics_thunk_cache, &ntsp_insert, nametypesymp_hash_func,
+          dict_insert(&glob.generics_thunk_cache, &ntsp_insert, nametypesymp_hash_func,
                       nametypesymp_eq_func, sizeof(NameTypeSymP), _Alignof(NameTypeSymP));
       ASSERT(res.inserted);
       return new_func;
@@ -1203,7 +1206,7 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
 
 static Sym* make_global(SymKind kind, Str name, Type type, Val initial_value) {
   Sym* new = sym_new(kind, name, type);
-  sq_data_start(sq_linkage_default, cstr_copy(parser.arena, name));
+  sq_data_start(sq_linkage_default, cstr_copy(glob.arena, name));
   switch (type_kind(type)) {
     case TYPE_BOOL:
       sq_data_byte((uint8_t)initial_value.b);
@@ -1238,8 +1241,8 @@ static Sym* make_global(SymKind kind, Str name, Type type, Val initial_value) {
   new->global = sq_data_end();
   new->scope_decl = SSD_DECLARED_GLOBAL;
 
-  if (parser.cur_scope->is_function) {
-    sq_itemctx_activate(parser.cur_scope->func_item_ctx);
+  if (tu.cur_scope->is_function) {
+    sq_itemctx_activate(tu.cur_scope->func_item_ctx);
   }
 
   return new;
@@ -1250,7 +1253,7 @@ static Sym* make_param(Str name, Type type, int index) {
   // Parameters are values, not variables.
   new->ref = sq_func_param_named(type_to_sqtype(type),
 #if BUILD_DEBUG
-                                 cstr_copy(parser.arena, name)
+                                 cstr_copy(glob.arena, name)
 #else
                                  NULL
 #endif
@@ -1260,53 +1263,53 @@ static Sym* make_param(Str name, Type type, int index) {
 }
 
 static void enter_scope(bool is_module, bool is_function, Sym* funcsym) {
-  parser.cur_scope = &parser.scopes[parser.num_scopes++];
-  parser.cur_scope->func_sym = funcsym;
-  //parser.cur_scope->arena_saved_pos = arena_pos(arena_ir);
-  parser.cur_scope->num_exit_calls = 0;
-  parser.cur_scope->num_iteration_datas = 0;
-  parser.cur_scope->upval_map.num_upvals = 0;
-  parser.cur_scope->arena_pos = arena_pos(parser.var_scope_arena);
-  parser.cur_scope->is_function = is_function;
-  parser.cur_scope->is_module = is_module;
-  parser.cur_scope->is_full_dict = !is_function;
-  if (parser.cur_scope->is_full_dict) {
-    parser.cur_scope->sym_dict =
-        dict_new(parser.var_scope_arena, 1 << 20, sizeof(NameSymPair), _Alignof(NameSymPair));
+  tu.cur_scope = &tu.scopes[tu.num_scopes++];
+  tu.cur_scope->func_sym = funcsym;
+  //tu.cur_scope->arena_saved_pos = arena_pos(arena_ir);
+  tu.cur_scope->num_exit_calls = 0;
+  tu.cur_scope->num_iteration_datas = 0;
+  tu.cur_scope->upval_map.num_upvals = 0;
+  tu.cur_scope->arena_pos = arena_pos(tu.var_scope_arena);
+  tu.cur_scope->is_function = is_function;
+  tu.cur_scope->is_module = is_module;
+  tu.cur_scope->is_full_dict = !is_function;
+  if (tu.cur_scope->is_full_dict) {
+    tu.cur_scope->sym_dict =
+        dict_new(tu.var_scope_arena, 1 << 20, sizeof(NameSymPair), _Alignof(NameSymPair));
   } else {
-    flat_name_map_init(&parser.cur_scope->flat_map);
+    flat_name_map_init(&tu.cur_scope->flat_map);
   }
 }
 
 static void leave_scope(void) {
-  arena_pop_to(parser.var_scope_arena, parser.cur_scope->arena_pos);
-  --parser.num_scopes;
-  ASSERT(parser.num_scopes >= 0);
-  if (parser.num_scopes == 0) {
-    parser.cur_scope = NULL;
+  arena_pop_to(tu.var_scope_arena, tu.cur_scope->arena_pos);
+  --tu.num_scopes;
+  ASSERT(tu.num_scopes >= 0);
+  if (tu.num_scopes == 0) {
+    tu.cur_scope = NULL;
   } else {
-    parser.cur_scope = &parser.scopes[parser.num_scopes - 1];
+    tu.cur_scope = &tu.scopes[tu.num_scopes - 1];
   }
 }
 
 static void enter_function(Sym* sym,
                            Str param_names[MAX_FUNC_PARAMS],
                            Type param_types[MAX_FUNC_PARAMS]) {
-  bool is_nested = parser.num_scopes > 1;  // Module, parent.
+  bool is_nested = tu.num_scopes > 1;  // Module, parent.
   if (is_nested) {
-    ASSERT(parser.scopes[parser.num_scopes - 1].is_function);
-    ASSERT(parser.scopes[0].is_module);
+    ASSERT(tu.scopes[tu.num_scopes - 1].is_function);
+    ASSERT(tu.scopes[0].is_module);
   }
 
   enter_scope(/*is_module=*/false, /*is_function=*/true, sym);
 
   SqLinkage linkage =
-      str_eq(sym->name, parser.static_str_main) ? sq_linkage_export : sq_linkage_default;
+      str_eq(sym->name, tu.static_str_main) ? sq_linkage_export : sq_linkage_default;
 
   Type ret_type = type_func_return_type(sym->type);
 
-  parser.cur_scope->func_item_ctx =
-      sq_func_start(linkage, type_to_sqtype(ret_type), cstr_copy(parser.arena, sym->name));
+  tu.cur_scope->func_item_ctx =
+      sq_func_start(linkage, type_to_sqtype(ret_type), cstr_copy(glob.arena, sym->name));
 
   uint32_t num_params = type_func_num_params(sym->type);
   Sym* param_syms[MAX_FUNC_PARAMS];
@@ -1315,15 +1318,15 @@ static void enter_function(Sym* sym,
   }
 
   if (is_nested) {
-    ASSERT(str_eq(param_syms[0]->name, parser.static_str_up));
+    ASSERT(str_eq(param_syms[0]->name, tu.static_str_up));
     ASSERT(type_kind(param_syms[0]->type) == TYPE_PTR);
     ASSERT(type_eq(type_ptr_subtype(param_syms[0]->type), type_void));
-    parser.cur_scope->upval_base = param_syms[0]->ref;
+    tu.cur_scope->upval_base = param_syms[0]->ref;
   }
 }
 
 static void leave_function(void) {
-  Type ret_type = type_func_return_type(parser.cur_scope->func_sym->type);
+  Type ret_type = type_func_return_type(tu.cur_scope->func_sym->type);
   if (type_eq(ret_type, type_void)) {
     sq_i_ret_void();
   } else {
@@ -1343,24 +1346,24 @@ static void leave_function(void) {
     sq_i_ret(sq_const_int(0xbad));
   }
 
-  parser.cur_scope->func_sym->global = sq_func_end();
-  parser.cur_scope->func_item_ctx = (SqItemCtx){0};
+  tu.cur_scope->func_sym->global = sq_func_end();
+  tu.cur_scope->func_item_ctx = (SqItemCtx){0};
 
-  bool is_nested = parser.num_scopes > 2;  // Module, parent function, current function.
+  bool is_nested = tu.num_scopes > 2;  // Module, parent function, current function.
   if (is_nested) {
-    ASSERT(parser.scopes[parser.num_scopes - 1].is_function);
-    ASSERT(parser.scopes[parser.num_scopes - 2].is_function);
-    ASSERT(parser.scopes[0].is_module);
+    ASSERT(tu.scopes[tu.num_scopes - 1].is_function);
+    ASSERT(tu.scopes[tu.num_scopes - 2].is_function);
+    ASSERT(tu.scopes[0].is_module);
   }
 
   if (is_nested) {
     // This is pointing to the nested one, but we have to set cur_scope to the
     // parent one, so that codegen goes to it.
-    UpvalMap* inner_uvm = &parser.cur_scope->upval_map;
-    Sym* child_func = parser.cur_scope->func_sym;
-    parser.cur_scope = &parser.scopes[parser.num_scopes - 2];
-    UpvalMap* parent_uvm = &parser.cur_scope->upval_map;
-    sq_itemctx_activate(parser.cur_scope->func_item_ctx);
+    UpvalMap* inner_uvm = &tu.cur_scope->upval_map;
+    Sym* child_func = tu.cur_scope->func_sym;
+    tu.cur_scope = &tu.scopes[tu.num_scopes - 2];
+    UpvalMap* parent_uvm = &tu.cur_scope->upval_map;
+    sq_itemctx_activate(tu.cur_scope->func_item_ctx);
 
     SqRef upval_data = sq_i_alloc8(sq_const_int(inner_uvm->alloc_size));
     child_func->ref2 = upval_data;
@@ -1391,14 +1394,14 @@ static void leave_function(void) {
               ASSERT(type_eq(parent_uv->type, uv->type));
               /*
               base_writef_stderr("want to write %s from %s for %s in %s\n",
-                                 cstr_copy(parser.arena, parent_uv->name),
-                                 cstr_copy(parser.arena, parser.cur_scope->func_sym->name),
-                                 cstr_copy(parser.arena, uv->name),
-                                 cstr_copy(parser.arena, child_func->name));
+                                 cstr_copy(glob.arena, parent_uv->name),
+                                 cstr_copy(glob.arena, tu.cur_scope->func_sym->name),
+                                 cstr_copy(glob.arena, uv->name),
+                                 cstr_copy(glob.arena, child_func->name));
                                  */
-              ASSERT(parser.cur_scope->upval_base.u);
+              ASSERT(tu.cur_scope->upval_base.u);
               SqRef val =
-                  load_by_type_from(uv->type, sq_i_add(sq_type_long, parser.cur_scope->upval_base,
+                  load_by_type_from(uv->type, sq_i_add(sq_type_long, tu.cur_scope->upval_base,
                                                        sq_const_int(parent_uv->offset)));
               store_by_type_val_into(uv->type, val,
                                      sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
@@ -1416,52 +1419,52 @@ static void leave_function(void) {
 
 static void advance(void) {
 again:
-  parser.cursor.prev_kind = parser.cursor.cur_kind;
-  if (parser.num_buffered_tokens > 0) {
-    parser.cursor.cur_kind = parser.token_buffer[--parser.num_buffered_tokens];
+  tu.cursor.prev_kind = tu.cursor.cur_kind;
+  if (tu.num_buffered_tokens > 0) {
+    tu.cursor.cur_kind = tu.token_buffer[--tu.num_buffered_tokens];
 #if BUILD_DEBUG
-    if (parser.verbose > 1) {
-      base_writef_stderr("token %s (buffered)\n", token_enum_name(parser.cursor.cur_kind));
+    if (tu.verbose > 1) {
+      base_writef_stderr("token %s (buffered)\n", token_enum_name(tu.cursor.cur_kind));
     }
 #endif
     return;
   } else {
-    ++parser.cursor.token_index;
-    ASSERT(parser.cursor.token_index < parser.num_tokens);
-    parser.cursor.cur_kind = token_categorize(parser.token_offsets[parser.cursor.token_index]);
+    ++tu.cursor.token_index;
+    ASSERT(tu.cursor.token_index < tu.num_tokens);
+    tu.cursor.cur_kind = token_categorize(tu.token_offsets[tu.cursor.token_index]);
   }
 
-  if (parser.cursor.cur_kind == TOK_NL) {
+  if (tu.cursor.cur_kind == TOK_NL) {
     goto again;
   }
-  if (parser.cursor.cur_kind == TOK_NEWLINE_BLANK) {
-    parser.cursor.cur_kind = TOK_NEWLINE;
-  } else if (parser.cursor.cur_kind >= TOK_NEWLINE_INDENT_0 && parser.cursor.cur_kind <= TOK_NEWLINE_INDENT_40) {
-    int n = (parser.cursor.cur_kind - TOK_NEWLINE_INDENT_0) * 4;
-    if (n > parser.indent_levels[parser.num_indents - 1]) {
-      parser.cursor.cur_kind = TOK_NEWLINE;
-      parser.indent_levels[parser.num_indents++] = n;
-      parser.token_buffer[parser.num_buffered_tokens++] = TOK_INDENT;
-    } else if (n < parser.indent_levels[parser.num_indents - 1]) {
-      parser.cursor.cur_kind = TOK_NEWLINE;
-      while (parser.num_indents > 1 && parser.indent_levels[parser.num_indents - 1] > n) {
-        parser.token_buffer[parser.num_buffered_tokens++] = TOK_DEDENT;
-        --parser.num_indents;
+  if (tu.cursor.cur_kind == TOK_NEWLINE_BLANK) {
+    tu.cursor.cur_kind = TOK_NEWLINE;
+  } else if (tu.cursor.cur_kind >= TOK_NEWLINE_INDENT_0 && tu.cursor.cur_kind <= TOK_NEWLINE_INDENT_40) {
+    int n = (tu.cursor.cur_kind - TOK_NEWLINE_INDENT_0) * 4;
+    if (n > tu.indent_levels[tu.num_indents - 1]) {
+      tu.cursor.cur_kind = TOK_NEWLINE;
+      tu.indent_levels[tu.num_indents++] = n;
+      tu.token_buffer[tu.num_buffered_tokens++] = TOK_INDENT;
+    } else if (n < tu.indent_levels[tu.num_indents - 1]) {
+      tu.cursor.cur_kind = TOK_NEWLINE;
+      while (tu.num_indents > 1 && tu.indent_levels[tu.num_indents - 1] > n) {
+        tu.token_buffer[tu.num_buffered_tokens++] = TOK_DEDENT;
+        --tu.num_indents;
       }
     } else {
-      parser.cursor.cur_kind = TOK_NEWLINE;
+      tu.cursor.cur_kind = TOK_NEWLINE;
     }
   }
 
 #if BUILD_DEBUG
-  if (parser.verbose > 1) {
-      base_writef_stderr("token %s\n", token_enum_name(parser.cursor.cur_kind));
+  if (tu.verbose > 1) {
+      base_writef_stderr("token %s\n", token_enum_name(tu.cursor.cur_kind));
   }
 #endif
 }
 
 static bool match(TokenKind tok_kind) {
-  if (parser.cursor.cur_kind != tok_kind) {
+  if (tu.cursor.cur_kind != tok_kind) {
     return false;
   }
   advance();
@@ -1469,26 +1472,26 @@ static bool match(TokenKind tok_kind) {
 }
 
 static bool check(TokenKind tok_kind) {
-  return parser.cursor.cur_kind == tok_kind;
+  return tu.cursor.cur_kind == tok_kind;
 }
 
 static bool peek(TokenKind tok_kind) {
-  TokenKind old_cur = parser.cursor.cur_kind;
-  TokenKind old_prev = parser.cursor.prev_kind;
+  TokenKind old_cur = tu.cursor.cur_kind;
+  TokenKind old_prev = tu.cursor.prev_kind;
   advance();
 
-  bool result = parser.cursor.cur_kind == tok_kind;
+  bool result = tu.cursor.cur_kind == tok_kind;
 
   // semi-retreat, but keep categorization by buffering it.
-  parser.token_buffer[parser.num_buffered_tokens++] = parser.cursor.cur_kind;
-  parser.cursor.cur_kind = old_cur;
-  parser.cursor.prev_kind = old_prev;
+  tu.token_buffer[tu.num_buffered_tokens++] = tu.cursor.cur_kind;
+  tu.cursor.cur_kind = old_cur;
+  tu.cursor.prev_kind = old_prev;
 
   return result;
 }
 
 static void consume(TokenKind tok_kind, const char* message) {
-  if (parser.cursor.cur_kind == tok_kind) {
+  if (tu.cursor.cur_kind == tok_kind) {
     advance();
     return;
   }
@@ -1496,7 +1499,7 @@ static void consume(TokenKind tok_kind, const char* message) {
 }
 
 static void consumef(TokenKind tok_kind, const char* fmt, ...) {
-  if (parser.cursor.cur_kind == tok_kind) {
+  if (tu.cursor.cur_kind == tok_kind) {
     advance();
     return;
   }
@@ -1513,15 +1516,15 @@ static void consumef(TokenKind tok_kind, const char* fmt, ...) {
 }
 
 static Str gensym_var_name(void) {
-  ++parser.uniq_counter;
-  return str_internf("tmp_%d", parser.uniq_counter);
+  ++glob.uniq_counter;
+  return str_internf("tmp_%d", glob.uniq_counter);
 }
 
 static SqRef emit_string_obj(StrView str) {
-  ++parser.uniq_counter;
+  ++glob.uniq_counter;
 
   sq_data_start(sq_linkage_default,
-                cstr_copy(parser.arena, str_internf("strdat_%d", parser.uniq_counter)));
+                cstr_copy(glob.arena, str_internf("strdat_%d", glob.uniq_counter)));
   for (uint32_t i = 0; i < str.size; ++i) {
     sq_data_byte(str.data[i]);
   }
@@ -1529,12 +1532,12 @@ static SqRef emit_string_obj(StrView str) {
   SqSymbol string_data = sq_data_end();
 
   sq_data_start(sq_linkage_default,
-                cstr_copy(parser.arena, str_internf("strobj_%d", parser.uniq_counter)));
+                cstr_copy(glob.arena, str_internf("strobj_%d", glob.uniq_counter)));
   sq_data_ref(string_data, 0);
   sq_data_long(str.size);
   SqSymbol string_obj = sq_data_end();
 
-  sq_itemctx_activate(parser.cur_scope->func_item_ctx);
+  sq_itemctx_activate(tu.cur_scope->func_item_ctx);
   return sq_ref_for_symbol(string_obj);
 }
 
@@ -1646,7 +1649,7 @@ static bool is_convertible(Operand* operand, Type dest) {
     return true;
   } else if (type_eq(src, type_codept) && type_eq(dest, type_str)) {
     return true;
-  } else if (memcmp(operand, &parser.op_null_ptr, sizeof(Operand)) == 0) {
+  } else if (memcmp(operand, &tu.op_null_ptr, sizeof(Operand)) == 0) {
     return true;
   // TODO: various pointer, etc.
   } else {
@@ -1746,10 +1749,10 @@ static bool cast_operand(Operand* operand, Type type) {
     if (type_eq(operand->type, type_codept) && type_eq(type, type_str)) {
       // hacky codept to str conversion, maybe should require this in code
       // rather than making automatic. mostly for `ch in "abc"`.
-      Sym* sym = lookup_memfn(type_codept, parser.static_str___str__);
+      Sym* sym = lookup_memfn(type_codept, tu.static_str___str__);
       ASSERT(sym);
       *operand = operand_rvalue_imm(
-          type_str, sq_i_call1(parser.sq_type_str, sqref_for_sym(sym),
+          type_str, sq_i_call1(tu.sq_type_str, sqref_for_sym(sym),
                                (SqCallArg){sq_type_long, operand_to_sqref_lval(operand)}));
     } else if (op_is_const(*operand)) {
       // TODO: enums
@@ -1870,8 +1873,8 @@ static Type parse_type(void) {
     ASSERT(false); abort();
   }
 
-  if (parser.cursor.cur_kind >= TOK_BOOL && parser.cursor.cur_kind <= TOK_UINT) {
-    Type t = basic_tok_to_type[parser.cursor.cur_kind];
+  if (tu.cursor.cur_kind >= TOK_BOOL && tu.cursor.cur_kind <= TOK_UINT) {
+    Type t = basic_tok_to_type[tu.cursor.cur_kind];
     ASSERT(!type_is_none(t));
     advance();
     return t;
@@ -1882,7 +1885,7 @@ static Type parse_type(void) {
     Str type_name = str_from_previous();
     ScopeResult scope_result = scope_lookup_recursive(type_name, &sym);
     if (scope_result == SCOPE_RESULT_UNDEFINED) {
-      errorf("Undefined type %s.", cstr_copy(parser.arena, type_name));
+      errorf("Undefined type %s.", cstr_copy(glob.arena, type_name));
     } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_TYPE) {
       return sym->type;
     } else {
@@ -1903,7 +1906,7 @@ static uint32_t parse_func_params(bool is_nested,
   if (is_nested) {
     ASSERT(!memfn_self);
     out_types[num_params] = type_ptr(type_void);
-    out_names[num_params] = parser.static_str_up;
+    out_names[num_params] = tu.static_str_up;
     ++num_params;
   } else if (memfn_self) {
     ASSERT(!is_nested);
@@ -2064,7 +2067,7 @@ typedef enum Precedence {
 } Precedence;
 
 static bool match_assignment(void) {
-  const TokenKind tok = parser.cursor.cur_kind;
+  const TokenKind tok = tu.cursor.cur_kind;
   if (tok != TOK_EQ) {
     return false;
   }
@@ -2376,7 +2379,7 @@ static Operand resolve_binary_cmp_op(TokenKind op,
 
 static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
   // Remember the operator.
-  TokenKind op = parser.cursor.prev_kind;
+  TokenKind op = tu.cursor.prev_kind;
   uint32_t op_offset = prev_offset();
 
   // Compile the right operand.
@@ -2449,8 +2452,8 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
 }
 
 static Operand parse_bool_literal(bool can_assign, Type* expected) {
-  ASSERT(parser.cursor.prev_kind == TOK_FALSE || parser.cursor.prev_kind == TOK_TRUE);
-  return operand_const(type_bool, (Val){.b = parser.cursor.prev_kind == TOK_FALSE ? 0 : 1});
+  ASSERT(tu.cursor.prev_kind == TOK_FALSE || tu.cursor.prev_kind == TOK_TRUE);
+  return operand_const(type_bool, (Val){.b = tu.cursor.prev_kind == TOK_FALSE ? 0 : 1});
 }
 
 static Operand parse_call(Operand left, bool can_assign, Type* expected) {
@@ -2512,7 +2515,7 @@ static Operand parse_compound_literal(bool can_assign, Type* expected) {
   Sym* sym;
   ScopeResult scope_result = scope_lookup_recursive(type_name, &sym);
   if (scope_result == SCOPE_RESULT_UNDEFINED) {
-    errorf("Undefined type %s.", cstr_copy(parser.arena, type_name));
+    errorf("Undefined type %s.", cstr_copy(glob.arena, type_name));
   } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_TYPE) {
     lit_type = sym->type;
     if (type_kind(lit_type) != TYPE_STRUCT) {
@@ -2595,7 +2598,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
 
         if (!convert_operand(&rhs_value, field_type)) {
           errorf_offset(name_offset, "Cannot assign type %s to field '%s' which is type %s.",
-                        type_as_str(rhs_value.type), cstr_copy(parser.arena, name),
+                        type_as_str(rhs_value.type), cstr_copy(glob.arena, name),
                         type_as_str(field_type));
         }
         store_by_type_val_into(
@@ -2604,8 +2607,8 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
         return operand_none;
       } else {
         errorf_offset(name_offset, "'%s' is not a field of type %s.",
-                      cstr_copy(parser.arena, name),
-                      cstr_copy(parser.arena, type_struct_decl_name(left.type)));
+                      cstr_copy(glob.arena, name),
+                      cstr_copy(glob.arena, type_struct_decl_name(left.type)));
       }
     } else {
       error("todo; assigning to unexpected thing");
@@ -2630,7 +2633,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
 
     Sym* func_sym = lookup_memfn(new_left.type, name);
     if (!func_sym) {
-      errorf("Undefined member function %s on type %s.", cstr_copy(parser.arena, name),
+      errorf("Undefined member function %s on type %s.", cstr_copy(glob.arena, name),
              type_as_str(new_left.type));
     }
 
@@ -2671,7 +2674,7 @@ static Operand parse_grouping(bool can_assign, Type* expected) {
   return operand_none;
 }
 static Operand parse_in_or_not_in(Operand left, bool can_assign, Type* expected) {
-  TokenKind op = parser.cursor.prev_kind;
+  TokenKind op = tu.cursor.prev_kind;
 
   bool negated = false;
   Operand rhs;
@@ -2679,13 +2682,13 @@ static Operand parse_in_or_not_in(Operand left, bool can_assign, Type* expected)
     Rule* rule = get_rule(op);
     rhs = parse_precedence(rule->prec_for_infix + 1, expected);
   } else if (op == TOK_NOT && match(TOK_IN)) {
-    Rule* rule = get_rule(parser.cursor.prev_kind);
+    Rule* rule = get_rule(tu.cursor.prev_kind);
     rhs = parse_precedence(rule->prec_for_infix + 1, expected);
     negated = true;
   } else {
     error("Expected 'in' or 'not in'.");
   }
-  Sym* sym = lookup_memfn(rhs.type, parser.static_str___contains__);
+  Sym* sym = lookup_memfn(rhs.type, tu.static_str___contains__);
   if (sym) {
     // TODO: need to move all the off-brand calls to a common location so they
     // get argument conversion properly (esp sign extension)
@@ -2727,7 +2730,7 @@ static char* get_fmt_string_literal(void) {
   }
 
   // Need nul termination for the fmtlex scanner, so dup here.
-  char* copy = arena_push(parser.arena, inside_quotes.size + 1, 1);
+  char* copy = arena_push(glob.arena, inside_quotes.size + 1, 1);
   memcpy(copy, inside_quotes.data, inside_quotes.size);
   copy[inside_quotes.size] = 0;
   return copy;
@@ -2829,12 +2832,12 @@ static Operand parse_fmt(bool can_assign, Type* expected) {
                             "Trying to use argument %d, but only %d provided.", index + 1,
                             num_args);
       }
-      Sym* item_str_func = lookup_memfn(args[index].type, parser.static_str___str__);
+      Sym* item_str_func = lookup_memfn(args[index].type, tu.static_str___str__);
       if (!item_str_func) {
         errorf_offset(string_offset, "Don't know how to convert type %s to string for fmt.",
                       type_as_str(args[index].type));
       }
-      SqRef as_str = sq_i_call1(parser.sq_type_str, sqref_for_sym(item_str_func),
+      SqRef as_str = sq_i_call1(tu.sq_type_str, sqref_for_sym(item_str_func),
                                 (SqCallArg){sq_type_long, operand_to_sqref_lval(&args[index])});
       sq_i_call2(sq_type_void, sq_ref_extern("AppendToStringBufferList"),
                  (SqCallArg){sq_type_long, buf->ref}, (SqCallArg){sq_type_long, as_str});
@@ -2885,37 +2888,37 @@ static Operand parse_len(bool can_assign, Type* expected) {
 }
 
 static bool scan_to_determine_if_comprehension(TokenCursor* original, TokenCursor* at_for) {
-  ASSERT(parser.num_buffered_tokens == 0);
+  ASSERT(tu.num_buffered_tokens == 0);
 
-  *original = parser.cursor;
+  *original = tu.cursor;
   original->paren_level = token_get_continuation_paren_level();
 
   // We start the scan after the starting [.
   int square_bracket_count = 1;
   for (;;) {
-    if (parser.cursor.cur_kind == TOK_LSQUARE) {
+    if (tu.cursor.cur_kind == TOK_LSQUARE) {
       ++square_bracket_count;
-    } else if (parser.cursor.cur_kind == TOK_RSQUARE) {
+    } else if (tu.cursor.cur_kind == TOK_RSQUARE) {
       --square_bracket_count;
       if (square_bracket_count == 0) {
-        parser.cursor = *original;
+        tu.cursor = *original;
         token_restore_continuation_paren_level(original->paren_level);
         return false;
       }
-    } else if (parser.cursor.cur_kind == TOK_FOR) {
-      *at_for = parser.cursor;
+    } else if (tu.cursor.cur_kind == TOK_FOR) {
+      *at_for = tu.cursor;
       return true;
-    } else if (parser.cursor.cur_kind == TOK_NEWLINE || parser.cursor.cur_kind == TOK_EOF) {
+    } else if (tu.cursor.cur_kind == TOK_NEWLINE || tu.cursor.cur_kind == TOK_EOF) {
       error("Expecting ']' to end list literal or comprehension.");
     }
 
-    parser.cursor.prev_kind = parser.cursor.cur_kind;
-    ++parser.cursor.token_index;
-    ASSERT(parser.cursor.token_index < parser.num_tokens);
-    parser.cursor.cur_kind = token_categorize(parser.token_offsets[parser.cursor.token_index]);
-    ASSERT(parser.cursor.cur_kind != TOK_NEWLINE_BLANK);
-    ASSERT(parser.cursor.cur_kind < TOK_NEWLINE_INDENT_0 ||
-           parser.cursor.cur_kind > TOK_NEWLINE_INDENT_40);
+    tu.cursor.prev_kind = tu.cursor.cur_kind;
+    ++tu.cursor.token_index;
+    ASSERT(tu.cursor.token_index < tu.num_tokens);
+    tu.cursor.cur_kind = token_categorize(tu.token_offsets[tu.cursor.token_index]);
+    ASSERT(tu.cursor.cur_kind != TOK_NEWLINE_BLANK);
+    ASSERT(tu.cursor.cur_kind < TOK_NEWLINE_INDENT_0 ||
+           tu.cursor.cur_kind > TOK_NEWLINE_INDENT_40);
   }
 }
 
@@ -3006,7 +3009,7 @@ static IterationData iteration_prolog(Str it, Operand* over) {
 
   itd.loop_start = sq_block_declare_and_start();
   itd.loop_continue = sq_block_declare();
-  itd.exit_call_mark_for_break_continue = parser.cur_scope->num_exit_calls;
+  itd.exit_call_mark_for_break_continue = tu.cur_scope->num_exit_calls;
 
   SqBlock block_body = sq_block_declare();
   itd.loop_done = sq_block_declare();
@@ -3078,7 +3081,7 @@ static void iteration_epilog(IterationData itd) {
 }
 
 static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for, Type* expected) {
-  parser.cursor = at_for;
+  tu.cursor = at_for;
   consume(TOK_FOR, "Expect 'for' to start list comprehension.");
   Str it = parse_name("Expect iterator name of list comprehension.");
   // TODO: other forms for enumerate
@@ -3111,8 +3114,8 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
     IterationData itd = iteration_prolog(it, &over);
     ASSERT(type_eq(itd.it_type, subtype));
 
-    TokenCursor after_clauses = parser.cursor;
-    parser.cursor = original;
+    TokenCursor after_clauses = tu.cursor;
+    tu.cursor = original;
 
     Operand elem = parse_expression(NULL);
 
@@ -3129,7 +3132,7 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
 
     leave_scope();
 
-    parser.cursor = after_clauses;
+    tu.cursor = after_clauses;
 
     return operand_rvalue_imm(type_array(subtype, type_array_count(over.type)), arr_base);
   } else {
@@ -3166,8 +3169,8 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
       sq_block_start(true_block);
     }
 
-    TokenCursor after_clauses = parser.cursor;
-    parser.cursor = original;
+    TokenCursor after_clauses = tu.cursor;
+    tu.cursor = original;
 
     Operand elem = parse_expression(NULL);
 
@@ -3190,7 +3193,7 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
 
     leave_scope();
 
-    parser.cursor = after_clauses;
+    tu.cursor = after_clauses;
 
     return operand_rvalue_imm(type_list(elem.type), untyped_list);
   }
@@ -3198,7 +3201,7 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
 
 static Operand parse_list_literal(Type* expected) {
   OpVec elems;
-  opv_init(&elems, parser.arena);
+  opv_init(&elems, glob.arena);
 
   for (;;) {
     if (check(TOK_RSQUARE)) {
@@ -3273,7 +3276,7 @@ static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
 }
 
 static Operand parse_null_literal(bool can_assign, Type* expected) {
-  return parser.op_null_ptr;
+  return tu.op_null_ptr;
 }
 
 static Operand parse_int_literal(bool allow_suffix) {
@@ -3356,7 +3359,7 @@ static Operand parse_int_literal(bool allow_suffix) {
 }
 
 static double scan_fractional_part_of_double(StrView num) {
-  char* copy = arena_push(parser.arena, num.size + 2, 1);
+  char* copy = arena_push(glob.arena, num.size + 2, 1);
   copy[0] = '.';
   memcpy(copy + 1, num.data, num.size);
   copy[num.size + 1] = 0;
@@ -3422,8 +3425,8 @@ static Operand parse_offsetof(bool can_assign, Type* expected) {
       return operand_const(type_i32, (Val){.i32 = offset});
     }
   }
-  errorf_offset(name_offset, "'%s' is not a field of type %s.", cstr_copy(parser.arena, field),
-                cstr_copy(parser.arena, type_struct_decl_name(type)));
+  errorf_offset(name_offset, "'%s' is not a field of type %s.", cstr_copy(glob.arena, field),
+                cstr_copy(glob.arena, type_struct_decl_name(type)));
 }
 
 static Operand parse_or(Operand left, bool can_assign, Type* expected) {
@@ -3557,7 +3560,7 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
         consume(TOK_RSQUARE, "Expecting ']' to end slicing expression.");
         return operand_rvalue_imm(
             type_list(subtype),
-            sq_i_call4(parser.sq_type_list, sq_ref_extern("List$slice_from_list"),
+            sq_i_call4(tu.sq_type_list, sq_ref_extern("List$slice_from_list"),
                        (SqCallArg){sq_type_long, left.ref},
                        (SqCallArg){sq_type_long, sq_const_int(type_size(subtype))},
                        (SqCallArg){sq_type_long, sq_const_int(0)},
@@ -3578,7 +3581,7 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
           subtype = type_list_subtype(left.type);
           return operand_rvalue_imm(
               type_list(subtype),
-              sq_i_call4(parser.sq_type_list, sq_ref_extern("List$slice_from_list"),
+              sq_i_call4(tu.sq_type_list, sq_ref_extern("List$slice_from_list"),
                          (SqCallArg){sq_type_long, left.ref},
                          (SqCallArg){sq_type_long, sq_const_int(type_size(subtype))},
                          (SqCallArg){sq_type_long, operand_to_sqref_imm(&subscript)},
@@ -3597,7 +3600,7 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
           consume(TOK_RSQUARE, "Expecting ']' to end slicing expression.");
           return operand_rvalue_imm(
               type_list(subtype),
-              sq_i_call4(parser.sq_type_list, sq_ref_extern("List$slice_from_list"),
+              sq_i_call4(tu.sq_type_list, sq_ref_extern("List$slice_from_list"),
                          (SqCallArg){sq_type_long, left.ref},
                          (SqCallArg){sq_type_long, sq_const_int(type_size(subtype))},
                          (SqCallArg){sq_type_long, operand_to_sqref_imm(&subscript)},
@@ -3697,7 +3700,7 @@ static Val eval_unary_op(TokenKind op, Type type, Val val) {
 }
 
 static Operand parse_unary(bool can_assign, Type* expected) {
-  TokenKind op_kind = parser.cursor.prev_kind;
+  TokenKind op_kind = tu.cursor.prev_kind;
   uint32_t expr_offset = cur_offset();
   if (op_kind == TOK_CAST) {
     Type type = parse_type();
@@ -3813,7 +3816,7 @@ static ScopeResult scope_lookup_single(Scope* scope, Str name, bool crossed_func
 static ScopeResult scope_lookup_recursive(Str name, Sym** sym) {
   *sym = NULL;
   bool crossed_function = false;
-  Scope* cur_scope = parser.cur_scope;
+  Scope* cur_scope = tu.cur_scope;
   for (;;) {
     ScopeResult res = scope_lookup_single(cur_scope, name, crossed_function, sym);
     if (res != SCOPE_RESULT_UNDEFINED) {
@@ -3825,11 +3828,11 @@ static ScopeResult scope_lookup_recursive(Str name, Sym** sym) {
       crossed_function = true;
     }
 
-    if (cur_scope == &parser.scopes[0]) {
+    if (cur_scope == &tu.scopes[0]) {
       break;
     }
-    ASSERT(cur_scope >= &parser.scopes[0] &&
-           cur_scope <= &parser.scopes[parser.num_scopes - 1]);
+    ASSERT(cur_scope >= &tu.scopes[0] &&
+           cur_scope <= &tu.scopes[tu.num_scopes - 1]);
     cur_scope--;  // parent
   }
 
@@ -3855,7 +3858,7 @@ static int create_upval(Scope* scope, Str name, Sym* sym) {
   // otherwise use the value themselves will have it forwarded to them, so
   // that it can be captured by the inner-most.
 
-  ASSERT(scope >= &parser.scopes[1] && scope <= &parser.scopes[parser.num_scopes - 1]);
+  ASSERT(scope >= &tu.scopes[1] && scope <= &tu.scopes[tu.num_scopes - 1]);
   Scope* parent_scope = scope - 1;
   if (parent_scope->upval_base.u) {
     Sym* parent_sym;
@@ -3955,11 +3958,11 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
     case SCOPE_RESULT_UPVALUE: {
       // We already did a scope_lookup() so we know the in the current function,
       // we need to reference this value through $up.
-      Operand value = find_or_create_upval(parser.cur_scope, var_name, sym);
+      Operand value = find_or_create_upval(tu.cur_scope, var_name, sym);
       return value;
     }
     case SCOPE_RESULT_UNDEFINED: {
-      errorf("Undefined reference to '%s'.", cstr_copy(parser.arena, var_name));
+      errorf("Undefined reference to '%s'.", cstr_copy(glob.arena, var_name));
     }
   }
 }
@@ -3969,7 +3972,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
   Sym* sym = NULL;
   ScopeResult scope_result = scope_lookup_recursive(target, &sym);
   if (can_assign && match_assignment()) {
-    TokenKind eq_kind = parser.cursor.prev_kind;
+    TokenKind eq_kind = tu.cursor.prev_kind;
     TokenKind eq_offset = prev_offset();
     switch (scope_result) {
       case SCOPE_RESULT_LOCAL: {
@@ -3988,8 +3991,8 @@ static Operand parse_variable(bool can_assign, Type* expected) {
       }
       case SCOPE_RESULT_UNDEFINED:
       case SCOPE_RESULT_GLOBAL: {
-        if (parser.cur_scope->is_function) {
-          ASSERT(!parser.cur_scope->is_module);
+        if (tu.cur_scope->is_function) {
+          ASSERT(!tu.cur_scope->is_module);
 
 #if 0
           // Assigning to a global from a function.
@@ -4019,8 +4022,8 @@ static Operand parse_variable(bool can_assign, Type* expected) {
                          "Cannot use an augmented assignment when implicitly declaring a local.");
           }
         } else {
-          ASSERT(parser.cur_scope->is_module);
-          ASSERT(!parser.cur_scope->is_function);
+          ASSERT(tu.cur_scope->is_module);
+          ASSERT(!tu.cur_scope->is_function);
           ASSERT(eq_kind == TOK_EQ);
           if (scope_result == SCOPE_RESULT_UNDEFINED) {
             // Global variable declaration without a type.
@@ -4186,19 +4189,19 @@ static Rule* get_rule(TokenKind tok_kind) {
 
 static Operand parse_precedence(Precedence precedence, Type* expected) {
   advance();
-  PrefixFn prefix_rule = get_rule(parser.cursor.prev_kind)->prefix;
+  PrefixFn prefix_rule = get_rule(tu.cursor.prev_kind)->prefix;
   if (!prefix_rule) {
-    errorf("Expect expression after prefix %s.", token_enum_name(parser.cursor.prev_kind));
+    errorf("Expect expression after prefix %s.", token_enum_name(tu.cursor.prev_kind));
   }
 
   bool can_assign = precedence <= PREC_ASSIGNMENT;
   Operand left = prefix_rule(can_assign, expected);
 
-  while (precedence <= get_rule(parser.cursor.cur_kind)->prec_for_infix) {
+  while (precedence <= get_rule(tu.cursor.cur_kind)->prec_for_infix) {
     advance();
-    InfixFn infix_rule = get_rule(parser.cursor.prev_kind)->infix;
+    InfixFn infix_rule = get_rule(tu.cursor.prev_kind)->infix;
     if (!infix_rule) {
-      errorf("Expect expression after infix %s.", token_enum_name(parser.cursor.prev_kind));
+      errorf("Expect expression after infix %s.", token_enum_name(tu.cursor.prev_kind));
     }
     left = infix_rule(left, can_assign, expected);
   }
@@ -4280,13 +4283,13 @@ static void for_statement(void) {
 
       // TODO: maybe move this into iteration_prolog, but not needed for
       // comprehensions, so maybe it makes more sense here.
-      parser.cur_scope->iteration_datas[parser.cur_scope->num_iteration_datas++] = &itd;
+      tu.cur_scope->iteration_datas[tu.cur_scope->num_iteration_datas++] = &itd;
 
       consume_block_header("for");
       parse_block();
       iteration_epilog(itd);
 
-      --parser.cur_scope->num_iteration_datas;
+      --tu.cur_scope->num_iteration_datas;
 
     } else {
       errorf("Unhandled for/in over type %s.", type_as_str(expr.type));
@@ -4296,14 +4299,14 @@ static void for_statement(void) {
 
 static void break_statement(void) {
   consume(TOK_NEWLINE, "Expecting newline after 'break'.");
-  if (parser.cur_scope->num_iteration_datas == 0) {
+  if (tu.cur_scope->num_iteration_datas == 0) {
     error("Cannot 'break' outside of loop.");
   }
-  IterationData* itd = parser.cur_scope->iteration_datas[parser.cur_scope->num_iteration_datas - 1];
+  IterationData* itd = tu.cur_scope->iteration_datas[tu.cur_scope->num_iteration_datas - 1];
 
-  for (int i = parser.cur_scope->num_exit_calls - 1; i >= itd->exit_call_mark_for_break_continue;
+  for (int i = tu.cur_scope->num_exit_calls - 1; i >= itd->exit_call_mark_for_break_continue;
        --i) {
-    ExitCall* ec = &parser.cur_scope->exit_call_stack[i];
+    ExitCall* ec = &tu.cur_scope->exit_call_stack[i];
     sq_i_call1(sq_type_void, ec->func, (SqCallArg){sq_type_long, ec->obj});
   }
 
@@ -4313,14 +4316,14 @@ static void break_statement(void) {
 
 static void continue_statement(void) {
   consume(TOK_NEWLINE, "Expecting newline after 'continue'.");
-  if (parser.cur_scope->num_iteration_datas == 0) {
+  if (tu.cur_scope->num_iteration_datas == 0) {
     error("Cannot 'continue' outside of loop.");
   }
-  IterationData* itd = parser.cur_scope->iteration_datas[parser.cur_scope->num_iteration_datas - 1];
+  IterationData* itd = tu.cur_scope->iteration_datas[tu.cur_scope->num_iteration_datas - 1];
 
-  for (int i = parser.cur_scope->num_exit_calls - 1; i >= itd->exit_call_mark_for_break_continue;
+  for (int i = tu.cur_scope->num_exit_calls - 1; i >= itd->exit_call_mark_for_break_continue;
        --i) {
-    ExitCall* ec = &parser.cur_scope->exit_call_stack[i];
+    ExitCall* ec = &tu.cur_scope->exit_call_stack[i];
     sq_i_call1(sq_type_void, ec->func, (SqCallArg){sq_type_long, ec->obj});
   }
 
@@ -4351,12 +4354,12 @@ static void with_statement(void) {
     error("todo; with as");
   }
 
-  Sym* enter_func = lookup_memfn(wobj.type, parser.static_str___enter__);
+  Sym* enter_func = lookup_memfn(wobj.type, tu.static_str___enter__);
   if (!enter_func) {
     errorf("Type %s does not define an __enter__ for being used in 'with'.",
            type_as_str(wobj.type));
   }
-  Sym* exit_func = lookup_memfn(wobj.type, parser.static_str___exit__);
+  Sym* exit_func = lookup_memfn(wobj.type, tu.static_str___exit__);
   if (!exit_func) {
     errorf("Type %s does not define an __exit__ for being used in 'with'.",
            type_as_str(wobj.type));
@@ -4375,7 +4378,7 @@ static void with_statement(void) {
 
   // TODO: handle break/continue!
 
-  ExitCall* ec = &parser.cur_scope->exit_call_stack[--parser.cur_scope->num_exit_calls];
+  ExitCall* ec = &tu.cur_scope->exit_call_stack[--tu.cur_scope->num_exit_calls];
   sq_i_call1(sq_type_void, ec->func, (SqCallArg){sq_type_long, ec->obj});
 }
 
@@ -4387,10 +4390,10 @@ static void print_statement(void) {
                  (SqCallArg){sq_type_long, operand_to_sqref_lval(&val)});
   } else {
     // If __str__ exists for the type, call it, and then print the result.
-    Sym* sym = lookup_memfn(val.type, parser.static_str___str__);
+    Sym* sym = lookup_memfn(val.type, tu.static_str___str__);
     if (sym) {
       Operand as_str = operand_rvalue_imm(
-          type_str, sq_i_call1(parser.sq_type_str, sqref_for_sym(sym),
+          type_str, sq_i_call1(tu.sq_type_str, sqref_for_sym(sym),
                                (SqCallArg){sq_type_long, operand_to_sqref_lval(&val)}));
 
       sq_i_call1(sq_type_void, sq_ref_extern("PrintStr"),
@@ -4449,10 +4452,10 @@ static void def_statement(void) {
 
   Type param_types[MAX_FUNC_PARAMS];
   Str param_names[MAX_FUNC_PARAMS];
-  bool is_nested = parser.num_scopes > 1;
+  bool is_nested = tu.num_scopes > 1;
   if (is_nested) {
-    ASSERT(parser.scopes[parser.num_scopes - 1].is_function);
-    ASSERT(parser.scopes[0].is_module);
+    ASSERT(tu.scopes[tu.num_scopes - 1].is_function);
+    ASSERT(tu.scopes[0].is_module);
   }
   uint32_t num_params =
       parse_func_params(is_nested, /*memfn_self=*/NULL, (Str){0}, param_types, param_names);
@@ -4498,8 +4501,8 @@ static void foreign_statement(void) {
 static void on_statement(void) {
   Type on_type;
   Str on_type_name;
-  if (parser.cursor.cur_kind >= TOK_BOOL && parser.cursor.cur_kind <= TOK_UINT) {
-    on_type = basic_tok_to_type[parser.cursor.cur_kind];
+  if (tu.cursor.cur_kind >= TOK_BOOL && tu.cursor.cur_kind <= TOK_UINT) {
+    on_type = basic_tok_to_type[tu.cursor.cur_kind];
     on_type_name = type_decl_name(on_type);
     advance();
   } else if (check(TOK_IDENT_TYPE)) {
@@ -4508,7 +4511,7 @@ static void on_statement(void) {
     Sym* sym;
     ScopeResult scope_result = scope_lookup_recursive(on_type_name, &sym);
     if (scope_result == SCOPE_RESULT_UNDEFINED) {
-      errorf("Undefined type %s.", cstr_copy(parser.arena, on_type_name));
+      errorf("Undefined type %s.", cstr_copy(glob.arena, on_type_name));
     } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_TYPE) {
       on_type = sym->type;
     } else {
@@ -4578,7 +4581,7 @@ static void struct_statement() {
   Str name = parse_type_name("Expect struct type name.");
   consume_block_header("struct");
 
-  sq_type_struct_start(cstr_copy(parser.arena, name), 0);
+  sq_type_struct_start(cstr_copy(glob.arena, name), 0);
 
   Str field_names[MAX_STRUCT_FIELDS];
   Type field_types[MAX_STRUCT_FIELDS];
@@ -4601,7 +4604,7 @@ static void struct_statement() {
     Str field_name = parse_name("Expect struct field name.");
     for (uint32_t i = 0; i < num_fields; ++i) {
       if (str_eq(field_names[i], field_name)) {
-        errorf("Duplicate struct field name '%s'.", cstr_copy(parser.arena, field_name));
+        errorf("Duplicate struct field name '%s'.", cstr_copy(glob.arena, field_name));
       }
     }
     field_names[num_fields] = field_name;
@@ -4631,13 +4634,13 @@ static void struct_statement() {
     // Because we need to zero init fields, build this as if it was jitting into
     // a memory structure, and then use byte emission to build the data object.
 
-    uint8_t* blob = arena_push(parser.arena, type_size(strukt), type_align(strukt));
+    uint8_t* blob = arena_push(glob.arena, type_size(strukt), type_align(strukt));
     memset(blob, 0, type_size(strukt));
     for (uint32_t i = 0; i < num_fields; ++i) {
       if (!op_is_null(field_initializers[i])) {
         if (!op_is_const(field_initializers[i])) {
           errorf("Expecting constant initializer for field %s.",
-                 cstr_copy(parser.arena, field_names[i]));
+                 cstr_copy(glob.arena, field_names[i]));
         }
         Type field_type = type_struct_field_type(strukt, i);
         if (!convert_operand(&field_initializers[i], field_type)) {
@@ -4650,7 +4653,7 @@ static void struct_statement() {
       }
     }
 
-    sq_data_start(sq_linkage_default, cstr_copy(parser.arena, name));  // "_init"+name?
+    sq_data_start(sq_linkage_default, cstr_copy(glob.arena, name));  // "_init"+name?
     for (uint32_t i = 0; i < type_size(strukt); ++i) {
       sq_data_byte(blob[i]);
     }
@@ -4658,7 +4661,7 @@ static void struct_statement() {
 
     type_struct_set_initializer_symbol(strukt, init_sym);
 
-    ASSERT(!parser.cur_scope->is_function);
+    ASSERT(!tu.cur_scope->is_function);
   }
   Sym* new = sym_new(SYM_TYPE, name, strukt);
   new->scope_decl = SSD_DECLARED_GLOBAL;
@@ -4708,12 +4711,12 @@ static void parse_variable_statement(Type type) {
 }
 
 static LastStatementType return_statement(void) {
-  for (int i = parser.cur_scope->num_exit_calls - 1; i >= 0; --i) {
-    ExitCall* ec = &parser.cur_scope->exit_call_stack[i];
+  for (int i = tu.cur_scope->num_exit_calls - 1; i >= 0; --i) {
+    ExitCall* ec = &tu.cur_scope->exit_call_stack[i];
     sq_i_call1(sq_type_void, ec->func, (SqCallArg){sq_type_long, ec->obj});
   }
 
-  Type func_ret = type_func_return_type(parser.cur_scope->func_sym->type);
+  Type func_ret = type_func_return_type(tu.cur_scope->func_sym->type);
   ASSERT(!type_is_none(func_ret));
   Operand op = operand_none;
   if (!type_eq(func_ret, type_void)) {
@@ -4740,7 +4743,7 @@ static void global_statement(void) {
   Str name = parse_name("Expect variable name after global.");
 
   Sym* sym;
-  ScopeResult scope_result = scope_lookup_single(&parser.scopes[0], name, true, &sym);
+  ScopeResult scope_result = scope_lookup_single(&tu.scopes[0], name, true, &sym);
   if (scope_result != SCOPE_RESULT_GLOBAL) {
     errorf("Undefined global '%.*s'.", str_len(name), str_raw_ptr(name));
   }
@@ -4755,7 +4758,7 @@ static LastStatementType parse_statement(bool toplevel) {
   skip_newlines();
 
   // TODO: de-dupe this mess.
-  switch (parser.cursor.cur_kind) {
+  switch (tu.cursor.cur_kind) {
     case TOK_DEF:
       advance();
       def_statement();
@@ -4876,61 +4879,62 @@ static void declare_rt_foreign_memfn1(Type on, Type return_type, Str name, Type 
 
 static void declare_all_rt_foreigns(void) {
   declare_rt_foreign_memfn1(type_str, type_str, str_intern("join"), type_list(type_str));
-  declare_rt_foreign_memfn1(type_str, type_bool, parser.static_str___eq__, type_str);
-  declare_rt_foreign_memfn1(type_str, type_bool, parser.static_str___contains__, type_str);
+  declare_rt_foreign_memfn1(type_str, type_bool, tu.static_str___eq__, type_str);
+  declare_rt_foreign_memfn1(type_str, type_bool, tu.static_str___contains__, type_str);
 
-  declare_rt_foreign_memfn0(type_bool, type_str, parser.static_str___str__);
-  declare_rt_foreign_memfn0(type_codept, type_str, parser.static_str___str__);
-  declare_rt_foreign_memfn0(type_i8, type_str, parser.static_str___str__);
-  declare_rt_foreign_memfn0(type_u8, type_str, parser.static_str___str__);
-  declare_rt_foreign_memfn0(type_i16, type_str, parser.static_str___str__);
-  declare_rt_foreign_memfn0(type_u16, type_str, parser.static_str___str__);
-  declare_rt_foreign_memfn0(type_i32, type_str, parser.static_str___str__);
-  declare_rt_foreign_memfn0(type_u32, type_str, parser.static_str___str__);
-  declare_rt_foreign_memfn0(type_i64, type_str, parser.static_str___str__);
-  declare_rt_foreign_memfn0(type_u64, type_str, parser.static_str___str__);
-  declare_rt_foreign_memfn0(type_float, type_str, parser.static_str___str__);
-  declare_rt_foreign_memfn0(type_double, type_str, parser.static_str___str__);
-  declare_rt_foreign_memfn0(type_str, type_str, parser.static_str___str__);
-  declare_rt_foreign_memfn0(type_range, type_str, parser.static_str___str__);
+  declare_rt_foreign_memfn0(type_bool, type_str, tu.static_str___str__);
+  declare_rt_foreign_memfn0(type_codept, type_str, tu.static_str___str__);
+  declare_rt_foreign_memfn0(type_i8, type_str, tu.static_str___str__);
+  declare_rt_foreign_memfn0(type_u8, type_str, tu.static_str___str__);
+  declare_rt_foreign_memfn0(type_i16, type_str, tu.static_str___str__);
+  declare_rt_foreign_memfn0(type_u16, type_str, tu.static_str___str__);
+  declare_rt_foreign_memfn0(type_i32, type_str, tu.static_str___str__);
+  declare_rt_foreign_memfn0(type_u32, type_str, tu.static_str___str__);
+  declare_rt_foreign_memfn0(type_i64, type_str, tu.static_str___str__);
+  declare_rt_foreign_memfn0(type_u64, type_str, tu.static_str___str__);
+  declare_rt_foreign_memfn0(type_float, type_str, tu.static_str___str__);
+  declare_rt_foreign_memfn0(type_double, type_str, tu.static_str___str__);
+  declare_rt_foreign_memfn0(type_str, type_str, tu.static_str___str__);
+  declare_rt_foreign_memfn0(type_range, type_str, tu.static_str___str__);
 
-  declare_rt_foreign_memfn1(type_range, type_bool, parser.static_str___contains__, type_i64);
+  declare_rt_foreign_memfn1(type_range, type_bool, tu.static_str___contains__, type_i64);
 }
 
-static void parse_impl(Arena* main_arena,
-                       Arena* temp_arena,
+static void parse_one_time_initialization_impl(Arena* main_arena) {
+  type_init(main_arena);
+  glob.arena = main_arena;
+  glob.generics_thunk_cache = dict_new(glob.arena, 128, sizeof(NameSymPair), _Alignof(NameSymPair));
+  glob.uniq_counter = 0;
+}
+
+static void parse_impl(Arena* temp_arena,
                        const char* filename,
                        ReadFileResult file,
                        int verbose,
                        FILE* out_file) {
-  type_init(main_arena);
 
-  parser.arena = main_arena;
-  parser.var_scope_arena = temp_arena;
+  tu.var_scope_arena = temp_arena;
   // In the case of "a.a." the worst case for offsets is the same as the number
   // of characters in the buffer.
-  parser.token_offsets = (uint32_t*)base_mem_large_alloc(file.allocated_size * sizeof(uint32_t));
-  parser.file_contents = (const char*)file.buffer;
-  parser.cur_filename = filename;
-  parser.num_scopes = 0;
-  parser.cur_scope = NULL;
-  parser.generics_thunk_cache =
-      dict_new(parser.arena, 128, sizeof(NameSymPair), _Alignof(NameSymPair));
-  parser.cursor = (TokenCursor){-1, 0, 0, 0};
-  parser.indent_levels[0] = 0;
-  parser.num_indents = 1;
-  parser.num_buffered_tokens = 0;
-  parser.op_null_ptr = operand_const(type_ptr(type_void), (Val){.p = 0});
-  parser.verbose = verbose;
-  parser.static_str_main = str_intern_len("main", 4);
-  parser.static_str___str__ = str_intern_len("__str__", 7);
-  parser.static_str___contains__ = str_intern_len("__contains__", 12);
-  parser.static_str___enter__ = str_intern_len("__enter__", 9);
-  parser.static_str___eq__ = str_intern_len("__eq__", 6);
-  parser.static_str___exit__ = str_intern_len("__exit__", 8);
-  parser.static_str_ret = str_intern_len("$ret", 4);
-  parser.static_str_up = str_intern_len("$up", 3);
-  parser.uniq_counter = 0;
+  tu.token_offsets = (uint32_t*)base_mem_large_alloc(file.allocated_size * sizeof(uint32_t));
+  tu.file_contents = (const char*)file.buffer;
+  tu.cur_filename = filename;
+  tu.num_scopes = 0;
+  tu.cur_scope = NULL;
+  tu.cursor = (TokenCursor){-1, 0, 0, 0};
+  tu.indent_levels[0] = 0;
+  tu.num_indents = 1;
+  tu.num_buffered_tokens = 0;
+  tu.op_null_ptr = operand_const(type_ptr(type_void), (Val){.p = 0});
+  tu.verbose = verbose;
+  tu.static_str_main = str_intern_len("main", 4);
+  tu.static_str___str__ = str_intern_len("__str__", 7);
+  tu.static_str___contains__ = str_intern_len("__contains__", 12);
+  tu.static_str___enter__ = str_intern_len("__enter__", 9);
+  tu.static_str___eq__ = str_intern_len("__eq__", 6);
+  tu.static_str___exit__ = str_intern_len("__exit__", 8);
+  tu.static_str_ret = str_intern_len("$ret", 4);
+  tu.static_str_up = str_intern_len("$up", 3);
 
   SqConfiguration config = SQ_CONFIGURATION_DEFAULT;
   //config.target = SQ_TARGET_AMD64_APPLE;
@@ -4946,32 +4950,32 @@ static void parse_impl(Arena* main_arena,
   sq_type_struct_start("str", 8);
   sq_type_add_field(sq_type_long); // data
   sq_type_add_field(sq_type_long); // len
-  parser.sq_type_str = sq_type_struct_end();
+  tu.sq_type_str = sq_type_struct_end();
 
   sq_type_struct_start("list", 8);
   sq_type_add_field(sq_type_long); // data
   sq_type_add_field(sq_type_long); // size
   sq_type_add_field(sq_type_long); // capacity;
-  parser.sq_type_list = sq_type_struct_end();
+  tu.sq_type_list = sq_type_struct_end();
 
   sq_type_struct_start("range", 8);
   sq_type_add_field(sq_type_long); // start
   sq_type_add_field(sq_type_long); // stop
   sq_type_add_field(sq_type_long); // step
-  parser.sq_type_range = sq_type_struct_end();
+  tu.sq_type_range = sq_type_struct_end();
 
   enter_scope(/*is_module=*/true, /*is_function=*/false, NULL);
 
   declare_all_rt_foreigns();
 
-  parser.num_tokens = lex_indexer(file.buffer, file.allocated_size, parser.token_offsets);
+  tu.num_tokens = lex_indexer(file.buffer, file.allocated_size, tu.token_offsets);
   token_init(file.buffer);
-  if (parser.verbose > 1) {
-    token_dump_offsets(parser.num_tokens, parser.token_offsets, file.file_size);
+  if (tu.verbose > 1) {
+    token_dump_offsets(tu.num_tokens, tu.token_offsets, file.file_size);
   }
   advance();
 
-  while (parser.cursor.cur_kind != TOK_EOF) {
+  while (tu.cursor.cur_kind != TOK_EOF) {
     parse_statement(/*toplevel=*/true);
   }
 
