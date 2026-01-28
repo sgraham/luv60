@@ -66,7 +66,7 @@ hi def link     luvConstVar Preproc
 syn keyword     luvType bool byte codept int float double
 syn keyword     luvType u8 u16 u32 u64 i8 i16 i32 i64
 syn keyword     luvType f16 f32 f64
-syn keyword     luvType str
+syn keyword     luvType str Zone
 syn keyword     luvType const_char opaque const_opaque size_t
 syn match       luvType '\<_*[A-Z]\>'
 syn match       luvType '\<_*[A-Z][A-Z0-9]*[a-z][A-Za-z0-9_]*'
@@ -79,10 +79,11 @@ hi def link     luvBuiltins Function
 
 " Decorator
 syn region      luvDecorator start=+@+ end=+\w\++
-hi def link     luvDecorator         Macro
+hi def link     luvDecorator Macro
 
-syn region      luvZone start=+\^+ end=+\w\++
-hi def link     luvZone Function
+syn region      luvDecorator start=+\^+ end=+\w\++
+hi def link     luvDecorator Macro
+
 
 " Strings
 syn region luvString start=/"/ skip=/\\\\\|\\"/ end=/"/ oneline

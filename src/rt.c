@@ -84,11 +84,13 @@ void RtPreMain(void) {
 
 void ZonePush(Zone* zone) {
   RT_CHECK(zone_stack_pos < COUNTOFI(zone_stack));
+  printf("zone push %p\n", zone);
   zone_stack[zone_stack_pos++] = zone;
 }
 
 void ZonePop(void) {
   RT_CHECK(zone_stack_pos > 0);
+  printf("zone pop %p\n", zone_stack[zone_stack_pos - 1]);
   zone_pop_to(zone_stack[zone_stack_pos - 1], 0);
   zone_stack_pos--;
 }
@@ -98,11 +100,11 @@ void ZoneEnterFunction(void) {
   Zone* z = scratch_zones[scratch_zone_depth++];
   zone_guard_read_write(z);
   ZonePush(z);
-  //printf("zone enter %d\n", scratch_zone_depth);
+  printf("zone enter %d\n", scratch_zone_depth);
 }
 
 void ZoneExitFunction(void) {
-  //printf("zone exit %d\n", scratch_zone_depth);
+  printf("zone exit %d\n", scratch_zone_depth);
   RT_CHECK(scratch_zone_depth > 0);
   RT_CHECK(zone_stack_pos > 0);
   RT_CHECK(scratch_zones[scratch_zone_depth - 1] == zone_stack[zone_stack_pos - 1]);

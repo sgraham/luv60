@@ -1,4 +1,6 @@
 setlocal commentstring=#\ %s
+setlocal comments=:#
+setlocal formatoptions+=ro
 "setlocal iskeyword+=?,!,@-@,#
 setlocal tabstop=4
 setlocal softtabstop=4

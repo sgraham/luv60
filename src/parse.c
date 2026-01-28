@@ -2484,28 +2484,45 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
     ++num_args;
   }
 
+  SqRef zone_to_push = (SqRef){0};
+
   if (!check(TOK_RPAREN)) {
-    for (;;) {
-      if (num_args >= type_func_num_params(left.type)) {
-        errorf("Passing >= %d argument%s to function, but it expects %d.", num_args + 1,
-               num_args + 1 == 1 ? "" : "s", type_func_num_params(left.type));
+    bool non_zone_args = true;
+
+    if (match(TOK_CARET)) {
+      Operand zone_arg = parse_precedence(PREC_OR, NULL);
+      if (!type_eq(zone_arg.type, type_zone)) {
+        errorf("Expecting zone as ^arg, but got type %s.", type_as_str(zone_arg.type));
       }
-      uint32_t arg_offset = cur_offset();
-      Type param_type = type_func_param(left.type, num_args);
-      Operand arg = parse_precedence(PREC_OR, &param_type);
-      if (!convert_operand(&arg, param_type)) {
-        errorf_offset(arg_offset, "Call argument %d is type %s, but function expects type %s.",
-                      num_args + 1, type_as_str(arg.type), type_as_str(param_type));
-      }
-      arg_values[num_args].type = type_to_sqtype(arg.type);
-      if (type_is_aggregate(arg.type)) {
-        arg_values[num_args].value = operand_to_sqref_lval(&arg);
-      } else {
-        arg_values[num_args].value = operand_to_sqref_imm(&arg);
-      }
-      ++num_args;
+      zone_to_push = operand_to_sqref_lval(&zone_arg);
       if (!match(TOK_COMMA)) {
-        break;
+        non_zone_args = false;
+      }
+    }
+
+    if (non_zone_args) {
+      for (;;) {
+        if (num_args >= type_func_num_params(left.type)) {
+          errorf("Passing >= %d argument%s to function, but it expects %d.", num_args + 1,
+                 num_args + 1 == 1 ? "" : "s", type_func_num_params(left.type));
+        }
+        uint32_t arg_offset = cur_offset();
+        Type param_type = type_func_param(left.type, num_args);
+        Operand arg = parse_precedence(PREC_OR, &param_type);
+        if (!convert_operand(&arg, param_type)) {
+          errorf_offset(arg_offset, "Call argument %d is type %s, but function expects type %s.",
+                        num_args + 1, type_as_str(arg.type), type_as_str(param_type));
+        }
+        arg_values[num_args].type = type_to_sqtype(arg.type);
+        if (type_is_aggregate(arg.type)) {
+          arg_values[num_args].value = operand_to_sqref_lval(&arg);
+        } else {
+          arg_values[num_args].value = operand_to_sqref_imm(&arg);
+        }
+        ++num_args;
+        if (!match(TOK_COMMA)) {
+          break;
+        }
       }
     }
   }
@@ -2516,9 +2533,16 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
 
   consume(TOK_RPAREN, "Expect ')' after arguments.");
   Type ret_type = type_func_return_type(left.type);
-  // XXX ENV
-  return operand_rvalue_imm(ret_type,
-                            sq_i_calla(type_to_sqtype(ret_type), left.ref, num_args, arg_values));
+
+  if (zone_to_push.u != 0) {
+    sq_i_call1(sq_type_void, sq_ref_extern("ZonePush"), (SqCallArg){sq_type_long, zone_to_push});
+  }
+  Operand result = operand_rvalue_imm(
+      ret_type, sq_i_calla(type_to_sqtype(ret_type), left.ref, num_args, arg_values));
+  if (zone_to_push.u != 0) {
+    sq_i_call0(sq_type_void, sq_ref_extern("ZonePop"));
+  }
+  return result;
 }
 
 static Operand parse_compound_literal(bool can_assign, Type* expected) {

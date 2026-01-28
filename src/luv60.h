@@ -178,7 +178,8 @@ typedef struct Type {
   X(STRUCT)         \
   X(UNION)          \
   X(CONST)          \
-  X(PACKAGE)
+  X(PACKAGE)        \
+  X(ZONE)
 
 typedef enum TypeKind {
 #define X(x) TYPE_##x,
@@ -207,6 +208,7 @@ typedef enum TypeKind {
 #define type_double BASIC_TYPE_CONSTANT_IMPL(TYPE_DOUBLE)
 #define type_str BASIC_TYPE_CONSTANT_IMPL(TYPE_STR)
 #define type_range BASIC_TYPE_CONSTANT_IMPL(TYPE_RANGE)
+#define type_zone BASIC_TYPE_CONSTANT_IMPL(TYPE_ZONE)
 
 void type_init(Arena* arena);
 void type_destroy_for_tests(void);
