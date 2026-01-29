@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:4:8:import bare
+# CERR: {ssss}            ^ error: Expecting constant str as import argument.
+import bare
+# since we chose the non-pythony ugly string syntax for imports...
