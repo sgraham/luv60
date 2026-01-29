@@ -93,6 +93,13 @@ static inline char* cstr_copy(Arena* arena, Str s) {
   return copy;
 }
 
+// path.c
+
+void path_split(Arena* arena, const char* input, const char** source_dir, const char** filename);
+void path_normalize_to_slash_in_place(char* path);
+void path_without_slashes_in_place(char* path);
+void path_trim_extension_if_exists(char* filename, char* ext);
+
 
 // lex.c
 

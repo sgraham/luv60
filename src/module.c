@@ -91,11 +91,7 @@ static FILE* open_output_callback(const char* input) {
   size_t output_full_path_len = strlen(output_dir_) + 1 + rest_len + 2 + 1;
   char* output_full_path = arena_push(arena_, output_full_path_len, 1);
   sprintf(output_full_path, "%s/%.*s.s", output_dir_, (int)rest_len, rest);
-  for (char* p = &output_full_path[strlen(output_dir_) + 1]; *p; ++p) {
-    if (*p == '/' || *p == '\\') {
-      *p = '.';
-    }
-  }
+  path_without_slashes_in_place(&output_full_path[strlen(output_dir_) + 1]);
   FILE* f = fopen(output_full_path, "wb");
   if (!f) {
     base_writef_stderr("Couldn't open '%s' for output.\n", output_full_path);

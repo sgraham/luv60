@@ -62,9 +62,13 @@ int main(int argc, char** argv) {
 
   str_intern_pool_init(str_arena);
 
-  module_init(main_arena, parse_temp_arena, /* TODO: basepath of input */ ".", output_dir,
+  const char* source_dir;
+  const char* filename;
+  path_split(main_arena, input, &source_dir, &filename);
+
+  module_init(main_arena, parse_temp_arena, source_dir, output_dir,
               verbose, syntax_only);
-  module_add((StrView){input, strlen(input)});
+  module_add((StrView){filename, strlen(filename)});
 #if 0
 
   parse_scan_for_imports(input, file, verbose);

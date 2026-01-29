@@ -16,6 +16,7 @@ COMMON_FILELIST = [
     "module.c",
     "parse_code_gen.c",
     "parse_syntax_check.c",
+    "path.c",
     "str.c",
     "token.c",
     "type.c",
@@ -28,10 +29,11 @@ LUVC_FILELIST = [
 
 UNITTEST_FILELIST = [
     "test_main.c",
+    "fmt_lex_test.c",
     "lex_test.c",
+    "path_test.c",
     "str_test.c",
     "type_test.c",
-    "fmt_lex_test.c",
 ]
 
 LEXBENCH_FILELIST = [
