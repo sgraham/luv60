@@ -5,8 +5,7 @@ import os
 import sys
 
 ROOT_DIR = os.path.normpath(
-    os.path.join(os.path.abspath(os.path.dirname(__file__)), "..")
-)
+    os.path.join(os.path.abspath(os.path.dirname(__file__)), ".."))
 
 COMMON_FILELIST = [
     "../third_party/sqbe/sqbe.c",
@@ -14,8 +13,8 @@ COMMON_FILELIST = [
     "base_mac.c",
     "base_win.c",
     "lex.c",
+    "module.c",
     "parse_code_gen.c",
-    "parse_common.c",
     "parse_syntax_check.c",
     "str.c",
     "token.c",
@@ -52,27 +51,39 @@ WIN_COMMON_LD_FLAGS = "/nologo /DEBUG $in /out:$out /pdb:$out.pdb"
 CONFIGS = {
     "w": {
         "d": {
-            "COMPILE": f"{CLANG_CL_WIN} /Od {DEBUG_DEFINES} {WIN_COMMON_CC_FLAGS}",
-            "LINK": f"{LLD_LINK_WIN} {WIN_COMMON_LD_FLAGS}",
-            "ML": f"{CLANG_CL_WIN} /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
+            "COMPILE":
+            f"{CLANG_CL_WIN} /Od {DEBUG_DEFINES} {WIN_COMMON_CC_FLAGS}",
+            "LINK":
+            f"{LLD_LINK_WIN} {WIN_COMMON_LD_FLAGS}",
+            "ML":
+            f"{CLANG_CL_WIN} /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
         },
         "r": {
-            "COMPILE": f"{CLANG_CL_WIN} -flto -fuse-ld=lld /O2 {RELEASE_DEFINES} {WIN_COMMON_CC_FLAGS}",
-            "LINK": f"{LLD_LINK_WIN} /ltcg /OPT:REF /OPT:ICF {WIN_COMMON_LD_FLAGS}",
-            "ML": CLANG_CL_WIN
-            + " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
+            "COMPILE":
+            f"{CLANG_CL_WIN} -flto -fuse-ld=lld /O2 {RELEASE_DEFINES} {WIN_COMMON_CC_FLAGS}",
+            "LINK":
+            f"{LLD_LINK_WIN} /ltcg /OPT:REF /OPT:ICF {WIN_COMMON_LD_FLAGS}",
+            "ML":
+            CLANG_CL_WIN +
+            " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
         },
         "p": {
-            "COMPILE": f"{CLANG_CL_WIN} -flto -fuse-ld=lld /O2 /DTRACY_ENABLE=1 {RELEASE_DEFINES} /I$src/../third_party/tracy/public/tracy {WIN_COMMON_CC_FLAGS}",
-            "LINK": f"{LLD_LINK_WIN} /ltcg /OPT:REF /OPT:ICF {WIN_COMMON_LD_FLAGS}",
-            "ML": CLANG_CL_WIN
-            + " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
+            "COMPILE":
+            f"{CLANG_CL_WIN} -flto -fuse-ld=lld /O2 /DTRACY_ENABLE=1 {RELEASE_DEFINES} /I$src/../third_party/tracy/public/tracy {WIN_COMMON_CC_FLAGS}",
+            "LINK":
+            f"{LLD_LINK_WIN} /ltcg /OPT:REF /OPT:ICF {WIN_COMMON_LD_FLAGS}",
+            "ML":
+            CLANG_CL_WIN +
+            " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
         },
         "a": {
-            "COMPILE": f"{CLANG_CL_WIN} -fsanitize=address /Od {DEBUG_DEFINES} {WIN_COMMON_CC_FLAGS}",
-            "LINK": f"{CLANG_CL_WIN} $in -fsanitize=address /link /out:$out /pdb:$out.pdb",
-            "ML": CLANG_CL_WIN
-            + " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
+            "COMPILE":
+            f"{CLANG_CL_WIN} -fsanitize=address /Od {DEBUG_DEFINES} {WIN_COMMON_CC_FLAGS}",
+            "LINK":
+            f"{CLANG_CL_WIN} $in -fsanitize=address /link /out:$out /pdb:$out.pdb",
+            "ML":
+            CLANG_CL_WIN +
+            " /nologo /D_CRT_SECURE_NO_WARNINGS /wd4132 /wd4324 $in /link /out:$out",
         },
         "__": {
             "exe_ext": ".exe",
@@ -81,12 +92,14 @@ CONFIGS = {
     },
     "m": {
         "d": {
-            "COMPILE": f"{CLANG} -MMD -MF $out.d -O0 -g {DEBUG_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            "COMPILE":
+            f"{CLANG} -MMD -MF $out.d -O0 -g {DEBUG_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
             "LINK": CLANG + " -g $in -o $out",
             "ML": CLANG + " $in -o $out",
         },
         "r": {
-            "COMPILE": f"{CLANG} -MMD -MF $out.d -flto -O3 -g {RELEASE_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            "COMPILE":
+            f"{CLANG} -MMD -MF $out.d -flto -O3 -g {RELEASE_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
             "LINK": CLANG + " -g $in -o $out",
             "ML": CLANG + " $in -o $out",
         },
@@ -97,12 +110,14 @@ CONFIGS = {
     },
     "la": {
         "d": {
-            "COMPILE": f"{CLANG} -MMD -MF $out.d -O0 -g {DEBUG_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            "COMPILE":
+            f"{CLANG} -MMD -MF $out.d -O0 -g {DEBUG_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
             "LINK": CLANG + " -g $in -o $out",
             "ML": CLANG + " $in -o $out",
         },
         "r": {
-            "COMPILE": f"{CLANG} -MMD -MF $out.d -flto -O3 -g {RELEASE_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            "COMPILE":
+            f"{CLANG} -MMD -MF $out.d -flto -O3 -g {RELEASE_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
             "LINK": CLANG + " -g $in -o $out",
             "ML": CLANG + " $in -o $out",
         },
@@ -117,15 +132,14 @@ CONFIGS = {
 def get_tests():
     tests = {}
     files = glob.glob(os.path.join("test", "*.luv")) + glob.glob(
-        os.path.join("test", "**", "*.luv")
-    )
+        os.path.join("test", "**", "*.luv"))
     for test in files:
         test = test.replace("\\", "/")
-        crun = "LUVC_BIN {self} -o OUT_DIR/{self}.s"
+        crun = "LUVC_BIN {self_noext} -o OUT_DIR"
         cret = "0"
         cerr = ""
-        clangrun = "CLANG_BIN -g OUT_DIR/{self}.s src/rt.c -o OUT_DIR/{self}.exe"
-        run = "OUT_DIR/{self}.exe"
+        clangrun = "CLANG_BIN -g OUT_DIR/{self_noext_dots}.s src/rt.c -o OUT_DIR/{self_noext_dots}.exe"
+        run = "OUT_DIR/{self_noext_dots}.exe"
         ret = "0"
         out = ""
         err = ""
@@ -148,34 +162,38 @@ def get_tests():
         with open(test, "r", encoding="utf-8") as f:
             for l in f.readlines():
                 if l.startswith(run_prefix):
-                    run = l[len(run_prefix) :].rstrip()
+                    run = l[len(run_prefix):].rstrip()
                 elif l.startswith(crun_prefix):
-                    crun = l[len(crun_prefix) :].rstrip()
+                    crun = l[len(crun_prefix):].rstrip()
                 elif l.startswith(ret_prefix):
-                    ret = l[len(ret_prefix) :].rstrip()
+                    ret = l[len(ret_prefix):].rstrip()
                     ret_set = True
                 elif l.startswith(cret_prefix):
-                    cret = l[len(cret_prefix) :].rstrip()
+                    cret = l[len(cret_prefix):].rstrip()
                     cret_set = True
                 elif l.startswith(cerr_prefix):
-                    cerr += l[len(cerr_prefix) :].rstrip() + "\n"
+                    cerr += l[len(cerr_prefix):].rstrip() + "\n"
                 elif l.startswith(err_prefix):
-                    err += l[len(err_prefix) :].rstrip() + "\n"
+                    err += l[len(err_prefix):].rstrip() + "\n"
                 elif l.startswith(out_prefix):
-                    out += l[len(out_prefix) :].rstrip() + "\n"
+                    out += l[len(out_prefix):].rstrip() + "\n"
                 elif l.startswith(clangrun_prefix):
-                    clangrun = l[len(clangrun_prefix) :].rstrip()
+                    clangrun = l[len(clangrun_prefix):].rstrip()
                 elif l.startswith(disabled_linux_prefix):
                     disabled.append('linux')
                 elif l.startswith(disabled_win_prefix):
                     disabled.append('win')
                 elif l.startswith(disabled_mac_prefix):
                     disabled.append('mac')
-                elif l.startswith(disabled_prefix) or l.startswith(imported_prefix):
+                elif l.startswith(disabled_prefix) or l.startswith(
+                        imported_prefix):
                     disabled.extend(['linux', 'win', 'mac'])
 
             def sub(t):
                 t = t.replace("{self}", test)
+                noext = os.path.splitext(test)[0]
+                t = t.replace("{self_noext}", noext)
+                t = t.replace("{self_noext_dots}", noext.replace('/', '.').replace('\\', '.'))
                 spaces = len(test) * " "
                 return t.replace("{ssss}", spaces)
 
@@ -237,15 +255,12 @@ def generate(platform, config, settings, cmdlines, tests):
         f.write("rule re2c\n")
         f.write(
             "  command = ../../third_party/re2c/%s/re2c%s -W -b -i --no-generation-date -o $out $in\n"
-            % (platform, exe_ext)
-        )
+            % (platform, exe_ext))
         f.write("  description = RE2C $out\n")
         f.write("\n")
         f.write("rule testrun\n")
-        f.write(
-            "  command = %s $src/testrun.py $src/.. %s/%s $data\n"
-            % (sys.executable, root_dir, luvcexe)
-        )
+        f.write("  command = %s $src/testrun.py $src/.. %s/%s $data\n" %
+                (sys.executable, root_dir, luvcexe))
         f.write("  description = TEST $in\n\n")
 
         # snippets.c is included by gen.c (so don't build separately)
@@ -315,19 +330,20 @@ def generate(platform, config, settings, cmdlines, tests):
 
         alltests = []
         for testf, cmds in tests.items():
-            f.write("build %s: testrun $src/../%s | %s\n" % (testf, testf, luvcexe))
+            f.write("build %s: testrun $src/../%s | %s\n" %
+                    (testf, testf, luvcexe))
             # b64 <- json <- dict to smuggle through to test script w/o dealing
             # with shell quoting garbage.
-            cmds_to_pass = base64.b64encode(bytes(json.dumps(cmds), encoding="utf-8"))
+            cmds_to_pass = base64.b64encode(
+                bytes(json.dumps(cmds), encoding="utf-8"))
             f.write("  data = %s\n" % str(cmds_to_pass, encoding="utf-8"))
             alltests.append(testf)
 
-        f.write("build %s: link %s\n" % (luvcexe, " ".join(common_objs + luvc_objs)))
+        f.write("build %s: link %s\n" %
+                (luvcexe, " ".join(common_objs + luvc_objs)))
 
-        f.write(
-            "build %s: link %s\n"
-            % ("unittests" + exe_ext, " ".join(common_objs + unittest_objs))
-        )
+        f.write("build %s: link %s\n" %
+                ("unittests" + exe_ext, " ".join(common_objs + unittest_objs)))
 
         f.write("build run_unittests: testrun unittests%s\n" % exe_ext)
         cmds = {
@@ -335,26 +351,24 @@ def generate(platform, config, settings, cmdlines, tests):
             "ret": 0,
             "direct": True,
         }
-        cmds_to_pass = base64.b64encode(bytes(json.dumps(cmds), encoding="utf-8"))
+        cmds_to_pass = base64.b64encode(
+            bytes(json.dumps(cmds), encoding="utf-8"))
         f.write("  data = %s\n" % str(cmds_to_pass, encoding="utf-8"))
         alltests.append("run_unittests")
 
         common_without_higher_level = [
-            x for x in common_objs if "parse_" not in x and "type." not in x
+            x for x in common_objs
+            if "parse_" not in x and "type." not in x and "module" not in x
         ]
-        f.write(
-            "build %s: link %s | dumbbench.luv\n"
-            % (
-                "lexbench" + exe_ext,
-                " ".join(common_without_higher_level + lexbench_objs),
-            )
-        )
+        f.write("build %s: link %s | dumbbench.luv\n" % (
+            "lexbench" + exe_ext,
+            " ".join(common_without_higher_level + lexbench_objs),
+        ))
 
         f.write("\nbuild test: phony " + " ".join(alltests) + "\n")
 
-        f.write(
-            "\ndefault luvc%s unittests%s lexbench%s\n" % (exe_ext, exe_ext, exe_ext)
-        )
+        f.write("\ndefault luvc%s unittests%s lexbench%s\n" %
+                (exe_ext, exe_ext, exe_ext))
 
         f.write("\nrule gen\n")
         f.write("  command = %s $src/configure.py $in\n" % sys.executable)
@@ -371,11 +385,9 @@ def main():
     os.chdir(ROOT_DIR)  # Necessary when regenerating manifest from ninja
     tests = get_tests()
     for platform, pdata in CONFIGS.items():
-        if (
-            (sys.platform == "win32" and platform == "w")
-            or (sys.platform == "linux" and platform == "la")
-            or (sys.platform == "darwin" and platform == "m")
-        ):
+        if ((sys.platform == "win32" and platform == "w")
+                or (sys.platform == "linux" and platform == "la")
+                or (sys.platform == "darwin" and platform == "m")):
             for config, cmdlines in pdata.items():
                 if config == "__":
                     continue

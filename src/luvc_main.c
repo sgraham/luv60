@@ -4,14 +4,14 @@
 static void parse_commandline(int argc,
                               char** argv,
                               char** input,
-                              char** output,
+                              char** output_dir,
                               int* verbose,
                               bool* syntax_only) {
   int i = 1;
   *verbose = 0;
   *syntax_only = false;
   *input = NULL;
-  *output = NULL;
+  *output_dir = NULL;
   while (i < argc) {
     if (strcmp(argv[i], "-v") == 0) {
       *verbose = 1;
@@ -23,11 +23,11 @@ static void parse_commandline(int argc,
       *syntax_only = true;
       ++i;
     } else if (strcmp(argv[i], "-o") == 0) {
-      if (*output) {
-        base_writef_stderr("Can only specify a single output directory.\n");
+      if (*output_dir) {
+        base_writef_stderr("Can only specify a single output_dir directory.\n");
         base_exit(1);
       }
-      *output = argv[i + 1];
+      *output_dir = argv[i + 1];
       i += 2;
     } else {
       if (*input) {
@@ -43,7 +43,7 @@ static void parse_commandline(int argc,
     base_writef_stderr("No main input file specified.\n");
     base_exit(1);
   }
-  if (!*output && !*syntax_only && !*verbose) {
+  if (!*output_dir && !*syntax_only && !*verbose) {
     base_writef_stderr("No output directory specified.\n");
     base_exit(1);
   }
@@ -55,23 +55,17 @@ int main(int argc, char** argv) {
   Arena* str_arena = arena_create(MiB(256), KiB(128));
 
   char* input;
-  char* output;
+  char* output_dir;
   int verbose;
   bool syntax_only;
-  parse_commandline(argc, argv, &input, &output, &verbose, &syntax_only);
-
-  ReadFileResult file = base_read_file(input);
-  if (!file.buffer) {
-    base_writef_stderr("Couldn't read '%s'\n", input);
-    return 1;
-  }
+  parse_commandline(argc, argv, &input, &output_dir, &verbose, &syntax_only);
 
   str_intern_pool_init(str_arena);
-  if (syntax_only) {
-    parse_one_time_initialization_syntax_check(main_arena);
-  } else {
-    parse_one_time_initialization_code_gen(main_arena);
-  }
+
+  module_init(main_arena, parse_temp_arena, /* TODO: basepath of input */ ".", output_dir,
+              verbose, syntax_only);
+  module_add((StrView){input, strlen(input)});
+#if 0
 
   parse_scan_for_imports(input, file, verbose);
   TokenizedBuffer tokbuf = parse_scan_for_imports(input, file, verbose);
@@ -89,5 +83,6 @@ int main(int argc, char** argv) {
     }
     parse_code_gen(parse_temp_arena, tokbuf, verbose, out_file);
   }
+#endif
   return 0;
 }

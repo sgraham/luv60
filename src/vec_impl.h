@@ -57,9 +57,9 @@ static void VEC_NAME_JOIN(set)(VEC_NAME* vec, int64_t i, VEC_T op) {
 }
 
 static void VEC_NAME_JOIN(append)(VEC_NAME* vec, VEC_T op) {
-  opv_ensure_capacity(vec, vec->size + 1);
+  VEC_NAME_JOIN(ensure_capacity)(vec, vec->size + 1);
   ++vec->size;
-  opv_set(vec, vec->size - 1, op);
+  VEC_NAME_JOIN(set)(vec, vec->size - 1, op);
 }
 
 #undef VEC_NAME

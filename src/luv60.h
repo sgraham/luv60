@@ -293,18 +293,28 @@ typedef struct TokenizedBuffer {
   TokenCursor cursor;
 } TokenizedBuffer;
 
-TokenizedBuffer parse_scan_for_imports(const char* filename, ReadFileResult file, int verbose);
-
 void parse_one_time_initialization_code_gen(Arena* main_arena);
-void parse_code_gen(Arena* temp_arena, TokenizedBuffer tokbuf, int verbose, FILE* out_file);
+void parse_code_gen(Arena* temp_arena,
+                    const char* filename,
+                    ReadFileResult file,
+                    int verbose,
+                    FILE* (*open_output_for)(const char* input));
 
 void parse_one_time_initialization_syntax_check(Arena* main_arena);
-void parse_syntax_check(Arena* temp_arena, TokenizedBuffer tokbuf, int verbose);
-
+void parse_syntax_check(Arena* temp_arena, const char* filename, ReadFileResult file, int verbose);
 
 // module.c
 typedef struct Module {
   uint32_t u;
 } Module;
 
-Module module_add_pending(Str name);
+void module_init(Arena* arena,
+                 Arena* parse_temp_arena,
+                 const char* source_dir,
+                 const char* output_dir,
+                 int verbose,
+                 bool syntax_only);
+Module module_add(StrView basename);
+
+bool module_is_in_error(Module moudle);
+Str module_path(Module module);

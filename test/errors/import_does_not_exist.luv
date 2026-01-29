@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:4:8:import "nopes"
+# CERR: {ssss}            ^ error: Couldn't open import, looking for './nopes.luv'.
+import "nopes"
+
+def int main():
+    return 0

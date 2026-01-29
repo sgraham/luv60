@@ -4841,12 +4841,64 @@ static void parse_one_time_initialization_impl(Arena* main_arena) {
   glob.uniq_counter = 0;
 }
 
-static void parse_impl(Arena* temp_arena, TokenizedBuffer tokbuf, int verbose, FILE* out_file) {
+static void parse_scan_for_imports(const char* filename, ReadFileResult file, int verbose) {
+  const char* nicer_filename = filename;
+  while (nicer_filename[0] == '.' && nicer_filename[1] == '/') {
+    nicer_filename += 2;
+  }
+  TokenizedBuffer tb = {
+      .filename = nicer_filename,
+      .file_contents = (const char*)file.buffer,
+      // In the case of "a.a." the worst case for offsets is the same as the number
+      // of characters in the buffer.
+      .token_offsets = (uint32_t*)base_mem_large_alloc(file.allocated_size * sizeof(uint32_t)),
+      .cursor = (TokenCursor){-1, 0, 0, 0},
+  };
+  tb.num_tokens = lex_indexer(file.buffer, file.allocated_size, tb.token_offsets);
+  token_init(file.buffer);
+  if (verbose > 1) {
+    token_dump_offsets(tb.num_tokens, tb.token_offsets, file.file_size);
+  }
+  tu.tokbuf = tb;
+
+  advance();
+
+  for (;;) {
+    skip_newlines();
+    if (match(TOK_IMPORT)) {
+      uint32_t string_offset = cur_offset();
+      if (!match(TOK_STRING_QUOTED)) {
+        error_offset(string_offset, "Expecting constant str as import argument.");
+      }
+      StrView strview = get_strview_for_offsets(prev_offset(), cur_offset());
+      StrView inside_quotes = {strview.data + 1, strview.size - 2};
+      while (inside_quotes.data[inside_quotes.size] != '"') {
+        --inside_quotes.size;
+      }
+      tb = tu.tokbuf;
+      Module newmod = module_add(inside_quotes);
+      if (module_is_in_error(newmod)) {
+        Str path = module_path(newmod);
+        errorf("Couldn't open import, looking for '%.*s'.", (int)str_len(path), str_raw_ptr(path));
+      }
+      tu.tokbuf = tb;
+      consume(TOK_NEWLINE, "Expecting newline after import.");
+    } else {
+      break;
+    }
+  }
+}
+
+static void parse_impl(Arena* temp_arena,
+                       const char* filename,
+                       ReadFileResult file,
+                       int verbose,
+                       FILE* (*open_output_for)(const char*)) {
+  parse_scan_for_imports(filename, file, verbose);
+
   tu.var_scope_arena = temp_arena;
-  tu.tokbuf = tokbuf;
   tu.num_scopes = 0;
   tu.cur_scope = NULL;
-  tu.tokbuf.cursor = (TokenCursor){-1, 0, 0, 0};
   tu.indent_levels[0] = 0;
   tu.num_indents = 1;
   tu.num_buffered_tokens = 0;
@@ -4863,7 +4915,7 @@ static void parse_impl(Arena* temp_arena, TokenizedBuffer tokbuf, int verbose, F
 
   SqConfiguration config = SQ_CONFIGURATION_DEFAULT;
   //config.target = SQ_TARGET_AMD64_APPLE;
-  config.output = out_file;
+  config.output = open_output_for(filename);
   config.output_function = sqbe_callback_output_function;
   if (verbose == 1) {
     config.debug_flags = "PT";
@@ -4892,8 +4944,6 @@ static void parse_impl(Arena* temp_arena, TokenizedBuffer tokbuf, int verbose, F
   enter_scope(/*is_module=*/true, /*is_function=*/false, NULL);
 
   declare_all_rt_foreigns();
-
-  advance();
 
   while (tu.tokbuf.cursor.cur_kind != TOK_EOF) {
     parse_statement(/*toplevel=*/true);

@@ -1,4 +1,4 @@
-# CLANGRUN: CLANG_BIN -g OUT_DIR/{self}.s src/rt.c test/test_simple_foreign.c -o OUT_DIR/{self}.exe
+# CLANGRUN: CLANG_BIN -g OUT_DIR/{self_noext_dots}.s src/rt.c test/test_simple_foreign.c -o OUT_DIR/{self_noext_dots}.exe
 # OUT: in foreign
 # OUT: 345
 
