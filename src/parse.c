@@ -4601,27 +4601,6 @@ static void struct_statement() {
   new->scope_decl = SSD_DECLARED_GLOBAL;
 }
 
-static void import_statement(void) {
-  Str parts[MAX_PACKAGE_DEPTH];
-  int num_parts = 0;
-  parts[num_parts++] = parse_name("Expect package name.");
-  for (;;) {
-    if (match(TOK_DOT)) {
-      parts[num_parts++] = parse_name("Expecting nested package name after '.'.");
-    } else {
-      break;
-    }
-  }
-  //printf("IMPORT: %.*s\n", str_len(parts[0]), str_raw_ptr(parts[0]));
-
-  // TODO: many things
-  // The end result from the imported package is a DictImpl containing
-  // name->syms for def, struct, const, var.
-  // need address/value for def/var/const.
-  // need Type to check and call propertly
-  // need struct layout, so it's pretty much the full sym_dict
-}
-
 static void parse_variable_statement(Type type) {
   Str name = parse_name("Expect variable or typed variable name.");
   ASSERT(name.i);
@@ -4709,8 +4688,7 @@ static LastStatementType parse_statement(bool toplevel) {
       break;
     case TOK_IMPORT:
       advance();
-      if (!toplevel) error("import statement only allowed at top level.");
-      import_statement();
+      error("imports must appear before other declarations.");
       break;
     case TOK_STRUCT:
       advance();

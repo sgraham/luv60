@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:7:1:import "later"
+# CERR: {ssss}     ^ error: imports must appear before other declarations.
+def int main():
+    return 0
+
+import "later"
