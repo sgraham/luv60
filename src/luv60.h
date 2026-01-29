@@ -277,11 +277,26 @@ bool type_struct_find_field_by_name(Type type, Str name, Type* out_type, uint32_
 
 // parse.c
 
+typedef struct TokenCursor {
+  uint32_t token_index;
+  TokenKind cur_kind;
+  TokenKind prev_kind;
+  int paren_level;
+} TokenCursor;
+
+typedef struct TokenizedBuffer {
+  const char* filename;
+  const char* file_contents;
+  uint32_t num_tokens;
+  uint32_t* token_offsets;
+
+  TokenCursor cursor;
+} TokenizedBuffer;
+
+TokenizedBuffer parse_scan_for_imports(const char* filename, ReadFileResult file, int verbose);
+
 void parse_one_time_initialization_code_gen(Arena* main_arena);
-void parse_code_gen(Arena* temp_arena,
-                    const char* filename,
-                    ReadFileResult file,
-                    int verbose,
-                    FILE* out_file);
+void parse_code_gen(Arena* temp_arena, TokenizedBuffer tokbuf, int verbose, FILE* out_file);
+
 void parse_one_time_initialization_syntax_check(Arena* main_arena);
-void parse_syntax_check(Arena* temp_arena, const char* filename, ReadFileResult file, int verbose);
+void parse_syntax_check(Arena* temp_arena, TokenizedBuffer tokbuf, int verbose);

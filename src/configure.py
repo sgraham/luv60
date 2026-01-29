@@ -15,6 +15,7 @@ COMMON_FILELIST = [
     "base_win.c",
     "lex.c",
     "parse_code_gen.c",
+    "parse_common.c",
     "parse_syntax_check.c",
     "str.c",
     "token.c",
