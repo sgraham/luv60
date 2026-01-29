@@ -240,65 +240,11 @@ static inline FORCE_INLINE bool op_has_ref2(Operand op) {
   return op.kind & OPK_BIT_SECOND_REF;
 }
 
-typedef struct OpVec {
-  union {
-    Operand* data;
-    Operand short_data[16];
-  };
-  Arena* arena;
-  int64_t size;
-  int64_t capacity;
-} OpVec;
-
-static inline FORCE_INLINE void opv_init(OpVec* vec, Arena* arena) {
-  vec->size = 0;
-  vec->capacity = COUNTOFI(vec->short_data);
-  vec->arena = arena;
-}
-
-static inline FORCE_INLINE void opv_free(OpVec* vec) {
-  vec->size = 0;
-}
-
-static inline FORCE_INLINE int64_t opv_size(OpVec* vec) {
-  return vec->size;
-}
-
-static void opv_ensure_capacity(OpVec* vec, int64_t size) {
-  if (size <= vec->capacity) {
-    return;
-  }
-
-  // capacity starts at short_data len, so always moving to allocated if
-  // growing.
-  Operand* new = arena_push(vec->arena, sizeof(Operand) * size, _Alignof(Operand));
-  Operand* old = vec->capacity <= COUNTOFI(vec->short_data) ? vec->short_data : vec->data;
-  memcpy(new, old, sizeof(Operand) * vec->size);
-  vec->capacity = size;
-}
-
-static Operand opv_at(OpVec* vec, int64_t i) {
-  ASSERT(i < vec->size);
-  if (vec->capacity <= COUNTOFI(vec->short_data)) {
-    return vec->short_data[i];
-  }
-  return vec->data[i];
-}
-
-static void opv_set(OpVec* vec, int64_t i, Operand op) {
-  ASSERT(i < vec->size);
-  if (vec->capacity <= COUNTOFI(vec->short_data)) {
-    vec->short_data[i] = op;
-  } else {
-    vec->data[i] = op;
-  }
-}
-
-static void opv_append(OpVec* vec, Operand op) {
-  opv_ensure_capacity(vec, vec->size + 1);
-  ++vec->size;
-  opv_set(vec, vec->size - 1, op);
-}
+#define VEC_NAME OpVec
+#define VEC_T Operand
+#define VEC_PREFIX opv_
+#define VEC_NUM_SHORT 16
+#include "vec_impl.h"
 
 static Operand operand_none;
 

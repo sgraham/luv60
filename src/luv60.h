@@ -275,7 +275,7 @@ uint32_t type_struct_field_index_by_name(Type type, Str name);  // == num_fields
 bool type_struct_find_field_by_name(Type type, Str name, Type* out_type, uint32_t* out_offset);
 
 
-// parse.c
+// parse[_common].c
 
 typedef struct TokenCursor {
   uint32_t token_index;
@@ -300,3 +300,11 @@ void parse_code_gen(Arena* temp_arena, TokenizedBuffer tokbuf, int verbose, FILE
 
 void parse_one_time_initialization_syntax_check(Arena* main_arena);
 void parse_syntax_check(Arena* temp_arena, TokenizedBuffer tokbuf, int verbose);
+
+
+// module.c
+typedef struct Module {
+  uint32_t u;
+} Module;
+
+Module module_add_pending(Str name);

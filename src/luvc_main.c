@@ -73,6 +73,7 @@ int main(int argc, char** argv) {
     parse_one_time_initialization_code_gen(main_arena);
   }
 
+  parse_scan_for_imports(input, file, verbose);
   TokenizedBuffer tokbuf = parse_scan_for_imports(input, file, verbose);
 
   if (syntax_only) {
