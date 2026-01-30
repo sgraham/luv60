@@ -93,9 +93,10 @@ static inline char* cstr_copy(Arena* arena, Str s) {
   return copy;
 }
 
+
 // path.c
 
-void path_split(Arena* arena, const char* input, const char** source_dir, const char** filename);
+void path_split(Arena* arena, const char* input, const char** source_dir, char** filename);
 void path_normalize_to_slash_in_place(char* path);
 void path_without_slashes_in_place(char* path);
 void path_trim_extension_if_exists(char* filename, char* ext);
@@ -282,34 +283,6 @@ uint32_t type_struct_field_index_by_name(Type type, Str name);  // == num_fields
 bool type_struct_find_field_by_name(Type type, Str name, Type* out_type, uint32_t* out_offset);
 
 
-// parse[_common].c
-
-typedef struct TokenCursor {
-  uint32_t token_index;
-  TokenKind cur_kind;
-  TokenKind prev_kind;
-  int paren_level;
-} TokenCursor;
-
-typedef struct TokenizedBuffer {
-  const char* filename;
-  const char* file_contents;
-  uint32_t num_tokens;
-  uint32_t* token_offsets;
-
-  TokenCursor cursor;
-} TokenizedBuffer;
-
-void parse_one_time_initialization_code_gen(Arena* main_arena);
-void parse_code_gen(Arena* temp_arena,
-                    const char* filename,
-                    ReadFileResult file,
-                    int verbose,
-                    FILE* (*open_output_for)(const char* input));
-
-void parse_one_time_initialization_syntax_check(Arena* main_arena);
-void parse_syntax_check(Arena* temp_arena, const char* filename, ReadFileResult file, int verbose);
-
 // module.c
 typedef struct Module {
   uint32_t u;
@@ -323,5 +296,19 @@ void module_init(Arena* arena,
                  bool syntax_only);
 Module module_add(StrView basename);
 
-bool module_is_in_error(Module moudle);
-Str module_path(Module module);
+bool module_is_in_error(Module module);
+Str module_load_path(Module module);
+Str module_output_path(Module module);
+ReadFileResult module_read_file_result(Module module);
+
+size_t module_num_modules(void);
+Module module_get_module_by_index(size_t i);
+
+
+// parse.c
+
+void parse_one_time_initialization_code_gen(Arena* main_arena, int verbose);
+void parse_code_gen(Arena* temp_arena, Module module);
+
+void parse_one_time_initialization_syntax_check(Arena* main_arena, int verbose);
+void parse_syntax_check(Arena* temp_arena, Module module);

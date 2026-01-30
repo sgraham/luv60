@@ -137,11 +137,14 @@ def get_tests():
         os.path.join("test", "**", "*.luv"))
     for test in files:
         test = test.replace("\\", "/")
-        crun = "LUVC_BIN {self_noext} -o OUT_DIR"
+        crun = "LUVC_BIN {self}{with_c} -o OUT_DIR"
         cret = "0"
         cerr = ""
-        clangrun = "CLANG_BIN -g OUT_DIR/{self_noext_dots}.s src/rt.c -o OUT_DIR/{self_noext_dots}.exe"
-        run = "OUT_DIR/{self_noext_dots}.exe"
+        # TODO: wrong for cross; tests are only gen once
+        if sys.platform == 'win32':
+            run = "OUT_DIR/{self_basename}.exe"
+        else:
+            run = "OUT_DIR/{self_basename}"
         ret = "0"
         out = ""
         err = ""
@@ -153,12 +156,13 @@ def get_tests():
         ret_prefix = "# RET: "
         out_prefix = "# OUT: "
         err_prefix = "# ERR: "
+        with_c_prefix = "# WITH_C: "
         disabled_linux_prefix = "# DISABLED_LINUX"
         disabled_win_prefix = "# DISABLED_WIN"
         disabled_mac_prefix = "# DISABLED_MAC"
         disabled_prefix = "# DISABLED"
         imported_prefix = "# IMPORTED"
-        clangrun_prefix = "# CLANGRUN: "
+        with_c = []
         ret_set = False
         cret_set = False
         with open(test, "r", encoding="utf-8") as f:
@@ -177,10 +181,10 @@ def get_tests():
                     cerr += l[len(cerr_prefix):].rstrip() + "\n"
                 elif l.startswith(err_prefix):
                     err += l[len(err_prefix):].rstrip() + "\n"
+                elif l.startswith(with_c_prefix):
+                    with_c.append(l[len(with_c_prefix):].rstrip())
                 elif l.startswith(out_prefix):
                     out += l[len(out_prefix):].rstrip() + "\n"
-                elif l.startswith(clangrun_prefix):
-                    clangrun = l[len(clangrun_prefix):].rstrip()
                 elif l.startswith(disabled_linux_prefix):
                     disabled.append('linux')
                 elif l.startswith(disabled_win_prefix):
@@ -193,9 +197,12 @@ def get_tests():
 
             def sub(t):
                 t = t.replace("{self}", test)
-                noext = os.path.splitext(test)[0]
-                t = t.replace("{self_noext}", noext)
-                t = t.replace("{self_noext_dots}", noext.replace('/', '.').replace('\\', '.'))
+                basename = os.path.splitext(os.path.split(test)[1])[0]
+                t = t.replace("{self_basename}", basename)
+                wc = ' '.join('--with-c ' + x for x in with_c)
+                if wc:
+                    wc = ' ' + wc
+                t = t.replace("{with_c}", wc)
                 spaces = len(test) * " "
                 return t.replace("{ssss}", spaces)
 
@@ -210,7 +217,6 @@ def get_tests():
                 "out": sub(out),
                 "err": sub(err),
                 "cerr": sub(cerr),
-                "clangrun": sub(clangrun),
                 "disabled": disabled
             }
 

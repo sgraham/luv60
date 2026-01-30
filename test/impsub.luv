@@ -1,0 +1,3 @@
+# IMPORTED
+def int helper_func(int x):
+    return x * 10

@@ -11,6 +11,27 @@ typedef enum SymKind {
   SYM_PACKAGE,
 } SymKind;
 
+typedef struct TokenCursor {
+  uint32_t token_index;
+  TokenKind cur_kind;
+  TokenKind prev_kind;
+  int paren_level;
+} TokenCursor;
+
+typedef struct TokenizedBuffer {
+  Str filename;
+  const char* file_contents;
+  uint32_t num_tokens;
+  uint32_t* token_offsets;
+
+  TokenCursor cursor;
+
+  TokenKind token_buffer[16];
+  int num_buffered_tokens;
+  int indent_levels[12];  // This is the maximum possible in lexer.
+  int num_indents;
+} TokenizedBuffer;
+
 typedef union Val {
   bool b;
   uint8_t u8;
@@ -171,6 +192,20 @@ typedef struct Operand {
 typedef struct CompilerGlobals {
   Arena* arena;
   DictImpl generics_thunk_cache;
+
+  Str static_str_main;
+  Str static_str___str__;
+  Str static_str___contains__;
+  Str static_str___enter__;
+  Str static_str___eq__;
+  Str static_str___exit__;
+  Str static_str_ret;
+  Str static_str_up;
+
+  Operand op_null_ptr;
+
+  int verbose;
+
   int uniq_counter;
 } CompilerGlobals;
 
@@ -181,27 +216,11 @@ typedef struct TranslationUnit {
 
   TokenizedBuffer tokbuf;
 
-  TokenKind token_buffer[16];
-  int num_buffered_tokens;
-  int indent_levels[12];  // This is the maximum possible in lexer.
-  int num_indents;
-
   Scope scopes[MAX_SCOPES];
   int num_scopes;
   Scope* cur_scope;
 
-  Operand op_null_ptr;
-
   int verbose;
-
-  Str static_str_main;
-  Str static_str___str__;
-  Str static_str___contains__;
-  Str static_str___enter__;
-  Str static_str___eq__;
-  Str static_str___exit__;
-  Str static_str_ret;
-  Str static_str_up;
 
   SqType sq_type_str;
   SqType sq_type_list;
@@ -396,7 +415,8 @@ NORETURN static void error_offset_delta(uint32_t offset, int delta, const char* 
   StrView line;
   get_location_and_line_slow(offset, &loc_line, &loc_column, &line);
   loc_column += delta;
-  int indent = base_writef_stderr("%s:%d:%d:", tu.tokbuf.filename, loc_line, loc_column);
+  int indent = base_writef_stderr("%.*s:%d:%d:", str_len(tu.tokbuf.filename),
+                                  str_raw_ptr(tu.tokbuf.filename), loc_line, loc_column);
   base_writef_stderr("%.*s\n", (int)line.size, line.data);
   base_writef_stderr("%*s", indent + loc_column - 1, "");
   base_writef_stderr("^ error: %s\n", message);
@@ -799,7 +819,7 @@ static Sym* gen_array___str__(Type type) {
   Type subtype = type_array_subtype(type);
   size_t count = type_array_count(type);
   Str full_name = memfn_name_from_type_name(
-      str_internf("Array_%s_%lu", type_as_str(subtype), count), tu.static_str___str__);
+      str_internf("Array_%s_%lu", type_as_str(subtype), count), glob.static_str___str__);
 
   sq_func_start(sq_linkage_default, tu.sq_type_str, cstr_copy(glob.arena, full_name));
 
@@ -807,7 +827,7 @@ static Sym* gen_array___str__(Type type) {
 
   uint64_t subtype_size = type_size(subtype);
 
-  Sym* sub_str_func = lookup_memfn(subtype, tu.static_str___str__);
+  Sym* sub_str_func = lookup_memfn(subtype, glob.static_str___str__);
 
   SqRef ret = sq_i_call4(
       tu.sq_type_str, sq_ref_extern("Array$__str__"), (SqCallArg){sq_type_long, self},
@@ -835,7 +855,7 @@ static Sym* gen_array___contains__(Type type) {
   Type subtype = type_array_subtype(type);
   size_t count = type_array_count(type);
   Str full_name = memfn_name_from_type_name(
-      str_internf("Array_%s_%lu", type_as_str(subtype), count), tu.static_str___contains__);
+      str_internf("Array_%s_%lu", type_as_str(subtype), count), glob.static_str___contains__);
 
   sq_func_start(sq_linkage_default, sq_type_ubyte, cstr_copy(glob.arena, full_name));
 
@@ -846,7 +866,7 @@ static Sym* gen_array___contains__(Type type) {
 
   uint64_t subtype_size = type_size(subtype);
 
-  Sym* sub_eq_func = lookup_memfn(subtype, tu.static_str___eq__);
+  Sym* sub_eq_func = lookup_memfn(subtype, glob.static_str___eq__);
 
   // This is needed to pass the address, but also accomplishes sign extension if
   // e.g. -4i32 is passed to an i64 method.
@@ -917,7 +937,7 @@ static Sym* gen_list_append(Type type) {
 static Sym* gen_list___contains__(Type type) {
   Type subtype = type_list_subtype(type);
   Str full_name = memfn_name_from_type_name(str_internf("List_%s", type_as_str(subtype)),
-                                            tu.static_str___contains__);
+                                            glob.static_str___contains__);
 
   sq_func_start(sq_linkage_default, sq_type_void, cstr_copy(glob.arena, full_name));
 
@@ -938,7 +958,7 @@ static Sym* gen_list___contains__(Type type) {
     store_by_type_val_into(subtype, item, tmp);
   }
 
-  Sym* sub_eq_func = lookup_memfn(subtype, tu.static_str___eq__);
+  Sym* sub_eq_func = lookup_memfn(subtype, glob.static_str___eq__);
 
   sq_i_call4(
       sq_type_void, sq_ref_extern("List$__contains__"), (SqCallArg){sq_type_long, self},
@@ -964,7 +984,7 @@ static Sym* gen_list___contains__(Type type) {
 static Sym* gen_list___str__(Type type) {
   Type subtype = type_list_subtype(type);
   Str full_name = memfn_name_from_type_name(str_internf("List_%s", type_as_str(subtype)),
-                                            tu.static_str___str__);
+                                            glob.static_str___str__);
 
   sq_func_start(sq_linkage_default, tu.sq_type_str, cstr_copy(glob.arena, full_name));
 
@@ -972,7 +992,7 @@ static Sym* gen_list___str__(Type type) {
 
   uint64_t subtype_size = type_size(subtype);
 
-  Sym* sub_str_func = lookup_memfn(subtype, tu.static_str___str__);
+  Sym* sub_str_func = lookup_memfn(subtype, glob.static_str___str__);
 
   SqRef ret = sq_i_call3(
       tu.sq_type_str, sq_ref_extern("List$__str__"), (SqCallArg){sq_type_long, self},
@@ -1238,7 +1258,7 @@ static void enter_function(Sym* sym,
   enter_scope(/*is_module=*/false, /*is_function=*/true, sym);
 
   SqLinkage linkage =
-      str_eq(sym->name, tu.static_str_main) ? sq_linkage_export : sq_linkage_default;
+      str_eq(sym->name, glob.static_str_main) ? sq_linkage_export : sq_linkage_default;
 
   Type ret_type = type_func_return_type(sym->type);
 
@@ -1252,7 +1272,7 @@ static void enter_function(Sym* sym,
   }
 
   if (is_nested) {
-    ASSERT(str_eq(param_syms[0]->name, tu.static_str_up));
+    ASSERT(str_eq(param_syms[0]->name, glob.static_str_up));
     ASSERT(type_kind(param_syms[0]->type) == TYPE_PTR);
     ASSERT(type_eq(type_ptr_subtype(param_syms[0]->type), type_void));
     tu.cur_scope->upval_base = param_syms[0]->ref;
@@ -1354,10 +1374,10 @@ static void leave_function(void) {
 static void advance(void) {
 again:
   tu.tokbuf.cursor.prev_kind = tu.tokbuf.cursor.cur_kind;
-  if (tu.num_buffered_tokens > 0) {
-    tu.tokbuf.cursor.cur_kind = tu.token_buffer[--tu.num_buffered_tokens];
+  if (tu.tokbuf.num_buffered_tokens > 0) {
+    tu.tokbuf.cursor.cur_kind = tu.tokbuf.token_buffer[--tu.tokbuf.num_buffered_tokens];
 #if BUILD_DEBUG
-    if (tu.verbose > 1) {
+    if (glob.verbose > 1) {
       base_writef_stderr("token %s (buffered)\n", token_enum_name(tu.tokbuf.cursor.cur_kind));
     }
 #endif
@@ -1375,15 +1395,15 @@ again:
     tu.tokbuf.cursor.cur_kind = TOK_NEWLINE;
   } else if (tu.tokbuf.cursor.cur_kind >= TOK_NEWLINE_INDENT_0 && tu.tokbuf.cursor.cur_kind <= TOK_NEWLINE_INDENT_40) {
     int n = (tu.tokbuf.cursor.cur_kind - TOK_NEWLINE_INDENT_0) * 4;
-    if (n > tu.indent_levels[tu.num_indents - 1]) {
+    if (n > tu.tokbuf.indent_levels[tu.tokbuf.num_indents - 1]) {
       tu.tokbuf.cursor.cur_kind = TOK_NEWLINE;
-      tu.indent_levels[tu.num_indents++] = n;
-      tu.token_buffer[tu.num_buffered_tokens++] = TOK_INDENT;
-    } else if (n < tu.indent_levels[tu.num_indents - 1]) {
+      tu.tokbuf.indent_levels[tu.tokbuf.num_indents++] = n;
+      tu.tokbuf.token_buffer[tu.tokbuf.num_buffered_tokens++] = TOK_INDENT;
+    } else if (n < tu.tokbuf.indent_levels[tu.tokbuf.num_indents - 1]) {
       tu.tokbuf.cursor.cur_kind = TOK_NEWLINE;
-      while (tu.num_indents > 1 && tu.indent_levels[tu.num_indents - 1] > n) {
-        tu.token_buffer[tu.num_buffered_tokens++] = TOK_DEDENT;
-        --tu.num_indents;
+      while (tu.tokbuf.num_indents > 1 && tu.tokbuf.indent_levels[tu.tokbuf.num_indents - 1] > n) {
+        tu.tokbuf.token_buffer[tu.tokbuf.num_buffered_tokens++] = TOK_DEDENT;
+        --tu.tokbuf.num_indents;
       }
     } else {
       tu.tokbuf.cursor.cur_kind = TOK_NEWLINE;
@@ -1391,7 +1411,7 @@ again:
   }
 
 #if BUILD_DEBUG
-  if (tu.verbose > 1) {
+  if (glob.verbose > 1) {
       base_writef_stderr("token %s\n", token_enum_name(tu.tokbuf.cursor.cur_kind));
   }
 #endif
@@ -1417,7 +1437,7 @@ static bool peek(TokenKind tok_kind) {
   bool result = tu.tokbuf.cursor.cur_kind == tok_kind;
 
   // semi-retreat, but keep categorization by buffering it.
-  tu.token_buffer[tu.num_buffered_tokens++] = tu.tokbuf.cursor.cur_kind;
+  tu.tokbuf.token_buffer[tu.tokbuf.num_buffered_tokens++] = tu.tokbuf.cursor.cur_kind;
   tu.tokbuf.cursor.cur_kind = old_cur;
   tu.tokbuf.cursor.prev_kind = old_prev;
 
@@ -1583,7 +1603,7 @@ static bool is_convertible(Operand* operand, Type dest) {
     return true;
   } else if (type_eq(src, type_codept) && type_eq(dest, type_str)) {
     return true;
-  } else if (memcmp(operand, &tu.op_null_ptr, sizeof(Operand)) == 0) {
+  } else if (memcmp(operand, &glob.op_null_ptr, sizeof(Operand)) == 0) {
     return true;
   // TODO: various pointer, etc.
   } else {
@@ -1683,7 +1703,7 @@ static bool cast_operand(Operand* operand, Type type) {
     if (type_eq(operand->type, type_codept) && type_eq(type, type_str)) {
       // hacky codept to str conversion, maybe should require this in code
       // rather than making automatic. mostly for `ch in "abc"`.
-      Sym* sym = lookup_memfn(type_codept, tu.static_str___str__);
+      Sym* sym = lookup_memfn(type_codept, glob.static_str___str__);
       ASSERT(sym);
       *operand = operand_rvalue_imm(
           type_str, sq_i_call1(tu.sq_type_str, sqref_for_sym(sym),
@@ -1840,7 +1860,7 @@ static uint32_t parse_func_params(bool is_nested,
   if (is_nested) {
     ASSERT(!memfn_self);
     out_types[num_params] = type_ptr(type_void);
-    out_names[num_params] = tu.static_str_up;
+    out_names[num_params] = glob.static_str_up;
     ++num_params;
   } else if (memfn_self) {
     ASSERT(!is_nested);
@@ -2622,7 +2642,7 @@ static Operand parse_in_or_not_in(Operand left, bool can_assign, Type* expected)
   } else {
     error("Expected 'in' or 'not in'.");
   }
-  Sym* sym = lookup_memfn(rhs.type, tu.static_str___contains__);
+  Sym* sym = lookup_memfn(rhs.type, glob.static_str___contains__);
   if (sym) {
     // TODO: need to move all the off-brand calls to a common location so they
     // get argument conversion properly (esp sign extension)
@@ -2766,7 +2786,7 @@ static Operand parse_fmt(bool can_assign, Type* expected) {
                             "Trying to use argument %d, but only %d provided.", index + 1,
                             num_args);
       }
-      Sym* item_str_func = lookup_memfn(args[index].type, tu.static_str___str__);
+      Sym* item_str_func = lookup_memfn(args[index].type, glob.static_str___str__);
       if (!item_str_func) {
         errorf_offset(string_offset, "Don't know how to convert type %s to string for fmt.",
                       type_as_str(args[index].type));
@@ -2822,7 +2842,7 @@ static Operand parse_len(bool can_assign, Type* expected) {
 }
 
 static bool scan_to_determine_if_comprehension(TokenCursor* original, TokenCursor* at_for) {
-  ASSERT(tu.num_buffered_tokens == 0);
+  ASSERT(tu.tokbuf.num_buffered_tokens == 0);
 
   *original = tu.tokbuf.cursor;
   original->paren_level = token_get_continuation_paren_level();
@@ -3210,7 +3230,7 @@ static Operand parse_list_literal_or_compr(bool can_assign, Type* expected) {
 }
 
 static Operand parse_null_literal(bool can_assign, Type* expected) {
-  return tu.op_null_ptr;
+  return glob.op_null_ptr;
 }
 
 static Operand parse_int_literal(bool allow_suffix) {
@@ -4288,12 +4308,12 @@ static void with_statement(void) {
     error("todo; with as");
   }
 
-  Sym* enter_func = lookup_memfn(wobj.type, tu.static_str___enter__);
+  Sym* enter_func = lookup_memfn(wobj.type, glob.static_str___enter__);
   if (!enter_func) {
     errorf("Type %s does not define an __enter__ for being used in 'with'.",
            type_as_str(wobj.type));
   }
-  Sym* exit_func = lookup_memfn(wobj.type, tu.static_str___exit__);
+  Sym* exit_func = lookup_memfn(wobj.type, glob.static_str___exit__);
   if (!exit_func) {
     errorf("Type %s does not define an __exit__ for being used in 'with'.",
            type_as_str(wobj.type));
@@ -4324,7 +4344,7 @@ static void print_statement(void) {
                  (SqCallArg){sq_type_long, operand_to_sqref_lval(&val)});
   } else {
     // If __str__ exists for the type, call it, and then print the result.
-    Sym* sym = lookup_memfn(val.type, tu.static_str___str__);
+    Sym* sym = lookup_memfn(val.type, glob.static_str___str__);
     if (sym) {
       Operand as_str = operand_rvalue_imm(
           type_str, sq_i_call1(tu.sq_type_str, sqref_for_sym(sym),
@@ -4791,50 +4811,63 @@ static void declare_rt_foreign_memfn1(Type on, Type return_type, Str name, Type 
 
 static void declare_all_rt_foreigns(void) {
   declare_rt_foreign_memfn1(type_str, type_str, str_intern("join"), type_list(type_str));
-  declare_rt_foreign_memfn1(type_str, type_bool, tu.static_str___eq__, type_str);
-  declare_rt_foreign_memfn1(type_str, type_bool, tu.static_str___contains__, type_str);
+  declare_rt_foreign_memfn1(type_str, type_bool, glob.static_str___eq__, type_str);
+  declare_rt_foreign_memfn1(type_str, type_bool, glob.static_str___contains__, type_str);
 
-  declare_rt_foreign_memfn0(type_bool, type_str, tu.static_str___str__);
-  declare_rt_foreign_memfn0(type_codept, type_str, tu.static_str___str__);
-  declare_rt_foreign_memfn0(type_i8, type_str, tu.static_str___str__);
-  declare_rt_foreign_memfn0(type_u8, type_str, tu.static_str___str__);
-  declare_rt_foreign_memfn0(type_i16, type_str, tu.static_str___str__);
-  declare_rt_foreign_memfn0(type_u16, type_str, tu.static_str___str__);
-  declare_rt_foreign_memfn0(type_i32, type_str, tu.static_str___str__);
-  declare_rt_foreign_memfn0(type_u32, type_str, tu.static_str___str__);
-  declare_rt_foreign_memfn0(type_i64, type_str, tu.static_str___str__);
-  declare_rt_foreign_memfn0(type_u64, type_str, tu.static_str___str__);
-  declare_rt_foreign_memfn0(type_float, type_str, tu.static_str___str__);
-  declare_rt_foreign_memfn0(type_double, type_str, tu.static_str___str__);
-  declare_rt_foreign_memfn0(type_str, type_str, tu.static_str___str__);
-  declare_rt_foreign_memfn0(type_range, type_str, tu.static_str___str__);
+  declare_rt_foreign_memfn0(type_bool, type_str, glob.static_str___str__);
+  declare_rt_foreign_memfn0(type_codept, type_str, glob.static_str___str__);
+  declare_rt_foreign_memfn0(type_i8, type_str, glob.static_str___str__);
+  declare_rt_foreign_memfn0(type_u8, type_str, glob.static_str___str__);
+  declare_rt_foreign_memfn0(type_i16, type_str, glob.static_str___str__);
+  declare_rt_foreign_memfn0(type_u16, type_str, glob.static_str___str__);
+  declare_rt_foreign_memfn0(type_i32, type_str, glob.static_str___str__);
+  declare_rt_foreign_memfn0(type_u32, type_str, glob.static_str___str__);
+  declare_rt_foreign_memfn0(type_i64, type_str, glob.static_str___str__);
+  declare_rt_foreign_memfn0(type_u64, type_str, glob.static_str___str__);
+  declare_rt_foreign_memfn0(type_float, type_str, glob.static_str___str__);
+  declare_rt_foreign_memfn0(type_double, type_str, glob.static_str___str__);
+  declare_rt_foreign_memfn0(type_str, type_str, glob.static_str___str__);
+  declare_rt_foreign_memfn0(type_range, type_str, glob.static_str___str__);
 
-  declare_rt_foreign_memfn1(type_range, type_bool, tu.static_str___contains__, type_i64);
+  declare_rt_foreign_memfn1(type_range, type_bool, glob.static_str___contains__, type_i64);
 }
 
-static void parse_one_time_initialization_impl(Arena* main_arena) {
+static void parse_one_time_initialization_impl(Arena* main_arena, int verbose) {
   type_init(main_arena);
   glob.arena = main_arena;
   glob.generics_thunk_cache = dict_new(glob.arena, 128, sizeof(NameSymPair), _Alignof(NameSymPair));
+
+  glob.static_str_main = str_intern_len("main", 4);
+  glob.static_str___str__ = str_intern_len("__str__", 7);
+  glob.static_str___contains__ = str_intern_len("__contains__", 12);
+  glob.static_str___enter__ = str_intern_len("__enter__", 9);
+  glob.static_str___eq__ = str_intern_len("__eq__", 6);
+  glob.static_str___exit__ = str_intern_len("__exit__", 8);
+  glob.static_str_ret = str_intern_len("$ret", 4);
+  glob.static_str_up = str_intern_len("$up", 3);
+
+  glob.op_null_ptr = operand_const(type_ptr(type_void), (Val){.p = 0});
+
   glob.uniq_counter = 0;
+
+  glob.verbose = verbose;
 }
 
-static void parse_scan_for_imports(const char* filename, ReadFileResult file, int verbose) {
-  const char* nicer_filename = filename;
-  while (nicer_filename[0] == '.' && nicer_filename[1] == '/') {
-    nicer_filename += 2;
-  }
+static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
   TokenizedBuffer tb = {
-      .filename = nicer_filename,
+      .filename = load_filename,
       .file_contents = (const char*)file.buffer,
       // In the case of "a.a." the worst case for offsets is the same as the number
       // of characters in the buffer.
       .token_offsets = (uint32_t*)base_mem_large_alloc(file.allocated_size * sizeof(uint32_t)),
       .cursor = (TokenCursor){-1, 0, 0, 0},
+      .num_buffered_tokens = 0,
+      .num_indents = 1,
   };
+  tb.indent_levels[0] = 0;
   tb.num_tokens = lex_indexer(file.buffer, file.allocated_size, tb.token_offsets);
   token_init(file.buffer);
-  if (verbose > 1) {
+  if (glob.verbose > 1) {
     token_dump_offsets(tb.num_tokens, tb.token_offsets, file.file_size);
   }
   tu.tokbuf = tb;
@@ -4856,10 +4889,11 @@ static void parse_scan_for_imports(const char* filename, ReadFileResult file, in
       tb = tu.tokbuf;
       Module newmod = module_add(inside_quotes);
       if (module_is_in_error(newmod)) {
-        Str path = module_path(newmod);
+        Str path = module_load_path(newmod);
         errorf("Couldn't open import, looking for '%.*s'.", (int)str_len(path), str_raw_ptr(path));
       }
       tu.tokbuf = tb;
+      token_init(file.buffer); // TODO: paren level maybe need a _re_init
       consume(TOK_NEWLINE, "Expecting newline after import.");
     } else {
       break;
@@ -4867,37 +4901,25 @@ static void parse_scan_for_imports(const char* filename, ReadFileResult file, in
   }
 }
 
-static void parse_impl(Arena* temp_arena,
-                       const char* filename,
-                       ReadFileResult file,
-                       int verbose,
-                       FILE* (*open_output_for)(const char*)) {
-  parse_scan_for_imports(filename, file, verbose);
+static void parse_impl(Arena* temp_arena, Module module) {
+  parse_scan_for_imports(module_load_path(module), module_read_file_result(module));
 
   tu.var_scope_arena = temp_arena;
   tu.num_scopes = 0;
   tu.cur_scope = NULL;
-  tu.indent_levels[0] = 0;
-  tu.num_indents = 1;
-  tu.num_buffered_tokens = 0;
-  tu.op_null_ptr = operand_const(type_ptr(type_void), (Val){.p = 0});
-  tu.verbose = verbose;
-  tu.static_str_main = str_intern_len("main", 4);
-  tu.static_str___str__ = str_intern_len("__str__", 7);
-  tu.static_str___contains__ = str_intern_len("__contains__", 12);
-  tu.static_str___enter__ = str_intern_len("__enter__", 9);
-  tu.static_str___eq__ = str_intern_len("__eq__", 6);
-  tu.static_str___exit__ = str_intern_len("__exit__", 8);
-  tu.static_str_ret = str_intern_len("$ret", 4);
-  tu.static_str_up = str_intern_len("$up", 3);
 
   SqConfiguration config = SQ_CONFIGURATION_DEFAULT;
   //config.target = SQ_TARGET_AMD64_APPLE;
-  config.output = open_output_for(filename);
+  const char* output_copy = cstr_copy(temp_arena, module_output_path(module));
+  config.output = fopen(output_copy, "wb");
+  if (!config.output) {
+    base_writef_stderr("Couldn't open '%s' for output.\n", output_copy);
+    base_exit(1);
+  }
   config.output_function = sqbe_callback_output_function;
-  if (verbose == 1) {
+  if (glob.verbose == 1) {
     config.debug_flags = "PT";
-  } else if (verbose > 1) {
+  } else if (glob.verbose > 1) {
     config.debug_flags = "PMNCFKAILSRT";
   }
   sq_init(&config);
@@ -4930,4 +4952,6 @@ static void parse_impl(Arena* temp_arena,
   leave_scope();
 
   sq_shutdown();
+
+  fclose(config.output);
 }

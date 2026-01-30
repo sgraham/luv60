@@ -17,7 +17,9 @@ typedef enum ModuleState {
 
 typedef struct ModuleData {
   ModuleState state;
-  Str path;
+  Str load_path;
+  Str output_path;
+  ReadFileResult file;
   //ModuleVec imports;
   //DictImpl syms;
 } ModuleData;
@@ -29,7 +31,6 @@ static ModuleData* modules_;
 static size_t num_modules_;
 static const char* source_dir_;
 static const char* output_dir_;
-static int verbose_;
 static bool syntax_only_;
 
 void module_init(Arena* arena,
@@ -46,58 +47,57 @@ void module_init(Arena* arena,
   memset(modules_, 0, bytes);
   source_dir_ = source_dir;
   output_dir_ = output_dir;
-  verbose_ = verbose;
   syntax_only_ = syntax_only;
 
   if (syntax_only_) {
-    parse_one_time_initialization_syntax_check(arena_);
+    parse_one_time_initialization_syntax_check(arena_, verbose);
   } else {
-    parse_one_time_initialization_code_gen(arena_);
+    parse_one_time_initialization_code_gen(arena_, verbose);
   }
 }
 
-static Module alloc_module(const char* full_path, ModuleState module_state) {
+static Module alloc_module(const char* full_path,
+                           const char* output_path,
+                           ReadFileResult file,
+                           ModuleState module_state) {
   uint32_t index = num_modules_++;
   ModuleData* md = &modules_[index];
   CHECK(index < MAX_NUM_MODULES);
-  md->path = str_intern_len(full_path, strlen(full_path));
+  md->load_path = str_intern_len(full_path, strlen(full_path));
+  md->output_path = output_path ? str_intern_len(output_path, strlen(output_path)) : (Str){0};
+  md->file = file;
   md->state = module_state;
   return (Module){index};
 }
 
+static ModuleData* get_module_data(Module module) {
+  ASSERT(module.u < num_modules_);
+  return &modules_[module.u];
+}
+
 bool module_is_in_error(Module module) {
-  ASSERT(module.u < num_modules_);
-  ModuleData* md = &modules_[module.u];
-  return md->state == MS_ERROR;
+  return get_module_data(module)->state == MS_ERROR;
 }
 
-Str module_path(Module module) {
-  ASSERT(module.u < num_modules_);
-  ModuleData* md = &modules_[module.u];
-  return md->path;
+Str module_load_path(Module module) {
+  return get_module_data(module)->load_path;
 }
 
-static FILE* open_output_callback(const char* input) {
-  // This is assumed based on module_add().
-  size_t source_dir_len = strlen(source_dir_);
-  CHECK(strncmp(input, source_dir_, source_dir_len) == 0);
-  CHECK(input[source_dir_len] == '/');
-  const char* rest = &input[source_dir_len + 1];
-  size_t rest_len = strlen(rest);
-  CHECK(rest_len > 4);
-  CHECK(strcmp(&rest[rest_len - 4], ".luv") == 0);
-  rest_len -= 4;
-  // slash, .s, and nul
-  size_t output_full_path_len = strlen(output_dir_) + 1 + rest_len + 2 + 1;
-  char* output_full_path = arena_push(arena_, output_full_path_len, 1);
-  sprintf(output_full_path, "%s/%.*s.s", output_dir_, (int)rest_len, rest);
-  path_without_slashes_in_place(&output_full_path[strlen(output_dir_) + 1]);
-  FILE* f = fopen(output_full_path, "wb");
-  if (!f) {
-    base_writef_stderr("Couldn't open '%s' for output.\n", output_full_path);
-    base_exit(1);
-  }
-  return f;
+Str module_output_path(Module module) {
+  return get_module_data(module)->output_path;
+}
+
+ReadFileResult module_read_file_result(Module module) {
+  return get_module_data(module)->file;
+}
+
+size_t module_num_modules(void) {
+  return num_modules_;
+}
+
+Module module_get_module_by_index(size_t i) {
+  ASSERT(i < num_modules_);
+  return (Module){i};
 }
 
 // depth-first is right, and there's no cycles
@@ -113,14 +113,23 @@ Module module_add(StrView basename) {
   sprintf(full_path, "%s/%.*s.luv", source_dir_, (int)basename.size, basename.data);
   ReadFileResult file = base_read_file(full_path);
   if (!file.buffer) {
-    return alloc_module(full_path, MS_ERROR);
+    return alloc_module(full_path, NULL, file, MS_ERROR);
   }
+
+  // 1 for slash, 3 for ".s\0"
+  size_t output_full_path_len = strlen(output_dir_) + 1 + basename.size + 2 + 1;
+  char* output_path = arena_push(arena_, output_full_path_len, 1);
+  sprintf(output_path, "%s/%.*s.s", output_dir_, (int)basename.size, basename.data);
+
+  Module module = alloc_module(full_path, output_path, file, MS_PENDING);
 
   if (syntax_only_) {
-    parse_syntax_check(parse_temp_arena_, full_path, file, verbose_);
+    parse_syntax_check(parse_temp_arena_, module);
   } else {
-    parse_code_gen(parse_temp_arena_, full_path, file, verbose_, open_output_callback);
+    parse_code_gen(parse_temp_arena_, module);
   }
 
-  return alloc_module(full_path, MS_PENDING);
+  get_module_data(module)->state = MS_LOADED;
+
+  return module;
 }

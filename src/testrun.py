@@ -75,7 +75,7 @@ def main():
         "LUVC_BIN": ccbin,
         "OUT_DIR": out_dir.replace("\\", "/"),
     }
-
+    
     if cmds["cerr"]:
         res = subprocess.run(
             late_expansion(cmds["crun"], late_vars).split(" "),
@@ -105,14 +105,6 @@ def main():
         return 2
     elif cmds["cret"] != 0:
         return 0
-
-    # TODO
-    clang_cmd = late_expansion(cmds["clangrun"], late_vars).split(" ")
-    if sys.platform == "win32":
-        clang_cmd[0] = "C:\\Program Files\\LLVM\\bin\\clang.exe"
-    else:
-        clang_cmd[0] = "clang"
-    subprocess.run(clang_cmd, check=True)
 
     if cmds["out"] or cmds["err"]:
         res = subprocess.run(

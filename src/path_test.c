@@ -5,7 +5,7 @@ TEST(Path, Split) {
   Arena* arena = arena_create(KiB(128), KiB(128));
 
   const char* dir;
-  const char* file;
+  char* file;
   path_split(arena, "this/is_stuff\\and.luv", &dir, &file);
   EXPECT_STREQ(dir, "this/is_stuff");
   EXPECT_STREQ(file, "and.luv");

@@ -1,0 +1,6 @@
+# OUT: import didn't fail
+import "impsub"
+
+def int main():
+    print "import didn't fail"
+    return 0

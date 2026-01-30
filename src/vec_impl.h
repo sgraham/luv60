@@ -12,12 +12,6 @@ typedef struct VEC_NAME {
   int64_t capacity;
 } VEC_NAME;
 
-static inline FORCE_INLINE void VEC_NAME_JOIN(init)(VEC_NAME* vec, Arena* arena) {
-  vec->size = 0;
-  vec->capacity = COUNTOFI(vec->short_data);
-  vec->arena = arena;
-}
-
 static inline FORCE_INLINE void VEC_NAME_JOIN(free)(VEC_NAME* vec) {
   vec->size = 0;
 }
@@ -60,6 +54,28 @@ static void VEC_NAME_JOIN(append)(VEC_NAME* vec, VEC_T op) {
   VEC_NAME_JOIN(ensure_capacity)(vec, vec->size + 1);
   ++vec->size;
   VEC_NAME_JOIN(set)(vec, vec->size - 1, op);
+}
+
+static VEC_T* VEC_NAME_JOIN(dataptr)(VEC_NAME* vec) {
+  if (vec->capacity <= COUNTOFI(vec->short_data)) {
+    return &vec->short_data[0];
+  } else {
+    return &vec->data[0];
+  }
+}
+
+static inline FORCE_INLINE void VEC_NAME_JOIN(init)(VEC_NAME* vec, Arena* arena) {
+  vec->size = 0;
+  vec->capacity = COUNTOFI(vec->short_data);
+  vec->arena = arena;
+
+  (void)VEC_NAME_JOIN(append);
+  (void)VEC_NAME_JOIN(at);
+  (void)VEC_NAME_JOIN(dataptr);
+  (void)VEC_NAME_JOIN(ensure_capacity);
+  (void)VEC_NAME_JOIN(free);
+  (void)VEC_NAME_JOIN(set);
+  (void)VEC_NAME_JOIN(size);
 }
 
 #undef VEC_NAME

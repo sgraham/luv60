@@ -16,7 +16,7 @@ void path_without_slashes_in_place(char* path) {
   }
 }
 
-void path_split(Arena* arena, const char* input, const char** source_dir, const char** filename) {
+void path_split(Arena* arena, const char* input, const char** source_dir, char** filename) {
   size_t input_len = strlen(input);
   char* input_copy = arena_push(arena, input_len + 1, 1);
   memcpy(input_copy, input, input_len + 1);
