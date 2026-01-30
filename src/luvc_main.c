@@ -89,7 +89,12 @@ int assemble_and_link(Arena* arena,
   ByteVec cmd;
   bv_init(&cmd, arena);
 
+#if OS_WINDOWS
+  // TODO
+  append_cstr(&cmd, "\"C:\\Program Files\\LLVM\\bin\\clang.exe\" ");
+#else
   append_cstr(&cmd, "clang ");
+#endif
 
   for (size_t i = 0; i < module_num_modules(); ++i) {
     Module m = module_get_module_by_index(i);
