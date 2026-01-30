@@ -19,9 +19,9 @@ typedef struct ModuleData {
   ModuleState state;
   Str load_path;
   Str output_path;
+  Str import_as;
   ReadFileResult file;
-  //ModuleVec imports;
-  //DictImpl syms;
+  Scope* globals;
 } ModuleData;
 
 #define MAX_NUM_MODULES 1024
@@ -56,15 +56,29 @@ void module_init(Arena* arena,
   }
 }
 
+static Module alloc_module_error(const char* full_path) {
+  uint32_t index = num_modules_++;
+  ModuleData* md = &modules_[index];
+  CHECK(index < MAX_NUM_MODULES);
+  md->load_path = str_intern_len(full_path, strlen(full_path));
+  md->output_path = (Str){0};
+  md->import_as = (Str){0};
+  md->file = (ReadFileResult){0};
+  md->state = MS_ERROR;
+  return (Module){index};
+}
+
 static Module alloc_module(const char* full_path,
                            const char* output_path,
+                           const char* import_as,
                            ReadFileResult file,
                            ModuleState module_state) {
   uint32_t index = num_modules_++;
   ModuleData* md = &modules_[index];
   CHECK(index < MAX_NUM_MODULES);
   md->load_path = str_intern_len(full_path, strlen(full_path));
-  md->output_path = output_path ? str_intern_len(output_path, strlen(output_path)) : (Str){0};
+  md->output_path = str_intern_len(output_path, strlen(output_path));
+  md->import_as = str_intern_len(import_as, strlen(import_as));
   md->file = file;
   md->state = module_state;
   return (Module){index};
@@ -87,6 +101,10 @@ Str module_output_path(Module module) {
   return get_module_data(module)->output_path;
 }
 
+Str module_import_as(Module module) {
+  return get_module_data(module)->import_as;
+}
+
 ReadFileResult module_read_file_result(Module module) {
   return get_module_data(module)->file;
 }
@@ -98,6 +116,14 @@ size_t module_num_modules(void) {
 Module module_get_module_by_index(size_t i) {
   ASSERT(i < num_modules_);
   return (Module){i};
+}
+
+void module_set_scope(Module module, Scope* scope) {
+  get_module_data(module)->globals = scope;
+}
+
+Scope* module_get_scope(Module module) {
+  return get_module_data(module)->globals;
 }
 
 // depth-first is right, and there's no cycles
@@ -113,7 +139,7 @@ Module module_add(StrView basename) {
   sprintf(full_path, "%s/%.*s.luv", source_dir_, (int)basename.size, basename.data);
   ReadFileResult file = base_read_file(full_path);
   if (!file.buffer) {
-    return alloc_module(full_path, NULL, file, MS_ERROR);
+    return alloc_module_error(full_path);
   }
 
   // 1 for slash, 3 for ".s\0"
@@ -121,7 +147,13 @@ Module module_add(StrView basename) {
   char* output_path = arena_push(arena_, output_full_path_len, 1);
   sprintf(output_path, "%s/%.*s.s", output_dir_, (int)basename.size, basename.data);
 
-  Module module = alloc_module(full_path, output_path, file, MS_PENDING);
+  // TODO: import as
+  const char* unused_dir;
+  char* tail;
+  path_split(arena_, full_path, &unused_dir, &tail);
+  path_trim_extension_if_exists(tail, ".luv");
+
+  Module module = alloc_module(full_path, output_path, tail, file, MS_PENDING);
 
   if (syntax_only_) {
     parse_syntax_check(parse_temp_arena_, module);

@@ -1,0 +1,7 @@
+# DISABLED
+# OUT: 1230
+import "impsub"
+
+def int main():
+    print impsub.helper_func(123)
+    return 0

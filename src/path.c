@@ -16,18 +16,18 @@ void path_without_slashes_in_place(char* path) {
   }
 }
 
-void path_split(Arena* arena, const char* input, const char** source_dir, char** filename) {
+void path_split(Arena* arena, const char* input, const char** out_dir, char** filename) {
   size_t input_len = strlen(input);
   char* input_copy = arena_push(arena, input_len + 1, 1);
   memcpy(input_copy, input, input_len + 1);
   path_normalize_to_slash_in_place(input_copy);
   char* last_slash = strrchr(input_copy, '/');
   if (!last_slash) {
-    *source_dir = ".";
+    *out_dir = ".";
     *filename = input_copy;
   } else {
     *last_slash = 0;
-    *source_dir = input_copy;
+    *out_dir = input_copy;
     *filename = last_slash + 1;
   }
 }

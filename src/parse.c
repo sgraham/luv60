@@ -8,7 +8,7 @@ typedef enum SymKind {
   SYM_CONST,
   SYM_FUNC,
   SYM_TYPE,
-  SYM_PACKAGE,
+  SYM_MODULE,
 } SymKind;
 
 typedef struct TokenCursor {
@@ -66,6 +66,7 @@ typedef struct Sym {
       SqSymbol global;
       SqRef ref2;  // Upvals for SYM_FUNC
     };
+    Scope* modscope;
   };
   SymScopeDecl scope_decl;
 } Sym;
@@ -74,7 +75,6 @@ typedef struct Sym {
 #define MAX_FUNC_PARAMS 32
 #define MAX_STRUCT_FIELDS 64
 #define MAX_UPVALS 32
-#define MAX_PACKAGE_DEPTH 16
 #define MAX_FMT_ARGS 32
 #define MAX_EXIT_CALLS 32
 #define MAX_ITERATION_DATAS 32
@@ -121,7 +121,7 @@ typedef struct ExitCall {
 
 typedef struct IterationData IterationData;
 
-typedef struct Scope {
+struct Scope {
   // FuncData
   Sym* func_sym;
   ExitCall exit_call_stack[MAX_EXIT_CALLS];  // TODO: maybe save bound Operand instead?
@@ -142,7 +142,7 @@ typedef struct Scope {
   bool is_function;
   bool is_module;
   bool is_full_dict;
-} Scope;
+};
 
 #define OPK_BIT_CONST 0x1
 #define OPK_BIT_LVAL 0x2
@@ -211,14 +211,16 @@ typedef struct CompilerGlobals {
 
 static CompilerGlobals glob;
 
-typedef struct TranslationUnit {
-  Arena* var_scope_arena;
-
-  TokenizedBuffer tokbuf;
-
+typedef struct NamespaceData {
+  Arena* var_scope_arena;  // Not used for module (0), only > 0.
   Scope scopes[MAX_SCOPES];
   int num_scopes;
   Scope* cur_scope;
+} NamespaceData;
+
+typedef struct TranslationUnit {
+  TokenizedBuffer tokbuf;
+  NamespaceData nd;
 
   int verbose;
 
@@ -230,8 +232,8 @@ typedef struct TranslationUnit {
 static TranslationUnit tu;
 
 static void push_exit_call(SqRef func, SqRef obj) {
-  ASSERT(tu.cur_scope->num_exit_calls < MAX_EXIT_CALLS);
-  tu.cur_scope->exit_call_stack[tu.cur_scope->num_exit_calls++] =
+  ASSERT(tu.nd.cur_scope->num_exit_calls < MAX_EXIT_CALLS);
+  tu.nd.cur_scope->exit_call_stack[tu.nd.cur_scope->num_exit_calls++] =
       (ExitCall){.func = func, .obj = obj};
 }
 
@@ -741,20 +743,20 @@ static bool namesym_eq_func(void* void_nsp_a, void* void_nsp_b) {
 
 // Returns pointer into dict where Sym is stored by value, probably bad idea.
 static Sym* sym_new(SymKind kind, Str name, Type type) {
-  ASSERT(tu.cur_scope);
+  ASSERT(tu.nd.cur_scope);
   ASSERT(!str_is_none(name));
-  if (tu.cur_scope->is_full_dict) {
+  if (tu.nd.cur_scope->is_full_dict) {
     NameSymPair nsp = {.name = name,
                       .sym = {
                           .kind = kind,
                           .name = name,
                           .type = type,
                       }};
-    DictInsert res = dict_insert(&tu.cur_scope->sym_dict, &nsp, namesym_hash_func,
+    DictInsert res = dict_insert(&tu.nd.cur_scope->sym_dict, &nsp, namesym_hash_func,
                                 namesym_eq_func, sizeof(NameSymPair), _Alignof(NameSymPair));
     return &((NameSymPair*)dict_rawiter_get(&res.iter))->sym;
   } else {
-    SmallFlatNameSymMap* nm = &tu.cur_scope->flat_map;
+    SmallFlatNameSymMap* nm = &tu.nd.cur_scope->flat_map;
     int count = nm->num_entries;
 
     if (count == COUNTOFI(nm->names)) {
@@ -762,7 +764,8 @@ static Sym* sym_new(SymKind kind, Str name, Type type) {
 
       // Can't immediately put into cur_scope because the flat_map and
       // dict_sym are a union.
-      DictImpl new_dict = dict_new(tu.var_scope_arena, COUNTOFI(nm->names) * 4,
+      ASSERT(!tu.nd.cur_scope->is_module);
+      DictImpl new_dict = dict_new(tu.nd.var_scope_arena, COUNTOFI(nm->names) * 4,
                                    sizeof(NameSymPair), _Alignof(NameSymPair));
       for (int i = 0; i < count; ++i) {
         NameSymPair nsp = {.name = nm->names[i], .sym = nm->syms[i]};
@@ -772,8 +775,8 @@ static Sym* sym_new(SymKind kind, Str name, Type type) {
 
       // Now flat_map is dead, overrwrite with the dict and update the bool to
       // indicate we have a full dict.
-      tu.cur_scope->is_full_dict = true;
-      tu.cur_scope->sym_dict = new_dict;
+      tu.nd.cur_scope->is_full_dict = true;
+      tu.nd.cur_scope->sym_dict = new_dict;
 
       // Call the other branch to actually insert the new sym.
       return sym_new(kind, name, type);
@@ -844,7 +847,7 @@ static Sym* gen_array___str__(Type type) {
   funcsym->global = str_func;
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
 
-  sq_itemctx_activate(tu.cur_scope->func_item_ctx);
+  sq_itemctx_activate(tu.nd.cur_scope->func_item_ctx);
   return funcsym;
 }
 
@@ -888,7 +891,7 @@ static Sym* gen_array___contains__(Type type) {
   funcsym->global = contains_func;
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
 
-  sq_itemctx_activate(tu.cur_scope->func_item_ctx);
+  sq_itemctx_activate(tu.nd.cur_scope->func_item_ctx);
   return funcsym;
 }
 
@@ -926,7 +929,7 @@ static Sym* gen_list_append(Type type) {
   funcsym->global = append_func;
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
 
-  sq_itemctx_activate(tu.cur_scope->func_item_ctx);
+  sq_itemctx_activate(tu.nd.cur_scope->func_item_ctx);
 
   return funcsym;
 }
@@ -974,7 +977,7 @@ static Sym* gen_list___contains__(Type type) {
   funcsym->global = contains_func;
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
 
-  sq_itemctx_activate(tu.cur_scope->func_item_ctx);
+  sq_itemctx_activate(tu.nd.cur_scope->func_item_ctx);
 
   return funcsym;
 }
@@ -1008,7 +1011,7 @@ static Sym* gen_list___str__(Type type) {
   funcsym->global = str_func;
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
 
-  sq_itemctx_activate(tu.cur_scope->func_item_ctx);
+  sq_itemctx_activate(tu.nd.cur_scope->func_item_ctx);
   return funcsym;
 }
 
@@ -1195,8 +1198,8 @@ static Sym* make_global(SymKind kind, Str name, Type type, Val initial_value) {
   new->global = sq_data_end();
   new->scope_decl = SSD_DECLARED_GLOBAL;
 
-  if (tu.cur_scope->is_function) {
-    sq_itemctx_activate(tu.cur_scope->func_item_ctx);
+  if (tu.nd.cur_scope->is_function) {
+    sq_itemctx_activate(tu.nd.cur_scope->func_item_ctx);
   }
 
   return new;
@@ -1217,42 +1220,47 @@ static Sym* make_param(Str name, Type type, int index) {
 }
 
 static void enter_scope(bool is_module, bool is_function, Sym* funcsym) {
-  tu.cur_scope = &tu.scopes[tu.num_scopes++];
-  tu.cur_scope->func_sym = funcsym;
-  //tu.cur_scope->arena_saved_pos = arena_pos(arena_ir);
-  tu.cur_scope->num_exit_calls = 0;
-  tu.cur_scope->num_iteration_datas = 0;
-  tu.cur_scope->upval_map.num_upvals = 0;
-  tu.cur_scope->arena_pos = arena_pos(tu.var_scope_arena);
-  tu.cur_scope->is_function = is_function;
-  tu.cur_scope->is_module = is_module;
-  tu.cur_scope->is_full_dict = !is_function;
-  if (tu.cur_scope->is_full_dict) {
-    tu.cur_scope->sym_dict =
-        dict_new(tu.var_scope_arena, 1 << 20, sizeof(NameSymPair), _Alignof(NameSymPair));
+  tu.nd.cur_scope = &tu.nd.scopes[tu.nd.num_scopes++];
+  tu.nd.cur_scope->func_sym = funcsym;
+  //tu.nd.cur_scope->arena_saved_pos = arena_pos(arena_ir);
+  tu.nd.cur_scope->num_exit_calls = 0;
+  tu.nd.cur_scope->num_iteration_datas = 0;
+  tu.nd.cur_scope->upval_map.num_upvals = 0;
+  if (is_module) {
+    tu.nd.cur_scope->arena_pos = UINT64_MAX;
   } else {
-    flat_name_map_init(&tu.cur_scope->flat_map);
+    tu.nd.cur_scope->arena_pos = arena_pos(tu.nd.var_scope_arena);
+  }
+  tu.nd.cur_scope->is_function = is_function;
+  tu.nd.cur_scope->is_module = is_module;
+  tu.nd.cur_scope->is_full_dict = !is_function;
+  if (tu.nd.cur_scope->is_full_dict) {
+    tu.nd.cur_scope->sym_dict = dict_new(is_module ? glob.arena : tu.nd.var_scope_arena, 1 << 20,
+                                         sizeof(NameSymPair), _Alignof(NameSymPair));
+  } else {
+    flat_name_map_init(&tu.nd.cur_scope->flat_map);
   }
 }
 
 static void leave_scope(void) {
-  arena_pop_to(tu.var_scope_arena, tu.cur_scope->arena_pos);
-  --tu.num_scopes;
-  ASSERT(tu.num_scopes >= 0);
-  if (tu.num_scopes == 0) {
-    tu.cur_scope = NULL;
+  CHECK(!tu.nd.cur_scope->is_module);  // Shouldn't be leaving this.
+  arena_pop_to(tu.nd.var_scope_arena, tu.nd.cur_scope->arena_pos);
+  --tu.nd.num_scopes;
+  ASSERT(tu.nd.num_scopes >= 0);
+  if (tu.nd.num_scopes == 0) {
+    tu.nd.cur_scope = NULL;
   } else {
-    tu.cur_scope = &tu.scopes[tu.num_scopes - 1];
+    tu.nd.cur_scope = &tu.nd.scopes[tu.nd.num_scopes - 1];
   }
 }
 
 static void enter_function(Sym* sym,
                            Str param_names[MAX_FUNC_PARAMS],
                            Type param_types[MAX_FUNC_PARAMS]) {
-  bool is_nested = tu.num_scopes > 1;  // Module, parent.
+  bool is_nested = tu.nd.num_scopes > 1;  // Module, parent.
   if (is_nested) {
-    ASSERT(tu.scopes[tu.num_scopes - 1].is_function);
-    ASSERT(tu.scopes[0].is_module);
+    ASSERT(tu.nd.scopes[tu.nd.num_scopes - 1].is_function);
+    ASSERT(tu.nd.scopes[0].is_module);
   }
 
   enter_scope(/*is_module=*/false, /*is_function=*/true, sym);
@@ -1262,7 +1270,7 @@ static void enter_function(Sym* sym,
 
   Type ret_type = type_func_return_type(sym->type);
 
-  tu.cur_scope->func_item_ctx =
+  tu.nd.cur_scope->func_item_ctx =
       sq_func_start(linkage, type_to_sqtype(ret_type), cstr_copy(glob.arena, sym->name));
 
   uint32_t num_params = type_func_num_params(sym->type);
@@ -1275,12 +1283,12 @@ static void enter_function(Sym* sym,
     ASSERT(str_eq(param_syms[0]->name, glob.static_str_up));
     ASSERT(type_kind(param_syms[0]->type) == TYPE_PTR);
     ASSERT(type_eq(type_ptr_subtype(param_syms[0]->type), type_void));
-    tu.cur_scope->upval_base = param_syms[0]->ref;
+    tu.nd.cur_scope->upval_base = param_syms[0]->ref;
   }
 }
 
 static void leave_function(void) {
-  Type ret_type = type_func_return_type(tu.cur_scope->func_sym->type);
+  Type ret_type = type_func_return_type(tu.nd.cur_scope->func_sym->type);
   if (type_eq(ret_type, type_void)) {
     sq_i_ret_void();
   } else {
@@ -1300,24 +1308,24 @@ static void leave_function(void) {
     sq_i_ret(sq_const_int(0xbad));
   }
 
-  tu.cur_scope->func_sym->global = sq_func_end();
-  tu.cur_scope->func_item_ctx = (SqItemCtx){0};
+  tu.nd.cur_scope->func_sym->global = sq_func_end();
+  tu.nd.cur_scope->func_item_ctx = (SqItemCtx){0};
 
-  bool is_nested = tu.num_scopes > 2;  // Module, parent function, current function.
+  bool is_nested = tu.nd.num_scopes > 2;  // Module, parent function, current function.
   if (is_nested) {
-    ASSERT(tu.scopes[tu.num_scopes - 1].is_function);
-    ASSERT(tu.scopes[tu.num_scopes - 2].is_function);
-    ASSERT(tu.scopes[0].is_module);
+    ASSERT(tu.nd.scopes[tu.nd.num_scopes - 1].is_function);
+    ASSERT(tu.nd.scopes[tu.nd.num_scopes - 2].is_function);
+    ASSERT(tu.nd.scopes[0].is_module);
   }
 
   if (is_nested) {
     // This is pointing to the nested one, but we have to set cur_scope to the
     // parent one, so that codegen goes to it.
-    UpvalMap* inner_uvm = &tu.cur_scope->upval_map;
-    Sym* child_func = tu.cur_scope->func_sym;
-    tu.cur_scope = &tu.scopes[tu.num_scopes - 2];
-    UpvalMap* parent_uvm = &tu.cur_scope->upval_map;
-    sq_itemctx_activate(tu.cur_scope->func_item_ctx);
+    UpvalMap* inner_uvm = &tu.nd.cur_scope->upval_map;
+    Sym* child_func = tu.nd.cur_scope->func_sym;
+    tu.nd.cur_scope = &tu.nd.scopes[tu.nd.num_scopes - 2];
+    UpvalMap* parent_uvm = &tu.nd.cur_scope->upval_map;
+    sq_itemctx_activate(tu.nd.cur_scope->func_item_ctx);
 
     SqRef upval_data = sq_i_alloc8(sq_const_int(inner_uvm->alloc_size));
     child_func->ref2 = upval_data;
@@ -1349,13 +1357,13 @@ static void leave_function(void) {
               /*
               base_writef_stderr("want to write %s from %s for %s in %s\n",
                                  cstr_copy(glob.arena, parent_uv->name),
-                                 cstr_copy(glob.arena, tu.cur_scope->func_sym->name),
+                                 cstr_copy(glob.arena, tu.nd.cur_scope->func_sym->name),
                                  cstr_copy(glob.arena, uv->name),
                                  cstr_copy(glob.arena, child_func->name));
                                  */
-              ASSERT(tu.cur_scope->upval_base.u);
+              ASSERT(tu.nd.cur_scope->upval_base.u);
               SqRef val =
-                  load_by_type_from(uv->type, sq_i_add(sq_type_long, tu.cur_scope->upval_base,
+                  load_by_type_from(uv->type, sq_i_add(sq_type_long, tu.nd.cur_scope->upval_base,
                                                        sq_const_int(parent_uv->offset)));
               store_by_type_val_into(uv->type, val,
                                      sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
@@ -1491,7 +1499,7 @@ static SqRef emit_string_obj(StrView str) {
   sq_data_long(str.size);
   SqSymbol string_obj = sq_data_end();
 
-  sq_itemctx_activate(tu.cur_scope->func_item_ctx);
+  sq_itemctx_activate(tu.nd.cur_scope->func_item_ctx);
   return sq_ref_for_symbol(string_obj);
 }
 
@@ -2568,6 +2576,10 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
       error("todo; assigning to unexpected thing");
     }
   } else {
+    if (type_kind(left.type) == TYPE_MODULE) {
+      error("todo; module!");
+    }
+
     Operand new_left = left;
     while (type_kind(new_left.type) == TYPE_PTR) {
       new_left =
@@ -2963,7 +2975,7 @@ static IterationData iteration_prolog(Str it, Operand* over) {
 
   itd.loop_start = sq_block_declare_and_start();
   itd.loop_continue = sq_block_declare();
-  itd.exit_call_mark_for_break_continue = tu.cur_scope->num_exit_calls;
+  itd.exit_call_mark_for_break_continue = tu.nd.cur_scope->num_exit_calls;
 
   SqBlock block_body = sq_block_declare();
   itd.loop_done = sq_block_declare();
@@ -3770,7 +3782,7 @@ static ScopeResult scope_lookup_single(Scope* scope, Str name, bool crossed_func
 static ScopeResult scope_lookup_recursive(Str name, Sym** sym) {
   *sym = NULL;
   bool crossed_function = false;
-  Scope* cur_scope = tu.cur_scope;
+  Scope* cur_scope = tu.nd.cur_scope;
   for (;;) {
     ScopeResult res = scope_lookup_single(cur_scope, name, crossed_function, sym);
     if (res != SCOPE_RESULT_UNDEFINED) {
@@ -3782,11 +3794,11 @@ static ScopeResult scope_lookup_recursive(Str name, Sym** sym) {
       crossed_function = true;
     }
 
-    if (cur_scope == &tu.scopes[0]) {
+    if (cur_scope == &tu.nd.scopes[0]) {
       break;
     }
-    ASSERT(cur_scope >= &tu.scopes[0] &&
-           cur_scope <= &tu.scopes[tu.num_scopes - 1]);
+    ASSERT(cur_scope >= &tu.nd.scopes[0] &&
+           cur_scope <= &tu.nd.scopes[tu.nd.num_scopes - 1]);
     cur_scope--;  // parent
   }
 
@@ -3812,7 +3824,7 @@ static int create_upval(Scope* scope, Str name, Sym* sym) {
   // otherwise use the value themselves will have it forwarded to them, so
   // that it can be captured by the inner-most.
 
-  ASSERT(scope >= &tu.scopes[1] && scope <= &tu.scopes[tu.num_scopes - 1]);
+  ASSERT(scope >= &tu.nd.scopes[1] && scope <= &tu.nd.scopes[tu.nd.num_scopes - 1]);
   Scope* parent_scope = scope - 1;
   if (parent_scope->upval_base.u) {
     Sym* parent_sym;
@@ -3912,7 +3924,7 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
     case SCOPE_RESULT_UPVALUE: {
       // We already did a scope_lookup() so we know the in the current function,
       // we need to reference this value through $up.
-      Operand value = find_or_create_upval(tu.cur_scope, var_name, sym);
+      Operand value = find_or_create_upval(tu.nd.cur_scope, var_name, sym);
       return value;
     }
     case SCOPE_RESULT_UNDEFINED: {
@@ -3945,8 +3957,8 @@ static Operand parse_variable(bool can_assign, Type* expected) {
       }
       case SCOPE_RESULT_UNDEFINED:
       case SCOPE_RESULT_GLOBAL: {
-        if (tu.cur_scope->is_function) {
-          ASSERT(!tu.cur_scope->is_module);
+        if (tu.nd.cur_scope->is_function) {
+          ASSERT(!tu.nd.cur_scope->is_module);
 
 #if 0
           // Assigning to a global from a function.
@@ -3976,8 +3988,8 @@ static Operand parse_variable(bool can_assign, Type* expected) {
                          "Cannot use an augmented assignment when implicitly declaring a local.");
           }
         } else {
-          ASSERT(tu.cur_scope->is_module);
-          ASSERT(!tu.cur_scope->is_function);
+          ASSERT(tu.nd.cur_scope->is_module);
+          ASSERT(!tu.nd.cur_scope->is_function);
           ASSERT(eq_kind == TOK_EQ);
           if (scope_result == SCOPE_RESULT_UNDEFINED) {
             // Global variable declaration without a type.
@@ -4237,13 +4249,13 @@ static void for_statement(void) {
 
       // TODO: maybe move this into iteration_prolog, but not needed for
       // comprehensions, so maybe it makes more sense here.
-      tu.cur_scope->iteration_datas[tu.cur_scope->num_iteration_datas++] = &itd;
+      tu.nd.cur_scope->iteration_datas[tu.nd.cur_scope->num_iteration_datas++] = &itd;
 
       consume_block_header("for");
       parse_block();
       iteration_epilog(itd);
 
-      --tu.cur_scope->num_iteration_datas;
+      --tu.nd.cur_scope->num_iteration_datas;
 
     } else {
       errorf("Unhandled for/in over type %s.", type_as_str(expr.type));
@@ -4253,14 +4265,14 @@ static void for_statement(void) {
 
 static void break_statement(void) {
   consume(TOK_NEWLINE, "Expecting newline after 'break'.");
-  if (tu.cur_scope->num_iteration_datas == 0) {
+  if (tu.nd.cur_scope->num_iteration_datas == 0) {
     error("Cannot 'break' outside of loop.");
   }
-  IterationData* itd = tu.cur_scope->iteration_datas[tu.cur_scope->num_iteration_datas - 1];
+  IterationData* itd = tu.nd.cur_scope->iteration_datas[tu.nd.cur_scope->num_iteration_datas - 1];
 
-  for (int i = tu.cur_scope->num_exit_calls - 1; i >= itd->exit_call_mark_for_break_continue;
+  for (int i = tu.nd.cur_scope->num_exit_calls - 1; i >= itd->exit_call_mark_for_break_continue;
        --i) {
-    ExitCall* ec = &tu.cur_scope->exit_call_stack[i];
+    ExitCall* ec = &tu.nd.cur_scope->exit_call_stack[i];
     sq_i_call1(sq_type_void, ec->func, (SqCallArg){sq_type_long, ec->obj});
   }
 
@@ -4270,14 +4282,14 @@ static void break_statement(void) {
 
 static void continue_statement(void) {
   consume(TOK_NEWLINE, "Expecting newline after 'continue'.");
-  if (tu.cur_scope->num_iteration_datas == 0) {
+  if (tu.nd.cur_scope->num_iteration_datas == 0) {
     error("Cannot 'continue' outside of loop.");
   }
-  IterationData* itd = tu.cur_scope->iteration_datas[tu.cur_scope->num_iteration_datas - 1];
+  IterationData* itd = tu.nd.cur_scope->iteration_datas[tu.nd.cur_scope->num_iteration_datas - 1];
 
-  for (int i = tu.cur_scope->num_exit_calls - 1; i >= itd->exit_call_mark_for_break_continue;
+  for (int i = tu.nd.cur_scope->num_exit_calls - 1; i >= itd->exit_call_mark_for_break_continue;
        --i) {
-    ExitCall* ec = &tu.cur_scope->exit_call_stack[i];
+    ExitCall* ec = &tu.nd.cur_scope->exit_call_stack[i];
     sq_i_call1(sq_type_void, ec->func, (SqCallArg){sq_type_long, ec->obj});
   }
 
@@ -4332,7 +4344,7 @@ static void with_statement(void) {
 
   // TODO: handle break/continue!
 
-  ExitCall* ec = &tu.cur_scope->exit_call_stack[--tu.cur_scope->num_exit_calls];
+  ExitCall* ec = &tu.nd.cur_scope->exit_call_stack[--tu.nd.cur_scope->num_exit_calls];
   sq_i_call1(sq_type_void, ec->func, (SqCallArg){sq_type_long, ec->obj});
 }
 
@@ -4406,10 +4418,10 @@ static void def_statement(void) {
 
   Type param_types[MAX_FUNC_PARAMS];
   Str param_names[MAX_FUNC_PARAMS];
-  bool is_nested = tu.num_scopes > 1;
+  bool is_nested = tu.nd.num_scopes > 1;
   if (is_nested) {
-    ASSERT(tu.scopes[tu.num_scopes - 1].is_function);
-    ASSERT(tu.scopes[0].is_module);
+    ASSERT(tu.nd.scopes[tu.nd.num_scopes - 1].is_function);
+    ASSERT(tu.nd.scopes[0].is_module);
   }
   uint32_t num_params =
       parse_func_params(is_nested, /*memfn_self=*/NULL, (Str){0}, param_types, param_names);
@@ -4615,7 +4627,7 @@ static void struct_statement() {
 
     type_struct_set_initializer_symbol(strukt, init_sym);
 
-    ASSERT(!tu.cur_scope->is_function);
+    ASSERT(!tu.nd.cur_scope->is_function);
   }
   Sym* new = sym_new(SYM_TYPE, name, strukt);
   new->scope_decl = SSD_DECLARED_GLOBAL;
@@ -4644,12 +4656,12 @@ static void parse_variable_statement(Type type) {
 }
 
 static LastStatementType return_statement(void) {
-  for (int i = tu.cur_scope->num_exit_calls - 1; i >= 0; --i) {
-    ExitCall* ec = &tu.cur_scope->exit_call_stack[i];
+  for (int i = tu.nd.cur_scope->num_exit_calls - 1; i >= 0; --i) {
+    ExitCall* ec = &tu.nd.cur_scope->exit_call_stack[i];
     sq_i_call1(sq_type_void, ec->func, (SqCallArg){sq_type_long, ec->obj});
   }
 
-  Type func_ret = type_func_return_type(tu.cur_scope->func_sym->type);
+  Type func_ret = type_func_return_type(tu.nd.cur_scope->func_sym->type);
   ASSERT(!type_is_none(func_ret));
   Operand op = operand_none;
   if (!type_eq(func_ret, type_void)) {
@@ -4676,7 +4688,7 @@ static void global_statement(void) {
   Str name = parse_name("Expect variable name after global.");
 
   Sym* sym;
-  ScopeResult scope_result = scope_lookup_single(&tu.scopes[0], name, true, &sym);
+  ScopeResult scope_result = scope_lookup_single(&tu.nd.scopes[0], name, true, &sym);
   if (scope_result != SCOPE_RESULT_GLOBAL) {
     errorf("Undefined global '%.*s'.", str_len(name), str_raw_ptr(name));
   }
@@ -4886,15 +4898,31 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
       while (inside_quotes.data[inside_quotes.size] != '"') {
         --inside_quotes.size;
       }
+
+      // Need to push and pop these around import, because main compiler uses `tu` directly.
       tb = tu.tokbuf;
+      NamespaceData saved_nd = tu.nd;
+
       Module newmod = module_add(inside_quotes);
       if (module_is_in_error(newmod)) {
         Str path = module_load_path(newmod);
         errorf("Couldn't open import, looking for '%.*s'.", (int)str_len(path), str_raw_ptr(path));
       }
+
+      ASSERT(tu.nd.num_scopes > 0);
+      Scope* imported_module_scope = &tu.nd.scopes[0];
+
+      // Restore current module.
+      tu.nd = saved_nd;
       tu.tokbuf = tb;
-      token_init(file.buffer); // TODO: paren level maybe need a _re_init
+      token_init(file.buffer);
+
       consume(TOK_NEWLINE, "Expecting newline after import.");
+
+      //printf("import as: '%s'\n", cstr_copy(glob.arena, module_import_as(newmod)));
+      Sym* sym = sym_new(SYM_MODULE, module_import_as(newmod), type_module);
+      sym->modscope = imported_module_scope;
+      sym->scope_decl = SSD_DECLARED_GLOBAL;
     } else {
       break;
     }
@@ -4902,11 +4930,13 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
 }
 
 static void parse_impl(Arena* temp_arena, Module module) {
-  parse_scan_for_imports(module_load_path(module), module_read_file_result(module));
+  tu.nd.var_scope_arena = temp_arena;
+  tu.nd.num_scopes = 0;
+  tu.nd.cur_scope = NULL;
 
-  tu.var_scope_arena = temp_arena;
-  tu.num_scopes = 0;
-  tu.cur_scope = NULL;
+  enter_scope(/*is_module=*/true, /*is_function=*/false, NULL);
+
+  parse_scan_for_imports(module_load_path(module), module_read_file_result(module));
 
   SqConfiguration config = SQ_CONFIGURATION_DEFAULT;
   //config.target = SQ_TARGET_AMD64_APPLE;
@@ -4941,7 +4971,6 @@ static void parse_impl(Arena* temp_arena, Module module) {
   sq_type_add_field(sq_type_long); // step
   tu.sq_type_range = sq_type_struct_end();
 
-  enter_scope(/*is_module=*/true, /*is_function=*/false, NULL);
 
   declare_all_rt_foreigns();
 
@@ -4949,7 +4978,8 @@ static void parse_impl(Arena* temp_arena, Module module) {
     parse_statement(/*toplevel=*/true);
   }
 
-  leave_scope();
+  CHECK(tu.nd.num_scopes == 1);
+  module_set_scope(module, &tu.nd.scopes[0]);
 
   sq_shutdown();
 
