@@ -21,7 +21,7 @@ typedef struct ModuleData {
   Str output_path;
   Str import_as;
   ReadFileResult file;
-  Scope* globals;
+  ImportedModuleScope* globals;
 } ModuleData;
 
 #define MAX_NUM_MODULES 1024
@@ -118,11 +118,11 @@ Module module_get_module_by_index(size_t i) {
   return (Module){i};
 }
 
-void module_set_scope(Module module, Scope* scope) {
+void module_set_scope(Module module, ImportedModuleScope* scope) {
   get_module_data(module)->globals = scope;
 }
 
-Scope* module_get_scope(Module module) {
+ImportedModuleScope* module_get_scope(Module module) {
   return get_module_data(module)->globals;
 }
 

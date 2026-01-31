@@ -289,8 +289,6 @@ typedef struct Module {
   uint32_t u;
 } Module;
 
-typedef struct Scope Scope;
-
 void module_init(Arena* arena,
                  Arena* parse_temp_arena,
                  const char* source_dir,
@@ -299,13 +297,15 @@ void module_init(Arena* arena,
                  bool syntax_only);
 Module module_add(StrView basename);
 
+typedef struct ImportedModuleScope ImportedModuleScope;
+
 bool module_is_in_error(Module module);
 Str module_load_path(Module module);
 Str module_output_path(Module module);
 Str module_import_as(Module module);
 ReadFileResult module_read_file_result(Module module);
-void module_set_scope(Module module, Scope *scope);
-Scope* module_get_scope(Module module);
+void module_set_scope(Module module, ImportedModuleScope *scope);
+ImportedModuleScope* module_get_scope(Module module);
 
 size_t module_num_modules(void);
 Module module_get_module_by_index(size_t i);

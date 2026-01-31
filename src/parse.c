@@ -127,7 +127,7 @@ typedef struct ExitCall {
 
 typedef struct IterationData IterationData;
 
-struct Scope {
+typedef struct Scope {
   // FuncData
   Sym* func_sym;
   ExitCall exit_call_stack[MAX_EXIT_CALLS];  // TODO: maybe save bound Operand instead?
@@ -148,6 +148,42 @@ struct Scope {
   bool is_function;
   bool is_module;
   bool is_full_dict;
+} Scope;
+
+typedef enum ImportedSymbolKind {
+  ISYM_ERROR,
+  ISYM_TYPE,
+  ISYM_OBJECT,  // var, func
+  ISYM_CONST,
+} ImportedSymbolKind;
+
+typedef struct ImportedSymbol {
+  Str name;
+  SymKind kind;
+  Type type;
+  union {
+    Str extern_name;  // for VAR/FUNC
+    Val value;        // for CONST
+  };
+} ImportedSymbol;
+
+static size_t importedsymbol_hash_func(void* v) {
+  ImportedSymbol* is = (ImportedSymbol*)v;
+  size_t hash = 0;
+  const char* str_data = str_raw_ptr(is->name);
+  dict_hash_write(&hash, (void*)str_data, str_len(is->name));
+  return hash;
+}
+
+static bool importedsymbol_eq_func(void* void_a, void* void_b) {
+  ImportedSymbol* is_a = (ImportedSymbol*)void_a;
+  ImportedSymbol* is_b = (ImportedSymbol*)void_b;
+  return str_eq(is_a->name, is_b->name);
+}
+
+struct ImportedModuleScope {
+  // Str -> ImportedSymbol
+  DictImpl syms;
 };
 
 #define OPK_BIT_CONST 0x1
@@ -220,12 +256,14 @@ static CompilerGlobals glob;
 typedef struct TranslationUnit {
   TokenizedBuffer tokbuf;
 
-  Arena* var_scope_arena;  // Not used for module (0), only > 0.
-  Scope* mod_scope;
-  Scope scopes[MAX_SCOPES - 1];
-  Scope* pscopes[MAX_SCOPES];
+  Arena* var_scope_arena;
+  Scope scopes[MAX_SCOPES];
   int num_scopes;
   Scope* cur_scope;
+
+  // This is similar to scopes[0], but is what is available to other modules
+  // that import this one.
+  ImportedModuleScope* impscope;
 
   int verbose;
 
@@ -747,6 +785,7 @@ static bool namesym_eq_func(void* void_nsp_a, void* void_nsp_b) {
   return str_eq(nsp_a->name, nsp_b->name);
 }
 
+#if 0
 static void dump_sym(Sym* sym) {
   switch (sym->kind) {
     case SYM_NONE:
@@ -803,6 +842,7 @@ static void dump_scope(Scope* scope) {
     printf("todo; non-module dump\n");
   }
 }
+#endif
 
 // Returns pointer into dict where Sym is stored by value, probably bad idea.
 static Sym* sym_new(SymKind kind, Str name, Type type) {
@@ -1283,7 +1323,7 @@ static Sym* make_param(Str name, Type type, int index) {
 }
 
 static void enter_function_scope(Sym* funcsym) {
-  tu.cur_scope = tu.pscopes[tu.num_scopes++];
+  tu.cur_scope = &tu.scopes[tu.num_scopes++];
   tu.cur_scope->func_sym = funcsym;
   tu.cur_scope->num_exit_calls = 0;
   tu.cur_scope->num_iteration_datas = 0;
@@ -1295,11 +1335,14 @@ static void enter_function_scope(Sym* funcsym) {
   flat_name_map_init(&tu.cur_scope->flat_map);
 }
 
-static void make_and_enter_module_scope(void) {
-  tu.mod_scope = tu.pscopes[0] = arena_push(glob.arena, sizeof(Scope), _Alignof(Scope));
-  tu.num_scopes++;
-  tu.cur_scope = tu.mod_scope;
+static void enter_module_scope(void) {
+  tu.impscope = arena_push(glob.arena, sizeof(ImportedModuleScope), _Alignof(ImportedModuleScope));
+  tu.impscope->syms = dict_new(glob.arena, 1 << 8, sizeof(ImportedSymbol), _Alignof(ImportedSymbol));
+
+  ASSERT(tu.num_scopes == 0);
+  tu.cur_scope = &tu.scopes[tu.num_scopes++];
   memset(tu.cur_scope, 0, sizeof(Scope));
+  tu.cur_scope->arena_pos = arena_pos(tu.var_scope_arena);
   tu.cur_scope->is_module = true;
   tu.cur_scope->is_full_dict = true;
   tu.cur_scope->sym_dict =
@@ -1307,14 +1350,13 @@ static void make_and_enter_module_scope(void) {
 }
 
 static void leave_scope(void) {
-  CHECK(!tu.cur_scope->is_module);  // Shouldn't be leaving this.
   arena_pop_to(tu.var_scope_arena, tu.cur_scope->arena_pos);
   --tu.num_scopes;
   ASSERT(tu.num_scopes >= 0);
   if (tu.num_scopes == 0) {
     tu.cur_scope = NULL;
   } else {
-    tu.cur_scope = tu.pscopes[tu.num_scopes - 1];
+    tu.cur_scope = &tu.scopes[tu.num_scopes - 1];
   }
 }
 
@@ -1323,8 +1365,8 @@ static void enter_function(Sym* sym,
                            Type param_types[MAX_FUNC_PARAMS]) {
   bool is_nested = tu.num_scopes > 1;  // Module, parent.
   if (is_nested) {
-    ASSERT(tu.pscopes[tu.num_scopes - 1]->is_function);
-    ASSERT(tu.pscopes[0]->is_module);
+    ASSERT(tu.scopes[tu.num_scopes - 1].is_function);
+    ASSERT(tu.scopes[0].is_module);
   }
 
   enter_function_scope(sym);
@@ -1377,9 +1419,9 @@ static void leave_function(void) {
 
   bool is_nested = tu.num_scopes > 2;  // Module, parent function, current function.
   if (is_nested) {
-    ASSERT(tu.pscopes[tu.num_scopes - 1]->is_function);
-    ASSERT(tu.pscopes[tu.num_scopes - 2]->is_function);
-    ASSERT(tu.pscopes[0]->is_module);
+    ASSERT(tu.scopes[tu.num_scopes - 1].is_function);
+    ASSERT(tu.scopes[tu.num_scopes - 2].is_function);
+    ASSERT(tu.scopes[0].is_module);
   }
 
   if (is_nested) {
@@ -1387,7 +1429,7 @@ static void leave_function(void) {
     // parent one, so that codegen goes to it.
     UpvalMap* inner_uvm = &tu.cur_scope->upval_map;
     Sym* child_func = tu.cur_scope->func_sym;
-    tu.cur_scope = tu.pscopes[tu.num_scopes - 2];
+    tu.cur_scope = &tu.scopes[tu.num_scopes - 2];
     UpvalMap* parent_uvm = &tu.cur_scope->upval_map;
     sq_itemctx_activate(tu.cur_scope->func_item_ctx);
 
@@ -2696,6 +2738,7 @@ static Operand parse_dict_literal(bool can_assign, Type* expected) {
 static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
   if (type_kind(left.type) == TYPE_MODULE) {
     if (match(TOK_IDENT_VAR)) {
+#if 0
       Str name = str_from_previous();
       Module mod = left.val.m;
       Scope* modscope = module_get_scope(mod);
@@ -2713,9 +2756,11 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
                str_len(full_name), str_raw_ptr(full_name), str_len(mod_name), str_raw_ptr(mod_name),
                str_len(name), str_raw_ptr(name));
       }
+#endif
       error("needs to return a different type of thing that turns into a sq_ref_extern?");
       //return load_value(scope_result, sym, name);
     } else if (match(TOK_IDENT_TYPE)) {
+#if 0
       Str typename = str_from_previous();
       Module mod = left.val.m;
       Scope* modscope = module_get_scope(mod);
@@ -2730,6 +2775,7 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
                str_len(typename), str_raw_ptr(typename));
       }
       ASSERT(sym->kind == SYM_TYPE);
+#endif
       error("todo; module.Type");
     } else {
       error("Expecting name or type after module name.");
@@ -3971,8 +4017,7 @@ static ScopeResult scope_lookup_single(Scope* scope, Str name, bool crossed_func
 static ScopeResult scope_lookup_recursive(Str name, Sym** sym) {
   *sym = NULL;
   bool crossed_function = false;
-  int scope_index = tu.cur_scope == tu.pscopes[0] ? 0 : tu.cur_scope - tu.scopes;
-  Scope* cur_scope = tu.pscopes[scope_index];
+  Scope* cur_scope = tu.cur_scope;
   for (;;) {
     ScopeResult res = scope_lookup_single(cur_scope, name, crossed_function, sym);
     if (res != SCOPE_RESULT_UNDEFINED) {
@@ -3984,10 +4029,12 @@ static ScopeResult scope_lookup_recursive(Str name, Sym** sym) {
       crossed_function = true;
     }
 
-    if (cur_scope == tu.pscopes[0]) {
+    if (cur_scope == &tu.scopes[0]) {
       break;
     }
-    cur_scope = tu.pscopes[--scope_index];  // parent
+    ASSERT(cur_scope >= &tu.scopes[0] &&
+           cur_scope <= &tu.scopes[tu.num_scopes - 1]);
+    cur_scope--;  // parent
   }
 
   return SCOPE_RESULT_UNDEFINED;
@@ -4012,7 +4059,7 @@ static int create_upval(Scope* scope, Str name, Sym* sym) {
   // otherwise use the value themselves will have it forwarded to them, so
   // that it can be captured by the inner-most.
 
-  ASSERT(scope >= tu.pscopes[1] && scope <= tu.pscopes[tu.num_scopes - 1]);
+  ASSERT(scope >= &tu.scopes[1] && scope <= &tu.scopes[tu.num_scopes - 1]);
   Scope* parent_scope = scope - 1;
   if (parent_scope->upval_base.u) {
     Sym* parent_sym;
@@ -4602,7 +4649,7 @@ static LastStatementType parse_block(void) {
 }
 
 // TODO: decorators
-static void def_statement(void) {
+static Sym* def_statement(void) {
   Type return_type = parse_type();
   if (type_is_none(return_type)) {
     return_type = type_void;
@@ -4615,8 +4662,8 @@ static void def_statement(void) {
   Str param_names[MAX_FUNC_PARAMS];
   bool is_nested = tu.num_scopes > 1;
   if (is_nested) {
-    ASSERT(tu.pscopes[tu.num_scopes - 1]->is_function);
-    ASSERT(tu.pscopes[0]->is_module);
+    ASSERT(tu.scopes[tu.num_scopes - 1].is_function);
+    ASSERT(tu.scopes[0].is_module);
   }
   uint32_t num_params =
       parse_func_params(is_nested, /*memfn_self=*/NULL, (Str){0}, param_types, param_names);
@@ -4639,9 +4686,11 @@ static void def_statement(void) {
   }
 
   leave_function();
+
+  return funcsym;
 }
 
-static void foreign_statement(void) {
+static Sym* foreign_statement(void) {
   Type return_type = parse_type();
   if (type_is_none(return_type)) {
     return_type = type_void;
@@ -4657,9 +4706,10 @@ static void foreign_statement(void) {
       type_function(param_types, num_params, return_type, TFF_FOREIGN);
   Sym* funcsym = sym_new(SYM_FUNC, name, functype);
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
+  return funcsym;
 }
 
-static void on_statement(void) {
+static Sym* on_statement(void) {
   Type on_type;
   Str on_type_name;
   if (tu.tokbuf.cursor.cur_kind >= TOK_BOOL && tu.tokbuf.cursor.cur_kind <= TOK_UINT) {
@@ -4711,7 +4761,6 @@ static void on_statement(void) {
     consume_block_header("function body");
   }
 
-
   TypeFuncFlags flags = TFF_MEMFN;
   if (is_foreign) {
     flags |= TFF_FOREIGN;
@@ -4736,9 +4785,11 @@ static void on_statement(void) {
 
     leave_function();
   }
+
+  return funcsym;
 }
 
-static void struct_statement() {
+static Sym* struct_statement() {
   Str name = parse_type_name("Expect struct type name.");
   consume_block_header("struct");
 
@@ -4826,6 +4877,7 @@ static void struct_statement() {
   }
   Sym* new = sym_new(SYM_TYPE, name, strukt);
   new->scope_decl = SSD_DECLARED_GLOBAL;
+  return new;
 }
 
 static void parse_variable_statement(Type type) {
@@ -4883,13 +4935,43 @@ static void global_statement(void) {
   Str name = parse_name("Expect variable name after global.");
 
   Sym* sym;
-  ScopeResult scope_result = scope_lookup_single(tu.pscopes[0], name, true, &sym);
+  ScopeResult scope_result = scope_lookup_single(&tu.scopes[0], name, true, &sym);
   if (scope_result != SCOPE_RESULT_GLOBAL) {
     errorf("Undefined global '%.*s'.", str_len(name), str_raw_ptr(name));
   }
   Sym* new = sym_new(SYM_VAR, name, sym->type);
   new->scope_decl = SSD_DECLARED_GLOBAL;
   new->global = sym->global;
+}
+
+static void insert_into_impscope(Sym* sym) {
+  ImportedSymbol is = {.name = sym->name, .kind = sym->kind, .type = sym->type};
+  switch (sym->kind) {
+    case SYM_VAR:
+    case SYM_FUNC:
+      // TODO: decorator or whatever for source name vs. external name
+      is.extern_name = sym->name;
+      break;
+    case SYM_CONST:
+      error("todo;");
+      break;
+    case SYM_TYPE:
+      // nothing extra
+      break;
+    case SYM_MODULE:
+      error("todo; allow?");
+      break;
+    default:
+      error("internal error");
+  }
+
+  DictInsert res =
+      dict_insert(&tu.impscope->syms, &is, importedsymbol_hash_func, importedsymbol_eq_func,
+                  sizeof(ImportedSymbol), _Alignof(ImportedSymbol));
+  if (!res.inserted) {
+    errorf("Duplicate top-level definition of '%.*s'.", (int)str_len(sym->name),
+           str_raw_ptr(sym->name));
+  }
 }
 
 static LastStatementType parse_statement(bool toplevel) {
@@ -4899,28 +4981,37 @@ static LastStatementType parse_statement(bool toplevel) {
 
   // TODO: de-dupe this mess.
   switch (tu.tokbuf.cursor.cur_kind) {
-    case TOK_DEF:
-      advance();
-      def_statement();
-      break;
-    case TOK_FOREIGN:
-      advance();
-      if (!toplevel) error("foreign statement only allowed at top level.");
-      foreign_statement();
-      break;
-    case TOK_ON:
-      advance();
-      if (!toplevel) error("on statement only allowed at top level.");
-      on_statement();
-      break;
     case TOK_IMPORT:
       advance();
       error("imports must appear before other declarations.");
       break;
+    case TOK_DEF: {
+      advance();
+      Sym* sym = def_statement();
+      if (toplevel) {
+        insert_into_impscope(sym);
+      }
+      break;
+    }
+    case TOK_FOREIGN: {
+      advance();
+      if (!toplevel) error("foreign statement only allowed at top level.");
+      Sym* sym = foreign_statement();
+      insert_into_impscope(sym);
+      break;
+    }
+    case TOK_ON: {
+      advance();
+      if (!toplevel) error("on statement only allowed at top level.");
+      Sym* sym = on_statement();
+      insert_into_impscope(sym);
+      break;
+    }
     case TOK_STRUCT:
       advance();
       if (!toplevel) error("struct statement only allowed at top level.");
-      struct_statement();
+      Sym* sym = struct_statement();
+      insert_into_impscope(sym);
       break;
     case TOK_IF:
       advance();
@@ -5058,11 +5149,6 @@ static void parse_one_time_initialization_impl(Arena* main_arena, int verbose) {
   glob.uniq_counter = 0;
 
   glob.verbose = verbose;
-
-  tu.pscopes[0] = NULL;  // Module scope is allocated and assigned per TU.
-  for (int i = 1; i < MAX_SCOPES; ++i) {
-    tu.pscopes[i] = &tu.scopes[i];
-  }
 }
 
 static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
@@ -5099,9 +5185,9 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
         --inside_quotes.size;
       }
 
-      // Need to push and pop these around import, because main compiler uses `tu` directly.
+      // Need to push and pop around import, because main compiler uses `tu` directly.
       tb = tu.tokbuf;
-      Scope* modscope = tu.mod_scope;
+      Scope* globscope = tu.cur_scope;
       ASSERT(tu.num_scopes == 1);
 
       Module newmod = module_add(inside_quotes);
@@ -5110,17 +5196,38 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
         errorf("Couldn't open import, looking for '%.*s'.", (int)str_len(path), str_raw_ptr(path));
       }
 
+      // ImportedModuleScope, similar to toplevel Scope, but sq references don't
+      // make sense (because it's a different TU) so, Str name -> <thing> dict.
+      // Things can be:
+      // - Type objects, these are normal
+      // - "object" which is the name (for sq_ref_extern()) and the Type
+      //   - variables
+      //   - function
+      // - CONSTs should be available once those are implemented, name + Val
+      // ImportedModuleScope needs to be built alongside top-level scope, probably
+      // in parse_statement() and then set on Module when parse is done. And,
+      // revert the pscopes crapola.
+      //
+      // Additionally here, need to build a Dict of import_as names, and set on
+      // the lexer at the end of this function so that the lexer can translate
+      // TOK_IDENT_VAR to TOK_IDENT_MODULE for the imported names.
+      //
+      // parse_dot() needs to generate Operands the do sq_ref_extern
+      // parse_type() needs to peek TOK_IDENT_MODULE TOK_DOT TOK_IDENT_TYPE.
+      // parse_const() probably needs something similar.
+
       // Restore current module.
       tu.tokbuf = tb;
+      tu.cur_scope = globscope;
+      tu.num_scopes = 1;
       token_init(file.buffer);
-      tu.mod_scope = modscope;
-      tu.pscopes[0] = modscope;
-      tu.cur_scope = modscope;
-      ASSERT(tu.num_scopes == 1);
 
       consume(TOK_NEWLINE, "Expecting newline after import.");
 
       //printf("import as: '%s'\n", cstr_copy(glob.arena, module_import_as(newmod)));
+
+      // TODO: add module_import_as to lexer hack dict
+
       Sym* sym = sym_new(SYM_MODULE, module_import_as(newmod), type_module);
       sym->module = newmod;
       sym->scope_decl = SSD_DECLARED_GLOBAL;
@@ -5128,6 +5235,8 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
       break;
     }
   }
+
+  // TODO: set lexer hack dict
 }
 
 static void parse_impl(Arena* temp_arena, Module module) {
@@ -5135,7 +5244,7 @@ static void parse_impl(Arena* temp_arena, Module module) {
   tu.num_scopes = 0;
   tu.cur_scope = NULL;
 
-  make_and_enter_module_scope();
+  enter_module_scope();
 
   parse_scan_for_imports(module_load_path(module), module_read_file_result(module));
 
@@ -5179,10 +5288,8 @@ static void parse_impl(Arena* temp_arena, Module module) {
     parse_statement(/*toplevel=*/true);
   }
 
-  CHECK(tu.num_scopes == 1);
-  module_set_scope(module, tu.mod_scope);
-  //dump_scope(tu.mod_scope);
-  (void)dump_scope;
+  module_set_scope(module, tu.impscope);
+  leave_scope();
 
   sq_shutdown();
 
