@@ -133,7 +133,7 @@ decorator = '@' [a-z_][a-zA-Z0-9_]*;
   hex         { return TOK_INT_LITERAL; }
   oct         { return TOK_INT_LITERAL; }
   bin         { return TOK_INT_LITERAL; }
-  varname     { return TOK_IDENT_VAR; }
+  varname     { return token_var_or_import(offset, next_offset); }
   typename    { return TOK_IDENT_TYPE; }
   constname   { return TOK_IDENT_CONST; }
   // Hash marks for comments will not be indexed if they're in a correct

@@ -1,7 +1,5 @@
 #include "luv60.h"
 
-#include "dict.h"
-
 typedef enum SymKind {
   SYM_NONE,
   SYM_VAR,
@@ -166,20 +164,6 @@ typedef struct ImportedSymbol {
     Val value;        // for CONST
   };
 } ImportedSymbol;
-
-static size_t importedsymbol_hash_func(void* v) {
-  ImportedSymbol* is = (ImportedSymbol*)v;
-  size_t hash = 0;
-  const char* str_data = str_raw_ptr(is->name);
-  dict_hash_write(&hash, (void*)str_data, str_len(is->name));
-  return hash;
-}
-
-static bool importedsymbol_eq_func(void* void_a, void* void_b) {
-  ImportedSymbol* is_a = (ImportedSymbol*)void_a;
-  ImportedSymbol* is_b = (ImportedSymbol*)void_b;
-  return str_eq(is_a->name, is_b->name);
-}
 
 struct ImportedModuleScope {
   // Str -> ImportedSymbol
@@ -771,20 +755,6 @@ typedef struct NameSymPair {
   Sym sym;
 } NameSymPair;
 
-static size_t namesym_hash_func(void* vnsp) {
-  NameSymPair* nsp = (NameSymPair*)vnsp;
-  size_t hash = 0;
-  const char* str_data = str_raw_ptr(nsp->name);
-  dict_hash_write(&hash, (void*)str_data, str_len(nsp->name));
-  return hash;
-}
-
-static bool namesym_eq_func(void* void_nsp_a, void* void_nsp_b) {
-  NameSymPair* nsp_a = (NameSymPair*)void_nsp_a;
-  NameSymPair* nsp_b = (NameSymPair*)void_nsp_b;
-  return str_eq(nsp_a->name, nsp_b->name);
-}
-
 #if 0
 static void dump_sym(Sym* sym) {
   switch (sym->kind) {
@@ -855,8 +825,8 @@ static Sym* sym_new(SymKind kind, Str name, Type type) {
                           .name = name,
                           .type = type,
                       }};
-    DictInsert res = dict_insert(&tu.cur_scope->sym_dict, &nsp, namesym_hash_func,
-                                namesym_eq_func, sizeof(NameSymPair), _Alignof(NameSymPair));
+    DictInsert res = dict_insert(&tu.cur_scope->sym_dict, &nsp, start_str_hash_func,
+                                start_str_eq_func, sizeof(NameSymPair), _Alignof(NameSymPair));
     return &((NameSymPair*)dict_rawiter_get(&res.iter))->sym;
   } else {
     SmallFlatNameSymMap* nm = &tu.cur_scope->flat_map;
@@ -872,8 +842,8 @@ static Sym* sym_new(SymKind kind, Str name, Type type) {
                                    sizeof(NameSymPair), _Alignof(NameSymPair));
       for (int i = 0; i < count; ++i) {
         NameSymPair nsp = {.name = nm->names[i], .sym = nm->syms[i]};
-        dict_insert(&new_dict, &nsp, namesym_hash_func, namesym_eq_func,
-                    sizeof(NameSymPair), _Alignof(NameSymPair));
+        dict_insert(&new_dict, &nsp, start_str_hash_func, start_str_eq_func, sizeof(NameSymPair),
+                    _Alignof(NameSymPair));
       }
 
       // Now flat_map is dead, overrwrite with the dict and update the bool to
@@ -1502,7 +1472,8 @@ again:
     ++tu.tokbuf.cursor.token_index;
     ASSERT(tu.tokbuf.cursor.token_index < tu.tokbuf.num_tokens);
     tu.tokbuf.cursor.cur_kind =
-        token_categorize(tu.tokbuf.token_offsets[tu.tokbuf.cursor.token_index]);
+        token_categorize(tu.tokbuf.token_offsets[tu.tokbuf.cursor.token_index],
+                         tu.tokbuf.token_offsets[tu.tokbuf.cursor.token_index + 1]);
   }
 
   if (tu.tokbuf.cursor.cur_kind == TOK_NL) {
@@ -3116,7 +3087,9 @@ static bool scan_to_determine_if_comprehension(TokenCursor* original, TokenCurso
     tu.tokbuf.cursor.prev_kind = tu.tokbuf.cursor.cur_kind;
     ++tu.tokbuf.cursor.token_index;
     ASSERT(tu.tokbuf.cursor.token_index < tu.tokbuf.num_tokens);
-    tu.tokbuf.cursor.cur_kind = token_categorize(tu.tokbuf.token_offsets[tu.tokbuf.cursor.token_index]);
+    tu.tokbuf.cursor.cur_kind =
+        token_categorize(tu.tokbuf.token_offsets[tu.tokbuf.cursor.token_index],
+                         tu.tokbuf.token_offsets[tu.tokbuf.cursor.token_index + 1]);
     ASSERT(tu.tokbuf.cursor.cur_kind != TOK_NEWLINE_BLANK);
     ASSERT(tu.tokbuf.cursor.cur_kind < TOK_NEWLINE_INDENT_0 ||
            tu.tokbuf.cursor.cur_kind > TOK_NEWLINE_INDENT_40);
@@ -3954,8 +3927,8 @@ static Operand parse_unary(bool can_assign, Type* expected) {
 
 static Sym* find_in_scope(Scope* scope, Str name) {
   if (BRANCH_UNLIKELY(scope->is_full_dict)) {
-    DictRawIter iter =
-        dict_find(&scope->sym_dict, &name, namesym_hash_func, namesym_eq_func, sizeof(NameSymPair));
+    DictRawIter iter = dict_find(&scope->sym_dict, &name, start_str_hash_func, start_str_eq_func,
+                                 sizeof(NameSymPair));
     NameSymPair* nsp = (NameSymPair*)dict_rawiter_get(&iter);
     if (!nsp) {
       return NULL;
@@ -4966,7 +4939,7 @@ static void insert_into_impscope(Sym* sym) {
   }
 
   DictInsert res =
-      dict_insert(&tu.impscope->syms, &is, importedsymbol_hash_func, importedsymbol_eq_func,
+      dict_insert(&tu.impscope->syms, &is, start_str_hash_func, start_str_eq_func,
                   sizeof(ImportedSymbol), _Alignof(ImportedSymbol));
   if (!res.inserted) {
     errorf("Duplicate top-level definition of '%.*s'.", (int)str_len(sym->name),

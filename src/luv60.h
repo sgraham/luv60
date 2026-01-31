@@ -36,6 +36,7 @@ void* arena_push(Arena* arena, uint64_t size, uint64_t align);
 uint64_t arena_pos(Arena* arena);
 void arena_pop_to(Arena* arena, uint64_t pos);
 
+#include "dict.h"
 
 // base_{win,mac}.c
 
@@ -93,6 +94,31 @@ static inline char* cstr_copy(Arena* arena, Str s) {
   return copy;
 }
 
+typedef struct StartsWithStr {
+  Str s;
+} StartsWithStr;
+
+static inline bool start_str_eq_func(void* void_a, void* void_b);
+static size_t inline start_str_hash_func(void* v);
+
+static size_t inline start_str_hash_func(void* v) {
+  (void)start_str_eq_func;
+
+  StartsWithStr* sws = (StartsWithStr*)v;
+  size_t hash = 0;
+  const char* str_data = str_raw_ptr(sws->s);
+  dict_hash_write(&hash, (void*)str_data, str_len(sws->s));
+  return hash;
+}
+
+static bool start_str_eq_func(void* void_a, void* void_b) {
+  (void)start_str_hash_func;
+
+  StartsWithStr* sws_a = (StartsWithStr*)void_a;
+  StartsWithStr* sws_b = (StartsWithStr*)void_b;
+  return str_eq(sws_a->s, sws_b->s);
+}
+
 
 // path.c
 
@@ -119,7 +145,8 @@ void token_dump_offsets(uint32_t num_tokens, uint32_t* token_offsets, size_t fil
 
 const char* token_enum_name(TokenKind kind);
 void token_init(const unsigned char* file_contents);
-TokenKind token_categorize(uint32_t offset);
+void token_set_import_set(DictImpl* names);
+TokenKind token_categorize(uint32_t offset, uint32_t next_offset);
 int token_get_continuation_paren_level(void);
 void token_restore_continuation_paren_level(int level);
 

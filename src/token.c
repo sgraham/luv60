@@ -2,10 +2,15 @@
 
 static const unsigned char* token_file_contents;
 static int token_continuation_paren_level;
+static DictImpl* token_import_set;
 
 void token_init(const unsigned char* file_contents) {
   token_file_contents = file_contents;
   token_continuation_paren_level = 0;
+}
+
+void token_set_import_set(DictImpl* names) {
+  token_import_set = names;
 }
 
 int token_get_continuation_paren_level(void) {
@@ -16,7 +21,22 @@ void token_restore_continuation_paren_level(int level) {
   token_continuation_paren_level = level;
 }
 
-TokenKind token_categorize(uint32_t offset) {
+TokenKind token_var_or_import(uint32_t offset, uint32_t next_offset) {
+  if (!token_import_set) {
+    return TOK_IDENT_VAR;
+  }
+
+  while (token_file_contents[next_offset - 1] == ' ') {
+    next_offset--;
+  }
+  Str str = str_intern_len((const char*)&token_file_contents[offset], next_offset - offset);
+  StartsWithStr sws = {.s = str};
+  DictRawIter iter = dict_find(token_import_set, &sws, start_str_hash_func, start_str_eq_func,
+                               sizeof(StartsWithStr));
+  return dict_rawiter_get(&iter) ? TOK_IDENT_IMPORT : TOK_IDENT_VAR;
+}
+
+TokenKind token_categorize(uint32_t offset, uint32_t next_offset) {
   const unsigned char* p = &token_file_contents[offset];
   const unsigned char* q;
 

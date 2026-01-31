@@ -1,7 +1,5 @@
 #include "luv60.h"
 
-#include "dict.h"
-
 _Static_assert(NUM_TYPE_KINDS < (1<<8), "Too many TypeKind");
 
 typedef union TypeData {

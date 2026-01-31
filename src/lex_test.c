@@ -20,7 +20,7 @@ static bool lex_test(const char* buf, KindAndOffset* exp, size_t num_exp) {
 
   bool ok = true;
   for (size_t i = 0; i < num_exp; ++i) {
-    TokenKind kind = token_categorize(token_offsets[i]);
+    TokenKind kind = token_categorize(token_offsets[i], token_offsets[i + 1]);
 
     if (kind != exp[i].kind) {
       base_writef_stderr("\nindex %zd: got %s, wanted %s\n", i, token_enum_name(kind),
@@ -473,16 +473,76 @@ TEST(Lex, ChunkCrossFloat) {
 
 TEST(Lex, IntegerSuffix) {
   KindAndOffset expected[] = {
-      {TOK_INT_LITERAL, 0},     //
-      {TOK_I32, 7},             //
+      {TOK_INT_LITERAL, 0},   //
+      {TOK_I32, 7},           //
       {TOK_INT_LITERAL, 11},  //
-      {TOK_DOT, 12},  //
+      {TOK_DOT, 12},          //
       {TOK_INT_LITERAL, 13},  //
       {TOK_INT_LITERAL, 16},  //
-      {TOK_DOT, 17},  //
+      {TOK_DOT, 17},          //
       {TOK_INT_LITERAL, 18},  //
-      {TOK_EOF, 20},            //
+      {TOK_EOF, 20},          //
   };
   const char input[] = "123i32 i32 2.0f 3.1d";
   EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+}
+
+TEST(Lex, ImportSet) {
+  // Not set.
+  KindAndOffset expected_before[] = {
+      {TOK_IDENT_VAR, 0},   //
+      {TOK_IDENT_VAR, 4},   //
+      {TOK_IDENT_VAR, 10},  //
+      {TOK_IDENT_VAR, 14},  //
+      {TOK_IDENT_VAR, 19},  //
+      {TOK_IDENT_VAR, 27},  //
+      {TOK_IDENT_VAR, 30},  //
+      {TOK_IDENT_VAR, 34},  //
+      {TOK_EOF, 38},        //
+  };
+
+  const char input_before[] = {
+    "zip zippy fli flip flipper rt zrt zrtz"
+  };
+  EXPECT_TRUE(lex_test(input_before, expected_before, COUNTOF(expected_before)));
+
+  Arena* arena = arena_create(KiB(128), KiB(128));
+
+  // Set, but empty.
+  DictImpl set = dict_new(arena, 8, sizeof(StartsWithStr), _Alignof(StartsWithStr));
+  token_set_import_set(&set);
+  EXPECT_TRUE(lex_test(input_before, expected_before, COUNTOF(expected_before)));
+
+  // Set with actual imports.
+  Str name1 = str_intern("zippy");
+  Str name2 = str_intern("flip");
+  Str name3 = str_intern("rt");
+  dict_insert(&set, &(StartsWithStr){.s = name1}, start_str_hash_func, start_str_eq_func,
+              sizeof(StartsWithStr), _Alignof(StartsWithStr));
+  dict_insert(&set, &(StartsWithStr){.s = name2}, start_str_hash_func, start_str_eq_func,
+              sizeof(StartsWithStr), _Alignof(StartsWithStr));
+  dict_insert(&set, &(StartsWithStr){.s = name3}, start_str_hash_func, start_str_eq_func,
+              sizeof(StartsWithStr), _Alignof(StartsWithStr));
+  //dict_dump(&set, sizeof(StartsWithStr));
+  token_set_import_set(&set);
+
+  KindAndOffset expected_with_set[] = {
+      {TOK_IDENT_VAR, 0},      //
+      {TOK_IDENT_IMPORT, 4},   //
+      {TOK_IDENT_VAR, 10},     //
+      {TOK_IDENT_IMPORT, 14},  //
+      {TOK_IDENT_VAR, 19},     //
+      {TOK_IDENT_IMPORT, 27},  //
+      {TOK_IDENT_VAR, 30},     //
+      {TOK_IDENT_VAR, 34},     //
+      {TOK_EOF, 38},           //
+  };
+
+  const char input_with_set[] = {
+    "zip zippy fli flip flipper rt zrt zrtz"
+  };
+  EXPECT_TRUE(lex_test(input_with_set, expected_with_set, COUNTOF(expected_with_set)));
+
+  token_set_import_set(NULL);
+  arena_destroy(arena);
 }
