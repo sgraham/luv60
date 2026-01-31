@@ -144,8 +144,7 @@ void token_dump_offsets(uint32_t num_tokens, uint32_t* token_offsets, size_t fil
 // token.c
 
 const char* token_enum_name(TokenKind kind);
-void token_init(const unsigned char* file_contents);
-void token_set_import_set(DictImpl* names);
+void token_init(const unsigned char* file_contents, DictImpl* import_set);
 TokenKind token_categorize(uint32_t offset, uint32_t next_offset);
 int token_get_continuation_paren_level(void);
 void token_restore_continuation_paren_level(int level);

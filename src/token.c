@@ -4,13 +4,10 @@ static const unsigned char* token_file_contents;
 static int token_continuation_paren_level;
 static DictImpl* token_import_set;
 
-void token_init(const unsigned char* file_contents) {
+void token_init(const unsigned char* file_contents, DictImpl* import_set) {
   token_file_contents = file_contents;
   token_continuation_paren_level = 0;
-}
-
-void token_set_import_set(DictImpl* names) {
-  token_import_set = names;
+  token_import_set = import_set;
 }
 
 int token_get_continuation_paren_level(void) {
@@ -30,9 +27,8 @@ TokenKind token_var_or_import(uint32_t offset, uint32_t next_offset) {
     next_offset--;
   }
   Str str = str_intern_len((const char*)&token_file_contents[offset], next_offset - offset);
-  StartsWithStr sws = {.s = str};
-  DictRawIter iter = dict_find(token_import_set, &sws, start_str_hash_func, start_str_eq_func,
-                               sizeof(StartsWithStr));
+  DictRawIter iter =
+      dict_find(token_import_set, &str, start_str_hash_func, start_str_eq_func, sizeof(Str));
   return dict_rawiter_get(&iter) ? TOK_IDENT_IMPORT : TOK_IDENT_VAR;
 }
 

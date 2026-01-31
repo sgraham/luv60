@@ -33,6 +33,8 @@ typedef struct TokenizedBuffer {
   int num_peeks;
   int indent_levels[12];  // This is the maximum possible in lexer.
   int num_indents;
+
+  DictImpl import_set;
 } TokenizedBuffer;
 
 typedef union Val {
@@ -1316,7 +1318,7 @@ static void enter_module_scope(void) {
   tu.cur_scope->is_module = true;
   tu.cur_scope->is_full_dict = true;
   tu.cur_scope->sym_dict =
-      dict_new(glob.arena, 1 << 10, sizeof(NameSymPair), _Alignof(NameSymPair));
+      dict_new(tu.var_scope_arena, 1 << 10, sizeof(NameSymPair), _Alignof(NameSymPair));
 }
 
 static void leave_scope(void) {
@@ -1976,8 +1978,10 @@ static Type parse_type(void) {
   //
   // So, 1) do the lexer map during module import. 2) fix the cur/prev offsets
   // for buffered tokens.
-#if 0
   if (check(TOK_IDENT_IMPORT)) {
+    error("here!");
+  }
+#if 0
     uint32_t package_start = cur_offset();
     if (peek2(TOK_DOT, TOK_IDENT_TYPE)) {
       StrView view = get_strview_for_offsets(package_start, prev_offset());
@@ -5134,10 +5138,11 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
       .cursor = (TokenCursor){-1, 0, 0, 0},
       .num_peeks = 0,
       .num_indents = 1,
+      .import_set = dict_new(glob.arena, 32, sizeof(Str), _Alignof(Str)),
   };
   tb.indent_levels[0] = 0;
   tb.num_tokens = lex_indexer(file.buffer, file.allocated_size, tb.token_offsets);
-  token_init(file.buffer);
+  token_init(file.buffer, &tb.import_set);
   if (glob.verbose > 1) {
     token_dump_offsets(tb.num_tokens, tb.token_offsets, file.file_size);
   }
@@ -5193,23 +5198,22 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
       tu.tokbuf = tb;
       tu.cur_scope = globscope;
       tu.num_scopes = 1;
-      token_init(file.buffer);
+      token_init(file.buffer, &tb.import_set);
 
       consume(TOK_NEWLINE, "Expecting newline after import.");
 
       //printf("import as: '%s'\n", cstr_copy(glob.arena, module_import_as(newmod)));
 
-      // TODO: add module_import_as to lexer hack dict
-
-      Sym* sym = sym_new(SYM_MODULE, module_import_as(newmod), type_module);
+      Str import_as = module_import_as(newmod);
+      dict_insert(&tb.import_set, &import_as, start_str_hash_func, start_str_eq_func, sizeof(Str),
+                  _Alignof(Str));
+      Sym* sym = sym_new(SYM_MODULE, import_as, type_module);
       sym->module = newmod;
       sym->scope_decl = SSD_DECLARED_GLOBAL;
     } else {
       break;
     }
   }
-
-  // TODO: set lexer hack dict
 }
 
 static void parse_impl(Arena* temp_arena, Module module) {

@@ -6,7 +6,7 @@ typedef struct KindAndOffset {
   uint32_t offset;
 } KindAndOffset;
 
-static bool lex_test(const char* buf, KindAndOffset* exp, size_t num_exp) {
+static bool lex_test(const char* buf, KindAndOffset* exp, size_t num_exp, DictImpl* import_set) {
   Arena* arena = arena_create(KiB(128), KiB(128));
 
   size_t len = strlen(buf) + 1;
@@ -16,7 +16,7 @@ static bool lex_test(const char* buf, KindAndOffset* exp, size_t num_exp) {
 
   uint32_t* token_offsets = (uint32_t*)arena_push(arena, alloc_size * sizeof(uint32_t), 8);
   lex_indexer(padded_copy, alloc_size, token_offsets);
-  token_init((const unsigned char*)padded_copy);
+  token_init((const unsigned char*)padded_copy, import_set);
 
   bool ok = true;
   for (size_t i = 0; i < num_exp; ++i) {
@@ -50,7 +50,7 @@ TEST(Lex, Basic) {
       {TOK_NEWLINE_INDENT_0, 19},  //
       {TOK_EOF, 20},               //
   };
-  EXPECT_TRUE(lex_test("const kStuff = blah\n", expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test("const kStuff = blah\n", expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, Punctuation) {
@@ -72,7 +72,7 @@ TEST(Lex, Punctuation) {
       {TOK_RSHIFT, 31},  //
       {TOK_EOF, 33},     //
   };
-  EXPECT_TRUE(lex_test("{ } [ ] . <= >= < > + - * / << >>", expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test("{ } [ ] . <= >= < > + - * / << >>", expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, Keywords) {
@@ -90,7 +90,7 @@ TEST(Lex, Keywords) {
       {TOK_EOF, 44},               //
   };
   EXPECT_TRUE(
-      lex_test("const def elif else false for if struct\ntrue", expected, COUNTOF(expected)));
+      lex_test("const def elif else false for if struct\ntrue", expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, DecimalInt) {
@@ -112,7 +112,7 @@ TEST(Lex, DecimalInt) {
   };
   EXPECT_TRUE(lex_test(
       "0 5   100   18446744073709551615 1i8 2u8 3i16 4u16 5i32 6u32 7i64 8u64 123_456_7_u32",
-      expected, COUNTOF(expected)));
+      expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, HexInt) {
@@ -124,7 +124,7 @@ TEST(Lex, HexInt) {
       {TOK_INT_LITERAL, 30},  //
       {TOK_EOF, 36},          //
   };
-  EXPECT_TRUE(lex_test("0x0 0x5   0x12abcdef34 0x1i64 0x2u64", expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test("0x0 0x5   0x12abcdef34 0x1i64 0x2u64", expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, Newlines) {
@@ -138,7 +138,7 @@ TEST(Lex, Newlines) {
       {TOK_EOF, 9},        //
   };
   const char input[] = "def a():\n";
-  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, IndentDedent) {
@@ -177,7 +177,7 @@ TEST(Lex, IndentDedent) {
       "        stuff\n"
       "        if y:\n"
       "            pass\n";
-  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, SuccessiveBlocksDedent) {
@@ -205,7 +205,7 @@ TEST(Lex, SuccessiveBlocksDedent) {
       "\n"
       "struct B:\n"
       "    int b\n";
-  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, SuccessiveBlocksStillIndented) {
@@ -237,7 +237,7 @@ TEST(Lex, SuccessiveBlocksStillIndented) {
       "\n"
       "    def b():\n"
       "        return 2\n";
-  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected), NULL));
 }
 
 #if 0  // New lexer doesn't do raw strings yet
@@ -261,7 +261,7 @@ TEST(Lex, RawString) {
       "  and another line\n"
       "''' #\n"
       "x y\n";
-  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected), NULL));
 }
 #endif
 
@@ -284,7 +284,7 @@ TEST(Lex, InterpString) {
   // Old lexer did this at lex-time, but now deferred to parser to interpret.
   // TODO: maybe move back to lexer I think.
   const char input[] = "\"string with \\(a) sub \\(var) value\"";
-  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, NestedIndent) {
@@ -329,7 +329,7 @@ TEST(Lex, NestedIndent) {
       "        print 1\n"
       "\n"
       "    print 2\n";
-  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, Decorator) {
@@ -350,7 +350,7 @@ TEST(Lex, Decorator) {
       "@stuff\n"
       "def func():\n"
       "    pass\n";
-  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, Continuation) {
@@ -380,7 +380,7 @@ TEST(Lex, Continuation) {
       "  3\n"
       "\n"
       "]\n";
-  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, ChunkCrossDoubleTokensLeftShift) {
@@ -391,7 +391,7 @@ TEST(Lex, ChunkCrossDoubleTokensLeftShift) {
   const char input[] =
       "                                                               <"
       "<";
-  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, ChunkCrossDoubleTokensRightShift) {
@@ -402,7 +402,7 @@ TEST(Lex, ChunkCrossDoubleTokensRightShift) {
   const char input[] =
       "                                                               >"
       ">";
-  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, ChunkCrossDoubleTokensEquals) {
@@ -413,7 +413,7 @@ TEST(Lex, ChunkCrossDoubleTokensEquals) {
   const char input[] =
       "                                                               ="
       "=";
-  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, ChunkCrossDoubleTokensNotEquals) {
@@ -424,7 +424,7 @@ TEST(Lex, ChunkCrossDoubleTokensNotEquals) {
   const char input[] =
       "                                                               !"
       "=";
-  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, ChunkCrossDoubleTokensSomethingElseAfter) {
@@ -436,7 +436,7 @@ TEST(Lex, ChunkCrossDoubleTokensSomethingElseAfter) {
   const char input[] =
       "                                                               ="
       "a";
-  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected), NULL));
 }
 
 // These "float" lexings are dumb because of the simd lexer problem of
@@ -455,7 +455,7 @@ TEST(Lex, FloatAndFieldDots) {
       {TOK_EOF, 9},          //
   };
   const char input[] = "a.b 1.000";
-  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, ChunkCrossFloat) {
@@ -468,7 +468,7 @@ TEST(Lex, ChunkCrossFloat) {
   const char input[] =
       "                                                               1"
       ".2345";
-  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, IntegerSuffix) {
@@ -484,7 +484,7 @@ TEST(Lex, IntegerSuffix) {
       {TOK_EOF, 20},          //
   };
   const char input[] = "123i32 i32 2.0f 3.1d";
-  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected)));
+  EXPECT_TRUE(lex_test(input, expected, COUNTOF(expected), NULL));
 }
 
 TEST(Lex, ImportSet) {
@@ -504,27 +504,22 @@ TEST(Lex, ImportSet) {
   const char input_before[] = {
     "zip zippy fli flip flipper rt zrt zrtz"
   };
-  EXPECT_TRUE(lex_test(input_before, expected_before, COUNTOF(expected_before)));
+  EXPECT_TRUE(lex_test(input_before, expected_before, COUNTOF(expected_before), NULL));
 
   Arena* arena = arena_create(KiB(128), KiB(128));
 
   // Set, but empty.
-  DictImpl set = dict_new(arena, 8, sizeof(StartsWithStr), _Alignof(StartsWithStr));
-  token_set_import_set(&set);
-  EXPECT_TRUE(lex_test(input_before, expected_before, COUNTOF(expected_before)));
+  DictImpl set = dict_new(arena, 8, sizeof(Str), _Alignof(Str));
+  EXPECT_TRUE(lex_test(input_before, expected_before, COUNTOF(expected_before), &set));
 
   // Set with actual imports.
   Str name1 = str_intern("zippy");
   Str name2 = str_intern("flip");
   Str name3 = str_intern("rt");
-  dict_insert(&set, &(StartsWithStr){.s = name1}, start_str_hash_func, start_str_eq_func,
-              sizeof(StartsWithStr), _Alignof(StartsWithStr));
-  dict_insert(&set, &(StartsWithStr){.s = name2}, start_str_hash_func, start_str_eq_func,
-              sizeof(StartsWithStr), _Alignof(StartsWithStr));
-  dict_insert(&set, &(StartsWithStr){.s = name3}, start_str_hash_func, start_str_eq_func,
-              sizeof(StartsWithStr), _Alignof(StartsWithStr));
+  dict_insert(&set, &name1, start_str_hash_func, start_str_eq_func, sizeof(Str), _Alignof(Str));
+  dict_insert(&set, &name2, start_str_hash_func, start_str_eq_func, sizeof(Str), _Alignof(Str));
+  dict_insert(&set, &name3, start_str_hash_func, start_str_eq_func, sizeof(Str), _Alignof(Str));
   //dict_dump(&set, sizeof(StartsWithStr));
-  token_set_import_set(&set);
 
   KindAndOffset expected_with_set[] = {
       {TOK_IDENT_VAR, 0},      //
@@ -541,8 +536,7 @@ TEST(Lex, ImportSet) {
   const char input_with_set[] = {
     "zip zippy fli flip flipper rt zrt zrtz"
   };
-  EXPECT_TRUE(lex_test(input_with_set, expected_with_set, COUNTOF(expected_with_set)));
+  EXPECT_TRUE(lex_test(input_with_set, expected_with_set, COUNTOF(expected_with_set), &set));
 
-  token_set_import_set(NULL);
   arena_destroy(arena);
 }
