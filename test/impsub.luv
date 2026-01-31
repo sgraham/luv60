@@ -1,3 +1,4 @@
 # IMPORTED
-def int helper_func(int x):
-    return x * 10
+struct Thing:
+    int x
+    int y

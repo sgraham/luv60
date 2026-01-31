@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:7:20:    return someimp.non_existing()
+# CERR: {ssss}                         ^ error: Module 'test/errors/someimp.luv' imported as 'someimp' does not define global 'non_existing'.
+import "someimp"
+
+def int main():
+    return someimp.non_existing()
