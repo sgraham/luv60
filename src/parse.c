@@ -18,6 +18,11 @@ typedef struct TokenCursor {
   int paren_level;
 } TokenCursor;
 
+typedef struct PeekToken {
+  TokenKind kind;
+  uint32_t index;
+} PeekToken;
+
 typedef struct TokenizedBuffer {
   Str filename;
   const char* file_contents;
@@ -26,8 +31,8 @@ typedef struct TokenizedBuffer {
 
   TokenCursor cursor;
 
-  TokenKind token_buffer[16];
-  int num_buffered_tokens;
+  PeekToken token_peeks[16];
+  int num_peeks;
   int indent_levels[12];  // This is the maximum possible in lexer.
   int num_indents;
 } TokenizedBuffer;
@@ -1441,18 +1446,21 @@ static void leave_function(void) {
 static void advance(void) {
 again:
   tu.tokbuf.cursor.prev_kind = tu.tokbuf.cursor.cur_kind;
-  if (tu.tokbuf.num_buffered_tokens > 0) {
-    tu.tokbuf.cursor.cur_kind = tu.tokbuf.token_buffer[--tu.tokbuf.num_buffered_tokens];
+  if (tu.tokbuf.num_peeks > 0) {
+    tu.tokbuf.cursor.cur_kind = tu.tokbuf.token_peeks[--tu.tokbuf.num_peeks].kind;
+    tu.tokbuf.cursor.token_index = tu.tokbuf.token_peeks[tu.tokbuf.num_peeks].index;
 #if BUILD_DEBUG
     if (glob.verbose > 1) {
-      base_writef_stderr("token %s (buffered)\n", token_enum_name(tu.tokbuf.cursor.cur_kind));
+      base_writef_stderr("token %s (buffered) index=%d\n",
+                         token_enum_name(tu.tokbuf.cursor.cur_kind), tu.tokbuf.cursor.token_index);
     }
 #endif
     return;
   } else {
     ++tu.tokbuf.cursor.token_index;
     ASSERT(tu.tokbuf.cursor.token_index < tu.tokbuf.num_tokens);
-    tu.tokbuf.cursor.cur_kind = token_categorize(tu.tokbuf.token_offsets[tu.tokbuf.cursor.token_index]);
+    tu.tokbuf.cursor.cur_kind =
+        token_categorize(tu.tokbuf.token_offsets[tu.tokbuf.cursor.token_index]);
   }
 
   if (tu.tokbuf.cursor.cur_kind == TOK_NL) {
@@ -1465,11 +1473,13 @@ again:
     if (n > tu.tokbuf.indent_levels[tu.tokbuf.num_indents - 1]) {
       tu.tokbuf.cursor.cur_kind = TOK_NEWLINE;
       tu.tokbuf.indent_levels[tu.tokbuf.num_indents++] = n;
-      tu.tokbuf.token_buffer[tu.tokbuf.num_buffered_tokens++] = TOK_INDENT;
+      tu.tokbuf.token_peeks[tu.tokbuf.num_peeks++] =
+          (PeekToken){TOK_INDENT, tu.tokbuf.cursor.token_index};
     } else if (n < tu.tokbuf.indent_levels[tu.tokbuf.num_indents - 1]) {
       tu.tokbuf.cursor.cur_kind = TOK_NEWLINE;
       while (tu.tokbuf.num_indents > 1 && tu.tokbuf.indent_levels[tu.tokbuf.num_indents - 1] > n) {
-        tu.tokbuf.token_buffer[tu.tokbuf.num_buffered_tokens++] = TOK_DEDENT;
+        tu.tokbuf.token_peeks[tu.tokbuf.num_peeks++] =
+            (PeekToken){TOK_DEDENT, tu.tokbuf.cursor.token_index};
         --tu.tokbuf.num_indents;
       }
     } else {
@@ -1479,7 +1489,8 @@ again:
 
 #if BUILD_DEBUG
   if (glob.verbose > 1) {
-      base_writef_stderr("token %s\n", token_enum_name(tu.tokbuf.cursor.cur_kind));
+    base_writef_stderr("token %s index=%d\n", token_enum_name(tu.tokbuf.cursor.cur_kind),
+                       tu.tokbuf.cursor.token_index);
   }
 #endif
 }
@@ -1497,16 +1508,34 @@ static bool check(TokenKind tok_kind) {
 }
 
 static bool peek(TokenKind tok_kind) {
-  TokenKind old_cur = tu.tokbuf.cursor.cur_kind;
-  TokenKind old_prev = tu.tokbuf.cursor.prev_kind;
+  TokenCursor old = tu.tokbuf.cursor;
   advance();
 
   bool result = tu.tokbuf.cursor.cur_kind == tok_kind;
 
   // semi-retreat, but keep categorization by buffering it.
-  tu.tokbuf.token_buffer[tu.tokbuf.num_buffered_tokens++] = tu.tokbuf.cursor.cur_kind;
-  tu.tokbuf.cursor.cur_kind = old_cur;
-  tu.tokbuf.cursor.prev_kind = old_prev;
+  tu.tokbuf.token_peeks[tu.tokbuf.num_peeks++] =
+      (PeekToken){tu.tokbuf.cursor.cur_kind, tu.tokbuf.cursor.token_index};
+  tu.tokbuf.cursor = old;
+
+  return result;
+}
+
+static bool peek2(TokenKind tok_kind1, TokenKind tok_kind2) {
+  TokenCursor old = tu.tokbuf.cursor;
+
+  advance();
+  bool result = tu.tokbuf.cursor.cur_kind == tok_kind1;
+  PeekToken first = {tu.tokbuf.cursor.cur_kind, tu.tokbuf.cursor.token_index};
+
+  advance();
+  result = result && tu.tokbuf.cursor.cur_kind == tok_kind2;
+
+  tu.tokbuf.token_peeks[tu.tokbuf.num_peeks++] =
+      (PeekToken){tu.tokbuf.cursor.cur_kind, tu.tokbuf.cursor.token_index};
+  tu.tokbuf.token_peeks[tu.tokbuf.num_peeks++] = first;
+
+  tu.tokbuf.cursor = old;
 
   return result;
 }
@@ -1899,6 +1928,69 @@ static Type parse_type(void) {
     ASSERT(!type_is_none(t));
     advance();
     return t;
+  }
+
+  // TODO: This stupid check/peek/offsets dance is because:
+  // 1) we don't want to actually advance over normal variables because they
+  //    could be some completely different statement type (e.g. an assignment)
+  // 2) but, we need to find imp.Type for some import "imp".
+  // 3) and, peek/buffered tokens only buffer the token *kind* not the token
+  //    index/offset, so we need to manually save the offsets at the right time
+  //    to be able to get the package name and type.
+  // Should either fix buffering to track offsets too (seemed kind of messy), or
+  // ideally make package resolution syntax more easily parseable, in the same
+  // way TOK_IDENT_VAR and TOK_IDENT_TYPE are different categories. I guess it'd
+  // have to be a sigil (yuck) or something other than a dot would help
+  // distinguish with only a single peek(). \ or ` seem like the only plausible
+  // ones since they're non-shifted and not overly used but I think it might
+  // look too ugly. Or, just go C-style and dump everything into the namespace
+  // on import (and maybe rely on structs for some namespacing), but that's
+  // probably too tedious.
+  //   impsub\Thing x
+  //   impsub`Thing x
+  //   impsub'Thing x
+  // Oh... we should be able to lexer-hack the categorizer. At the end of
+  // scanning for imports, set a map in the categorizer that swaps
+  // TOK_IDENT_VAR to TOK_IDENT_MODULE for imported names, because neither are
+  // valid in the head during imports.
+  //
+  // ... That only helps a little, we still have the same problem because we
+  // don't know if we're going to get impsub.func() or impsub.Type until we get
+  // to the func or Type, so we can avoid peeking every TOK_IDENT_VAR here for
+  // whether it's really a package with the lexer map, but we still need to
+  // peek2 at the thing after the dot to know whether we're really parsing a
+  // type here.
+  //
+  // So, 1) do the lexer map during module import. 2) fix the cur/prev offsets
+  // for buffered tokens.
+#if 0
+  if (check(TOK_IDENT_IMPORT)) {
+    uint32_t package_start = cur_offset();
+    if (peek2(TOK_DOT, TOK_IDENT_TYPE)) {
+      StrView view = get_strview_for_offsets(package_start, prev_offset());
+      advance();
+      advance();
+      advance();
+
+      ASSERT(view.size > 0);
+      while (view.data[view.size - 1] == ' ') {
+        --view.size;
+      }
+      Str package_name = str_intern_len(view.data, view.size);
+      Str type_name = str_from_previous();
+      errorf("type in imported package '%.*s', type '%.*s'\n", (int)str_len(package_name),
+             str_raw_ptr(package_name), (int)str_len(type_name), str_raw_ptr(type_name));
+    }
+  }
+#endif
+  if (check(TOK_IDENT_VAR) && peek2(TOK_DOT, TOK_IDENT_TYPE)) {
+    advance();
+    Str package_name = str_from_previous();
+    advance();
+    advance();
+    Str type_name = str_from_previous();
+    errorf("type in imported package '%.*s', type '%.*s'\n", (int)str_len(package_name),
+           str_raw_ptr(package_name), (int)str_len(type_name), str_raw_ptr(type_name));
   }
 
   if (match(TOK_IDENT_TYPE)) {
@@ -2621,7 +2713,8 @@ static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
                str_len(full_name), str_raw_ptr(full_name), str_len(mod_name), str_raw_ptr(mod_name),
                str_len(name), str_raw_ptr(name));
       }
-      return load_value(scope_result, sym, name);
+      error("needs to return a different type of thing that turns into a sq_ref_extern?");
+      //return load_value(scope_result, sym, name);
     } else if (match(TOK_IDENT_TYPE)) {
       Str typename = str_from_previous();
       Module mod = left.val.m;
@@ -2950,7 +3043,7 @@ static Operand parse_len(bool can_assign, Type* expected) {
 }
 
 static bool scan_to_determine_if_comprehension(TokenCursor* original, TokenCursor* at_for) {
-  ASSERT(tu.tokbuf.num_buffered_tokens == 0);
+  ASSERT(tu.tokbuf.num_peeks == 0);
 
   *original = tu.tokbuf.cursor;
   original->paren_level = token_get_continuation_paren_level();
@@ -4180,6 +4273,7 @@ static Rule rules[NUM_TOKEN_KINDS] = {
     {parse_variable, NULL, PREC_NONE},                          // TOK_IDENT_VAR
     {parse_compound_literal, NULL, PREC_NONE},                  // TOK_IDENT_TYPE
     {parse_variable, NULL, PREC_NONE},                          // TOK_IDENT_CONST
+    {NULL, NULL, PREC_NONE},                                    // TOK_IDENT_IMPORT
     {NULL, NULL, PREC_NONE},                                    // TOK_IDENT_DECORATOR
     {NULL, NULL, PREC_NONE},                                    // TOK_IF
     {NULL, NULL, PREC_NONE},                                    // TOK_IMPORT
@@ -4979,7 +5073,7 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
       // of characters in the buffer.
       .token_offsets = (uint32_t*)base_mem_large_alloc(file.allocated_size * sizeof(uint32_t)),
       .cursor = (TokenCursor){-1, 0, 0, 0},
-      .num_buffered_tokens = 0,
+      .num_peeks = 0,
       .num_indents = 1,
   };
   tb.indent_levels[0] = 0;
