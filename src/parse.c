@@ -162,7 +162,7 @@ typedef struct ImportedSymbol {
   SymKind kind;
   Type type;
   union {
-    Str extern_name;  // for VAR/FUNC
+    const char* extern_name;  // for VAR/FUNC
     Val value;        // for CONST
   };
 } ImportedSymbol;
@@ -2708,7 +2708,7 @@ static Operand parse_module_name_prefix(bool can_assign, Type* expected) {
   if (match(TOK_IDENT_VAR)) {
     Str var_or_func_name = str_from_previous();
     ImportedSymbol* sym = look_up_imported_symbol(package_name, var_or_func_name, "Variable");
-    SqRef ref = sq_ref_extern(cstr_copy(glob.arena, sym->extern_name));  // TODO: pre-make this
+    SqRef ref = sq_ref_extern(sym->extern_name);
     if (type_kind(sym->type) == TYPE_FUNC) {
       return operand_rvalue_global_addr(sym->type, ref);
     } else {
@@ -4917,7 +4917,7 @@ static void insert_into_impscope(Sym* sym) {
     case SYM_VAR:
     case SYM_FUNC:
       // TODO: decorator or whatever for source name vs. external name
-      is.extern_name = sym->name;
+      is.extern_name = cstr_copy(glob.arena, sym->name);
       break;
     case SYM_CONST:
       error("todo;");
