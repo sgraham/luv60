@@ -34,7 +34,7 @@ typedef struct TokenizedBuffer {
   int indent_levels[12];  // This is the maximum possible in lexer.
   int num_indents;
 
-  DictImpl import_set;
+  DictImpl* import_set;
 } TokenizedBuffer;
 
 typedef union Val {
@@ -1979,6 +1979,7 @@ static Type parse_type(void) {
   // So, 1) do the lexer map during module import. 2) fix the cur/prev offsets
   // for buffered tokens.
   if (check(TOK_IDENT_IMPORT)) {
+    advance();
     error("here!");
   }
 #if 0
@@ -5138,11 +5139,12 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
       .cursor = (TokenCursor){-1, 0, 0, 0},
       .num_peeks = 0,
       .num_indents = 1,
-      .import_set = dict_new(glob.arena, 32, sizeof(Str), _Alignof(Str)),
+      .import_set = arena_push(glob.arena, sizeof(DictImpl), _Alignof(DictImpl)),
   };
+  *tb.import_set = dict_new(glob.arena, 32, sizeof(Str), _Alignof(Str)),
   tb.indent_levels[0] = 0;
   tb.num_tokens = lex_indexer(file.buffer, file.allocated_size, tb.token_offsets);
-  token_init(file.buffer, &tb.import_set);
+  token_init(file.buffer, tb.import_set);
   if (glob.verbose > 1) {
     token_dump_offsets(tb.num_tokens, tb.token_offsets, file.file_size);
   }
@@ -5198,14 +5200,14 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
       tu.tokbuf = tb;
       tu.cur_scope = globscope;
       tu.num_scopes = 1;
-      token_init(file.buffer, &tb.import_set);
+      token_init(file.buffer, tb.import_set);
 
       consume(TOK_NEWLINE, "Expecting newline after import.");
 
       //printf("import as: '%s'\n", cstr_copy(glob.arena, module_import_as(newmod)));
 
       Str import_as = module_import_as(newmod);
-      dict_insert(&tb.import_set, &import_as, start_str_hash_func, start_str_eq_func, sizeof(Str),
+      dict_insert(tb.import_set, &import_as, start_str_hash_func, start_str_eq_func, sizeof(Str),
                   _Alignof(Str));
       Sym* sym = sym_new(SYM_MODULE, import_as, type_module);
       sym->module = newmod;
