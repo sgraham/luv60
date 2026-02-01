@@ -1980,39 +1980,6 @@ static Type parse_type(void) {
     return t;
   }
 
-  // TODO: This stupid check/peek/offsets dance is because:
-  // 1) we don't want to actually advance over normal variables because they
-  //    could be some completely different statement type (e.g. an assignment)
-  // 2) but, we need to find imp.Type for some import "imp".
-  // 3) and, peek/buffered tokens only buffer the token *kind* not the token
-  //    index/offset, so we need to manually save the offsets at the right time
-  //    to be able to get the package name and type.
-  // Should either fix buffering to track offsets too (seemed kind of messy), or
-  // ideally make package resolution syntax more easily parseable, in the same
-  // way TOK_IDENT_VAR and TOK_IDENT_TYPE are different categories. I guess it'd
-  // have to be a sigil (yuck) or something other than a dot would help
-  // distinguish with only a single peek(). \ or ` seem like the only plausible
-  // ones since they're non-shifted and not overly used but I think it might
-  // look too ugly. Or, just go C-style and dump everything into the namespace
-  // on import (and maybe rely on structs for some namespacing), but that's
-  // probably too tedious.
-  //   impsub\Thing x
-  //   impsub`Thing x
-  //   impsub'Thing x
-  // Oh... we should be able to lexer-hack the categorizer. At the end of
-  // scanning for imports, set a map in the categorizer that swaps
-  // TOK_IDENT_VAR to TOK_IDENT_MODULE for imported names, because neither are
-  // valid in the head during imports.
-  //
-  // ... That only helps a little, we still have the same problem because we
-  // don't know if we're going to get impsub.func() or impsub.Type until we get
-  // to the func or Type, so we can avoid peeking every TOK_IDENT_VAR here for
-  // whether it's really a package with the lexer map, but we still need to
-  // peek2 at the thing after the dot to know whether we're really parsing a
-  // type here.
-  //
-  // So, 1) do the lexer map during module import. 2) fix the cur/prev offsets
-  // for buffered tokens.
   if (check(TOK_IDENT_IMPORT) && peek2(TOK_DOT, TOK_IDENT_TYPE)) {
     advance();
     Str package_name = str_from_previous();
@@ -5165,26 +5132,6 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
         Str path = module_load_path(newmod);
         errorf("Couldn't open import, looking for '%.*s'.", (int)str_len(path), str_raw_ptr(path));
       }
-
-      // ImportedModuleScope, similar to toplevel Scope, but sq references don't
-      // make sense (because it's a different TU) so, Str name -> <thing> dict.
-      // Things can be:
-      // - Type objects, these are normal
-      // - "object" which is the name (for sq_ref_extern()) and the Type
-      //   - variables
-      //   - function
-      // - CONSTs should be available once those are implemented, name + Val
-      // ImportedModuleScope needs to be built alongside top-level scope, probably
-      // in parse_statement() and then set on Module when parse is done. And,
-      // revert the pscopes crapola.
-      //
-      // Additionally here, need to build a Dict of import_as names, and set on
-      // the lexer at the end of this function so that the lexer can translate
-      // TOK_IDENT_VAR to TOK_IDENT_MODULE for the imported names.
-      //
-      // parse_dot() needs to generate Operands the do sq_ref_extern
-      // parse_type() needs to peek TOK_IDENT_MODULE TOK_DOT TOK_IDENT_TYPE.
-      // parse_const() probably needs something similar.
 
       // Restore current module.
       tu.tokbuf = tb;
