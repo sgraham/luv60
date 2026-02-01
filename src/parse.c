@@ -1909,7 +1909,7 @@ static bool convert_operand(Operand* operand, Type type) {
 static ImportedSymbol* look_up_imported_symbol(Str package_name,
                                              Str sym_name,
                                              const char* expected_kind) {
-  ImportNameAndModule inam = {package_name};
+  ImportNameAndModule inam = {package_name, {0}};
   DictRawIter iter = dict_find(tu.tokbuf.import_dict, &inam, start_str_hash_func, start_str_eq_func,
                                sizeof(ImportNameAndModule));
   ImportNameAndModule* pinam = (ImportNameAndModule*)dict_rawiter_get(&iter);
