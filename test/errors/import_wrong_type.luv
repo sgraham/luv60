@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:7:17:    x = someimp.NotHere(1, 2)
+# CERR: {ssss}                      ^ error: Type 'NotHere' not found in imported package 'someimp'.
+import "someimp"
+
+def int main():
+    x = someimp.NotHere(1, 2)
+    return 0
