@@ -34,7 +34,7 @@ typedef struct TokenizedBuffer {
   int indent_levels[12];  // This is the maximum possible in lexer.
   int num_indents;
 
-  DictImpl* import_set;
+  DictImpl* import_dict;
 } TokenizedBuffer;
 
 typedef union Val {
@@ -1978,37 +1978,29 @@ static Type parse_type(void) {
   //
   // So, 1) do the lexer map during module import. 2) fix the cur/prev offsets
   // for buffered tokens.
-  if (check(TOK_IDENT_IMPORT)) {
-    advance();
-    error("here!");
-  }
-#if 0
-    uint32_t package_start = cur_offset();
-    if (peek2(TOK_DOT, TOK_IDENT_TYPE)) {
-      StrView view = get_strview_for_offsets(package_start, prev_offset());
-      advance();
-      advance();
-      advance();
-
-      ASSERT(view.size > 0);
-      while (view.data[view.size - 1] == ' ') {
-        --view.size;
-      }
-      Str package_name = str_intern_len(view.data, view.size);
-      Str type_name = str_from_previous();
-      errorf("type in imported package '%.*s', type '%.*s'\n", (int)str_len(package_name),
-             str_raw_ptr(package_name), (int)str_len(type_name), str_raw_ptr(type_name));
-    }
-  }
-#endif
-  if (check(TOK_IDENT_VAR) && peek2(TOK_DOT, TOK_IDENT_TYPE)) {
+  if (check(TOK_IDENT_IMPORT) && peek2(TOK_DOT, TOK_IDENT_TYPE)) {
     advance();
     Str package_name = str_from_previous();
     advance();
     advance();
     Str type_name = str_from_previous();
-    errorf("type in imported package '%.*s', type '%.*s'\n", (int)str_len(package_name),
-           str_raw_ptr(package_name), (int)str_len(type_name), str_raw_ptr(type_name));
+
+    ImportNameAndModule inam = {package_name};
+    DictRawIter iter = dict_find(tu.tokbuf.import_dict, &inam, start_str_hash_func,
+                                 start_str_eq_func, sizeof(ImportNameAndModule));
+    ImportNameAndModule* pinam = (ImportNameAndModule*)dict_rawiter_get(&iter);
+    if (!pinam) {
+      error("internal error");
+    }
+    ImportedModuleScope* scope = module_get_scope(pinam->module);
+    ImportedSymbol is = {.name = type_name};
+    iter = dict_find(&scope->syms, &is, start_str_hash_func, start_str_eq_func, sizeof(ImportedSymbol));
+    ImportedSymbol* pis = (ImportedSymbol*)dict_rawiter_get(&iter);
+    if (!pis) {
+      errorf("Type '%.*s' not found in imported package '%.*s'.", (int)str_len(type_name),
+             str_raw_ptr(type_name), (int)str_len(package_name), str_raw_ptr(package_name));
+    }
+    error("got imported type!");
   }
 
   if (match(TOK_IDENT_TYPE)) {
@@ -5139,12 +5131,13 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
       .cursor = (TokenCursor){-1, 0, 0, 0},
       .num_peeks = 0,
       .num_indents = 1,
-      .import_set = arena_push(glob.arena, sizeof(DictImpl), _Alignof(DictImpl)),
+      .import_dict = arena_push(glob.arena, sizeof(DictImpl), _Alignof(DictImpl)),
   };
-  *tb.import_set = dict_new(glob.arena, 32, sizeof(Str), _Alignof(Str)),
+  *tb.import_dict =
+      dict_new(glob.arena, 32, sizeof(ImportNameAndModule), _Alignof(ImportNameAndModule)),
   tb.indent_levels[0] = 0;
   tb.num_tokens = lex_indexer(file.buffer, file.allocated_size, tb.token_offsets);
-  token_init(file.buffer, tb.import_set);
+  token_init(file.buffer, tb.import_dict);
   if (glob.verbose > 1) {
     token_dump_offsets(tb.num_tokens, tb.token_offsets, file.file_size);
   }
@@ -5200,15 +5193,17 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
       tu.tokbuf = tb;
       tu.cur_scope = globscope;
       tu.num_scopes = 1;
-      token_init(file.buffer, tb.import_set);
+      token_init(file.buffer, tb.import_dict);
 
       consume(TOK_NEWLINE, "Expecting newline after import.");
 
       //printf("import as: '%s'\n", cstr_copy(glob.arena, module_import_as(newmod)));
 
       Str import_as = module_import_as(newmod);
-      dict_insert(tb.import_set, &import_as, start_str_hash_func, start_str_eq_func, sizeof(Str),
-                  _Alignof(Str));
+      ImportNameAndModule inam = {import_as, newmod};
+      dict_insert(tb.import_dict, &inam, start_str_hash_func, start_str_eq_func,
+                  sizeof(ImportNameAndModule), _Alignof(ImportNameAndModule));
+
       Sym* sym = sym_new(SYM_MODULE, import_as, type_module);
       sym->module = newmod;
       sym->scope_decl = SSD_DECLARED_GLOBAL;
