@@ -1,0 +1,15 @@
+# DISABLED hmm need to prefix everything with module name
+# OUT: ta.x: 1, ta.y: 2
+# OUT: tb.b: true
+# OUT: both helpers: '440', 'hello world from other_imp'
+import "impsub"
+import "other_imp"
+
+def int main():
+    ta = impsub.Thing(1, 2)
+    tb = other_imp.Thing(true)
+
+    print fmt("ta.x: {}, ta.y: {}", ta.x, ta.y)
+    print fmt("tb.b: {}", tb.b)
+    #print fmt("both helpers: '{}' and '{}'", impsub.helper_func(44), other_imp.helper_func())
+    return 0

@@ -1,0 +1,7 @@
+# IMPORTED
+
+struct Thing:
+    bool b
+
+def str helper_func():
+    return fmt("{}, {} from other_imp", "hello", "world")
