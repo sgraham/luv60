@@ -4,4 +4,4 @@ struct Thing:
     int y
 
 def int helper_func(int x):
-    return x + 10
+    return x * 10

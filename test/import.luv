@@ -1,7 +1,9 @@
-# DISABLED
+# OUT: 9, 100
 # OUT: 1230
 import "impsub"
 
 def int main():
+    t = impsub.Thing(9, 100)
+    print fmt("{}, {}", t.x, t.y)
     print impsub.helper_func(123)
     return 0

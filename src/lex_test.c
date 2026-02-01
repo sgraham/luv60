@@ -516,9 +516,12 @@ TEST(Lex, ImportSet) {
   Str name1 = str_intern("zippy");
   Str name2 = str_intern("flip");
   Str name3 = str_intern("rt");
-  dict_insert(&set, &name1, start_str_hash_func, start_str_eq_func, sizeof(Str), _Alignof(Str));
-  dict_insert(&set, &name2, start_str_hash_func, start_str_eq_func, sizeof(Str), _Alignof(Str));
-  dict_insert(&set, &name3, start_str_hash_func, start_str_eq_func, sizeof(Str), _Alignof(Str));
+  dict_insert(&set, &name1, start_str_hash_func, start_str_eq_func, sizeof(ImportNameAndModule),
+              _Alignof(ImportNameAndModule));
+  dict_insert(&set, &name2, start_str_hash_func, start_str_eq_func, sizeof(ImportNameAndModule),
+              _Alignof(ImportNameAndModule));
+  dict_insert(&set, &name3, start_str_hash_func, start_str_eq_func, sizeof(ImportNameAndModule),
+              _Alignof(ImportNameAndModule));
   //dict_dump(&set, sizeof(StartsWithStr));
 
   KindAndOffset expected_with_set[] = {

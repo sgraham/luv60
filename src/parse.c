@@ -1343,8 +1343,10 @@ static void enter_function(Sym* sym,
 
   enter_function_scope(sym);
 
-  SqLinkage linkage =
-      str_eq(sym->name, glob.static_str_main) ? sq_linkage_export : sq_linkage_default;
+  // TODO: need to figure out what we want to do here
+  //SqLinkage linkage =
+      //str_eq(sym->name, glob.static_str_main) ? sq_linkage_export : sq_linkage_default;
+  SqLinkage linkage = sq_linkage_export;
 
   Type ret_type = type_func_return_type(sym->type);
 
@@ -1464,7 +1466,7 @@ again:
     tu.tokbuf.cursor.cur_kind = tu.tokbuf.token_peeks[--tu.tokbuf.num_peeks].kind;
     tu.tokbuf.cursor.token_index = tu.tokbuf.token_peeks[tu.tokbuf.num_peeks].index;
 #if BUILD_DEBUG
-    if (glob.verbose > 1) {
+    if (glob.verbose > 2) {
       base_writef_stderr("token %s (buffered) index=%d\n",
                          token_enum_name(tu.tokbuf.cursor.cur_kind), tu.tokbuf.cursor.token_index);
     }
@@ -1503,7 +1505,7 @@ again:
   }
 
 #if BUILD_DEBUG
-  if (glob.verbose > 1) {
+  if (glob.verbose > 2) {
     base_writef_stderr("token %s index=%d\n", token_enum_name(tu.tokbuf.cursor.cur_kind),
                        tu.tokbuf.cursor.token_index);
   }
@@ -1904,7 +1906,9 @@ static bool convert_operand(Operand* operand, Type type) {
   return false;
 }
 
-static Type lookup_type_in_import_dict(Str package_name, Str type_name) {
+static ImportedSymbol* look_up_imported_symbol(Str package_name,
+                                             Str sym_name,
+                                             const char* expected_kind) {
   ImportNameAndModule inam = {package_name};
   DictRawIter iter = dict_find(tu.tokbuf.import_dict, &inam, start_str_hash_func, start_str_eq_func,
                                sizeof(ImportNameAndModule));
@@ -1913,14 +1917,22 @@ static Type lookup_type_in_import_dict(Str package_name, Str type_name) {
     error("internal error; no module");
   }
   ImportedModuleScope* scope = module_get_scope(pinam->module);
-  ImportedSymbol is = {.name = type_name};
+  ImportedSymbol is = {.name = sym_name};
   iter =
       dict_find(&scope->syms, &is, start_str_hash_func, start_str_eq_func, sizeof(ImportedSymbol));
   ImportedSymbol* pis = (ImportedSymbol*)dict_rawiter_get(&iter);
   if (!pis) {
-    errorf("Type '%.*s' not found in imported package '%.*s'.", (int)str_len(type_name),
-           str_raw_ptr(type_name), (int)str_len(package_name), str_raw_ptr(package_name));
+    if (expected_kind) {
+      errorf("%s '%.*s' not found in imported package '%.*s'.", expected_kind, (int)str_len(sym_name),
+            str_raw_ptr(sym_name), (int)str_len(package_name), str_raw_ptr(package_name));
+    }
+    // otherwise allow NULL return for not found
   }
+  return pis;
+}
+
+static Type look_up_imported_type(Str package_name, Str type_name) {
+  ImportedSymbol* pis = look_up_imported_symbol(package_name, type_name, "Type");
   if (pis->kind != SYM_TYPE) {
     error("internal error; not type");
   }
@@ -2008,7 +2020,7 @@ static Type parse_type(void) {
     advance();
     Str type_name = str_from_previous();
 
-    return lookup_type_in_import_dict(package_name, type_name);
+    return look_up_imported_type(package_name, type_name);
   }
 
   if (match(TOK_IDENT_TYPE)) {
@@ -2694,10 +2706,17 @@ static Operand parse_module_name_prefix(bool can_assign, Type* expected) {
   Str package_name = str_from_previous();
   consume(TOK_DOT, "Expecting '.' after package name.");
   if (match(TOK_IDENT_VAR)) {
-    error("todo; module name prefix var");
+    Str var_or_func_name = str_from_previous();
+    ImportedSymbol* sym = look_up_imported_symbol(package_name, var_or_func_name, "Variable");
+    SqRef ref = sq_ref_extern(cstr_copy(glob.arena, sym->extern_name));  // TODO: pre-make this
+    if (type_kind(sym->type) == TYPE_FUNC) {
+      return operand_rvalue_global_addr(sym->type, ref);
+    } else {
+      return operand_lvalue_global_addr(sym->type, ref);
+    }
   } else if (match(TOK_IDENT_TYPE)) {
     Str type_name = str_from_previous();
-    Type type = lookup_type_in_import_dict(package_name, type_name);
+    Type type = look_up_imported_type(package_name, type_name);
     return parse_compound_literal_given_type(type, can_assign, expected);
   } else {
     error("todo; module name prefix other");
@@ -2730,138 +2749,90 @@ static Operand parse_dict_literal(bool can_assign, Type* expected) {
 }
 
 static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
-  if (type_kind(left.type) == TYPE_MODULE) {
-    if (match(TOK_IDENT_VAR)) {
-#if 0
-      Str name = str_from_previous();
-      Module mod = left.val.m;
-      Scope* modscope = module_get_scope(mod);
+  Str name = parse_name("Expect property name after '.'.");
+  uint32_t name_offset = prev_offset();
 
-      Sym* sym = NULL;
-      // printf("looking in %d\n", mod.u);
-      // dump_scope(modscope);
-      // printf("looking for '%.*s'\n", (int)str_len(name), str_raw_ptr(name));
-      ScopeResult scope_result = scope_lookup_single(modscope, name, true, &sym);
-      // printf("scope result: %d, sym: %p\n", scope_result, sym);
-      if (scope_result != SCOPE_RESULT_GLOBAL) {
-        Str full_name = module_load_path(mod);
-        Str mod_name = module_import_as(mod);
-        errorf("Module '%.*s' imported as '%.*s' does not define global '%.*s'.",
-               str_len(full_name), str_raw_ptr(full_name), str_len(mod_name), str_raw_ptr(mod_name),
-               str_len(name), str_raw_ptr(name));
-      }
-#endif
-      error("needs to return a different type of thing that turns into a sq_ref_extern?");
-      //return load_value(scope_result, sym, name);
-    } else if (match(TOK_IDENT_TYPE)) {
-#if 0
-      Str typename = str_from_previous();
-      Module mod = left.val.m;
-      Scope* modscope = module_get_scope(mod);
+  if (can_assign && match_assignment()) {
+    while (type_kind(left.type) == TYPE_PTR) {
+      left = operand_lvalue_local(type_ptr_subtype(left.type), operand_to_sqref_imm(&left));
+    }
 
-      Sym* sym = NULL;
-      ScopeResult scope_result = scope_lookup_single(modscope, typename, true, &sym);
-      if (scope_result != SCOPE_RESULT_GLOBAL) {
-        Str full_name = module_load_path(mod);
-        Str mod_name = module_import_as(mod);
-        errorf("Module '%.*s' imported as '%.*s' does not define type '%.*s'.",
-               str_len(full_name), str_raw_ptr(full_name), str_len(mod_name), str_raw_ptr(mod_name),
-               str_len(typename), str_raw_ptr(typename));
+    if (type_kind(left.type) == TYPE_STRUCT) {
+      uint32_t field_offset;
+      Type field_type;
+      if (type_struct_find_field_by_name(left.type, name, &field_type, &field_offset)) {
+        Operand rhs_value = parse_expression(expected);
+
+        if (!convert_operand(&rhs_value, field_type)) {
+          errorf_offset(name_offset, "Cannot assign type %s to field '%s' which is type %s.",
+                        type_as_str(rhs_value.type), cstr_copy(glob.arena, name),
+                        type_as_str(field_type));
+        }
+        store_by_type_val_into(
+            field_type, operand_to_sqref_imm(&rhs_value),
+            sq_i_add(sq_type_long, operand_to_sqref_lval(&left), sq_const_int(field_offset)));
+        return operand_none;
+      } else {
+        errorf_offset(name_offset, "'%s' is not a field of type %s.", cstr_copy(glob.arena, name),
+                      cstr_copy(glob.arena, type_struct_decl_name(left.type)));
       }
-      ASSERT(sym->kind == SYM_TYPE);
-#endif
-      error("todo; module.Type");
     } else {
-      error("Expecting name or type after module name.");
+      error("todo; assigning to unexpected thing");
     }
   } else {
-    Str name = parse_name("Expect property name after '.'.");
-    uint32_t name_offset = prev_offset();
-
-    if (can_assign && match_assignment()) {
-      while (type_kind(left.type) == TYPE_PTR) {
-        left = operand_lvalue_local(type_ptr_subtype(left.type), operand_to_sqref_imm(&left));
-      }
-
-      if (type_kind(left.type) == TYPE_STRUCT) {
-        uint32_t field_offset;
-        Type field_type;
-        if (type_struct_find_field_by_name(left.type, name, &field_type, &field_offset)) {
-          Operand rhs_value = parse_expression(expected);
-
-          if (!convert_operand(&rhs_value, field_type)) {
-            errorf_offset(name_offset, "Cannot assign type %s to field '%s' which is type %s.",
-                type_as_str(rhs_value.type), cstr_copy(glob.arena, name),
-                type_as_str(field_type));
-          }
-          store_by_type_val_into(
-              field_type, operand_to_sqref_imm(&rhs_value),
-              sq_i_add(sq_type_long, operand_to_sqref_lval(&left), sq_const_int(field_offset)));
-          return operand_none;
-        } else {
-          errorf_offset(name_offset, "'%s' is not a field of type %s.",
-              cstr_copy(glob.arena, name),
-              cstr_copy(glob.arena, type_struct_decl_name(left.type)));
-        }
-      } else {
-        error("todo; assigning to unexpected thing");
-      }
-    } else {
-
-      Operand new_left = left;
-      while (type_kind(new_left.type) == TYPE_PTR) {
-        new_left =
+    Operand new_left = left;
+    while (type_kind(new_left.type) == TYPE_PTR) {
+      new_left =
           operand_lvalue_local(type_ptr_subtype(new_left.type), operand_to_sqref_imm(&new_left));
-      }
-      if (type_kind(new_left.type) == TYPE_STRUCT) {
-        uint32_t field_offset;
-        Type field_type;
-        if (type_struct_find_field_by_name(new_left.type, name, &field_type, &field_offset)) {
-          return operand_lvalue_local(
-              field_type,
-              sq_i_add(sq_type_long, operand_to_sqref_lval(&new_left), sq_const_int(field_offset)));
-        }
-
-        // Not an error yet; could be a memfn below.
+    }
+    if (type_kind(new_left.type) == TYPE_STRUCT) {
+      uint32_t field_offset;
+      Type field_type;
+      if (type_struct_find_field_by_name(new_left.type, name, &field_type, &field_offset)) {
+        return operand_lvalue_local(
+            field_type,
+            sq_i_add(sq_type_long, operand_to_sqref_lval(&new_left), sq_const_int(field_offset)));
       }
 
-      Sym* func_sym = lookup_memfn(new_left.type, name);
-      if (!func_sym) {
-        errorf("Undefined member function %s on type %s.", cstr_copy(glob.arena, name),
-            type_as_str(new_left.type));
-      }
-
-      if (type_kind(func_sym->type) != TYPE_FUNC) {
-        error("internal error: memfn resolved to non-function");
-      }
-      if (type_func_num_params(func_sym->type) < 1) {
-        // Parser shouldn't get this far.
-        error("internal error: memfn with no parameters");
-      }
-
-      // left could have been:
-      //    ****Stuff x
-      //    x.memfn()
-      // The auto-deref would find Stuff for memfn lookup, and now left.type will
-      // just be Stuff. The target memfn always just gets *Stuff, so we need to
-      // build that from the left that we originally had.
-      SqRef self_ptr;
-      TypeKind left_type_kind = type_kind(left.type);
-      if (type_is_basic(left.type) || left_type_kind == TYPE_STRUCT || left_type_kind == TYPE_LIST) {
-        self_ptr = operand_to_sqref_lval(&left);
-      } else if (left_type_kind == TYPE_PTR &&
-          (type_kind(type_ptr_subtype(left.type)) == TYPE_STRUCT ||
-           type_kind(type_ptr_subtype(left.type)) == TYPE_LIST)) {
-        self_ptr = operand_to_sqref_imm(&left);
-      } else {
-        error("TODO: self ptr");
-      }
-      return operand_rvalue_global_addr_bound(func_sym->type, sqref_for_sym(func_sym), self_ptr);
+      // Not an error yet; could be a memfn below.
     }
 
-    ASSERT(false && "todo");
-    return operand_none;
+    Sym* func_sym = lookup_memfn(new_left.type, name);
+    if (!func_sym) {
+      errorf("Undefined member function %s on type %s.", cstr_copy(glob.arena, name),
+             type_as_str(new_left.type));
+    }
+
+    if (type_kind(func_sym->type) != TYPE_FUNC) {
+      error("internal error: memfn resolved to non-function");
+    }
+    if (type_func_num_params(func_sym->type) < 1) {
+      // Parser shouldn't get this far.
+      error("internal error: memfn with no parameters");
+    }
+
+    // left could have been:
+    //    ****Stuff x
+    //    x.memfn()
+    // The auto-deref would find Stuff for memfn lookup, and now left.type will
+    // just be Stuff. The target memfn always just gets *Stuff, so we need to
+    // build that from the left that we originally had.
+    SqRef self_ptr;
+    TypeKind left_type_kind = type_kind(left.type);
+    if (type_is_basic(left.type) || left_type_kind == TYPE_STRUCT || left_type_kind == TYPE_LIST) {
+      self_ptr = operand_to_sqref_lval(&left);
+    } else if (left_type_kind == TYPE_PTR &&
+               (type_kind(type_ptr_subtype(left.type)) == TYPE_STRUCT ||
+                type_kind(type_ptr_subtype(left.type)) == TYPE_LIST)) {
+      self_ptr = operand_to_sqref_imm(&left);
+    } else {
+      error("TODO: self ptr");
+    }
+    return operand_rvalue_global_addr_bound(func_sym->type, sqref_for_sym(func_sym), self_ptr);
   }
+
+  ASSERT(false && "todo");
+  return operand_none;
 }
 
 static Operand parse_grouping(bool can_assign, Type* expected) {
@@ -5164,7 +5135,7 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
   tb.indent_levels[0] = 0;
   tb.num_tokens = lex_indexer(file.buffer, file.allocated_size, tb.token_offsets);
   token_init(file.buffer, tb.import_dict);
-  if (glob.verbose > 1) {
+  if (glob.verbose > 2) {
     token_dump_offsets(tb.num_tokens, tb.token_offsets, file.file_size);
   }
   tu.tokbuf = tb;
@@ -5257,9 +5228,9 @@ static void parse_impl(Arena* temp_arena, Module module) {
     base_exit(1);
   }
   config.output_function = sqbe_callback_output_function;
-  if (glob.verbose == 1) {
+  if (glob.verbose == 2) {
     config.debug_flags = "PT";
-  } else if (glob.verbose > 1) {
+  } else if (glob.verbose > 3) {
     config.debug_flags = "PMNCFKAILSRT";
   }
   sq_init(&config);

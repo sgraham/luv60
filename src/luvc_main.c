@@ -33,6 +33,9 @@ static void parse_commandline(int argc,
     } else if (strcmp(argv[i], "-vv") == 0) {
       *verbose = 2;
       ++i;
+    } else if (strcmp(argv[i], "-vvv") == 0) {
+      *verbose = 3;
+      ++i;
     } else if (strcmp(argv[i], "--syntax-only") == 0) {
       *syntax_only = true;
       ++i;
@@ -117,7 +120,9 @@ int assemble_and_link(Arena* arena,
 #endif
 
   bv_append(&cmd, 0);
-  //printf("Running:\n  %s\n", bv_dataptr(&cmd));
+  if (verbose) {
+    base_writef_stderr("Running:\n  %s\n", bv_dataptr(&cmd));
+  }
   system(bv_dataptr(&cmd));
 
   return 0;
@@ -154,5 +159,9 @@ int main(int argc, char** argv) {
         (int)str_len(path), str_raw_ptr(path));
   }
 
-  return assemble_and_link(main_arena, main, output_dir, filename, &with_c, verbose);
+  if (verbose > 1) {
+    base_writef_stderr("Not assembling and linking, no .s generated.\n");
+  } else {
+    return assemble_and_link(main_arena, main, output_dir, filename, &with_c, verbose);
+  }
 }
