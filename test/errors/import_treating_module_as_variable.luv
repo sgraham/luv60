@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:7:19:    temp = someimp
+# CERR: {ssss}                        ^ error: Expecting '.' after package name.
+import "someimp"
+
+def int main():
+    temp = someimp
+    return 0
