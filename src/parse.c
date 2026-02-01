@@ -1990,7 +1990,7 @@ static Type parse_type(void) {
                                  start_str_eq_func, sizeof(ImportNameAndModule));
     ImportNameAndModule* pinam = (ImportNameAndModule*)dict_rawiter_get(&iter);
     if (!pinam) {
-      error("internal error");
+      error("internal error; no module");
     }
     ImportedModuleScope* scope = module_get_scope(pinam->module);
     ImportedSymbol is = {.name = type_name};
@@ -2000,7 +2000,10 @@ static Type parse_type(void) {
       errorf("Type '%.*s' not found in imported package '%.*s'.", (int)str_len(type_name),
              str_raw_ptr(type_name), (int)str_len(package_name), str_raw_ptr(package_name));
     }
-    error("got imported type!");
+    if (pis->kind != SYM_TYPE) {
+      error("internal error; not type");
+    }
+    return pis->type;
   }
 
   if (match(TOK_IDENT_TYPE)) {
