@@ -1904,6 +1904,29 @@ static bool convert_operand(Operand* operand, Type type) {
   return false;
 }
 
+static Type lookup_type_in_import_dict(Str package_name, Str type_name) {
+  ImportNameAndModule inam = {package_name};
+  DictRawIter iter = dict_find(tu.tokbuf.import_dict, &inam, start_str_hash_func, start_str_eq_func,
+                               sizeof(ImportNameAndModule));
+  ImportNameAndModule* pinam = (ImportNameAndModule*)dict_rawiter_get(&iter);
+  if (!pinam) {
+    error("internal error; no module");
+  }
+  ImportedModuleScope* scope = module_get_scope(pinam->module);
+  ImportedSymbol is = {.name = type_name};
+  iter =
+      dict_find(&scope->syms, &is, start_str_hash_func, start_str_eq_func, sizeof(ImportedSymbol));
+  ImportedSymbol* pis = (ImportedSymbol*)dict_rawiter_get(&iter);
+  if (!pis) {
+    errorf("Type '%.*s' not found in imported package '%.*s'.", (int)str_len(type_name),
+           str_raw_ptr(type_name), (int)str_len(package_name), str_raw_ptr(package_name));
+  }
+  if (pis->kind != SYM_TYPE) {
+    error("internal error; not type");
+  }
+  return pis->type;
+}
+
 static Type parse_type(void) {
   if (match(TOK_STAR)) {
     return type_ptr(parse_type());
@@ -1985,25 +2008,7 @@ static Type parse_type(void) {
     advance();
     Str type_name = str_from_previous();
 
-    ImportNameAndModule inam = {package_name};
-    DictRawIter iter = dict_find(tu.tokbuf.import_dict, &inam, start_str_hash_func,
-                                 start_str_eq_func, sizeof(ImportNameAndModule));
-    ImportNameAndModule* pinam = (ImportNameAndModule*)dict_rawiter_get(&iter);
-    if (!pinam) {
-      error("internal error; no module");
-    }
-    ImportedModuleScope* scope = module_get_scope(pinam->module);
-    ImportedSymbol is = {.name = type_name};
-    iter = dict_find(&scope->syms, &is, start_str_hash_func, start_str_eq_func, sizeof(ImportedSymbol));
-    ImportedSymbol* pis = (ImportedSymbol*)dict_rawiter_get(&iter);
-    if (!pis) {
-      errorf("Type '%.*s' not found in imported package '%.*s'.", (int)str_len(type_name),
-             str_raw_ptr(type_name), (int)str_len(package_name), str_raw_ptr(package_name));
-    }
-    if (pis->kind != SYM_TYPE) {
-      error("internal error; not type");
-    }
-    return pis->type;
+    return lookup_type_in_import_dict(package_name, type_name);
   }
 
   if (match(TOK_IDENT_TYPE)) {
@@ -2634,23 +2639,7 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
                             sq_i_calla(type_to_sqtype(ret_type), left.ref, num_args, arg_values));
 }
 
-static Operand parse_compound_literal(bool can_assign, Type* expected) {
-  Type lit_type;
-  Str type_name = str_from_previous();
-
-  Sym* sym;
-  ScopeResult scope_result = scope_lookup_recursive(type_name, &sym);
-  if (scope_result == SCOPE_RESULT_UNDEFINED) {
-    errorf("Undefined type %s.", cstr_copy(glob.arena, type_name));
-  } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_TYPE) {
-    lit_type = sym->type;
-    if (type_kind(lit_type) != TYPE_STRUCT) {
-      errorf("Cannot construct compound literal of type %s.", type_as_str(lit_type));
-    }
-  } else {
-    error("TODO: unhandled case in compound literal.");
-  }
-
+static Operand parse_compound_literal_given_type(Type lit_type, bool can_assign, Type* expected) {
   consume(TOK_LPAREN, "Expecting '(' to start compound literal.");
   Str field_names[MAX_STRUCT_FIELDS];
   Operand field_values[MAX_STRUCT_FIELDS];
@@ -2699,6 +2688,40 @@ static Operand parse_compound_literal(bool can_assign, Type* expected) {
   }
 
   return operand_rvalue_local_addr(lit_type, base_addr);
+}
+
+static Operand parse_module_name_prefix(bool can_assign, Type* expected) {
+  Str package_name = str_from_previous();
+  consume(TOK_DOT, "Expecting '.' after package name.");
+  if (match(TOK_IDENT_VAR)) {
+    error("todo; module name prefix var");
+  } else if (match(TOK_IDENT_TYPE)) {
+    Str type_name = str_from_previous();
+    Type type = lookup_type_in_import_dict(package_name, type_name);
+    return parse_compound_literal_given_type(type, can_assign, expected);
+  } else {
+    error("todo; module name prefix other");
+  }
+}
+
+static Operand parse_compound_literal(bool can_assign, Type* expected) {
+  Type lit_type;
+  Str type_name = str_from_previous();
+
+  Sym* sym;
+  ScopeResult scope_result = scope_lookup_recursive(type_name, &sym);
+  if (scope_result == SCOPE_RESULT_UNDEFINED) {
+    errorf("Undefined type %s.", cstr_copy(glob.arena, type_name));
+  } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_TYPE) {
+    lit_type = sym->type;
+    if (type_kind(lit_type) != TYPE_STRUCT) {
+      errorf("Cannot construct compound literal of type %s.", type_as_str(lit_type));
+    }
+  } else {
+    error("TODO: unhandled case in compound literal.");
+  }
+
+  return parse_compound_literal_given_type(lit_type, can_assign, expected);
 }
 
 static Operand parse_dict_literal(bool can_assign, Type* expected) {
@@ -4293,7 +4316,7 @@ static Rule rules[NUM_TOKEN_KINDS] = {
     {parse_variable, NULL, PREC_NONE},                          // TOK_IDENT_VAR
     {parse_compound_literal, NULL, PREC_NONE},                  // TOK_IDENT_TYPE
     {parse_variable, NULL, PREC_NONE},                          // TOK_IDENT_CONST
-    {NULL, NULL, PREC_NONE},                                    // TOK_IDENT_IMPORT
+    {parse_module_name_prefix, NULL, PREC_NONE},                // TOK_IDENT_IMPORT
     {NULL, NULL, PREC_NONE},                                    // TOK_IDENT_DECORATOR
     {NULL, NULL, PREC_NONE},                                    // TOK_IF
     {NULL, NULL, PREC_NONE},                                    // TOK_IMPORT
