@@ -4172,10 +4172,6 @@ static Operand parse_variable(bool can_assign, Type* expected) {
             }
             make_global(SYM_VAR, target, op.type, op.val);
             return operand_none;
-#if 0
-            Sym* new_global = make_global(SYM_VAR, target, op.type, op.val);
-            return operand_lvalue_global_addr(op.type, sq_ref_for_symbol(new_global->global));
-#endif
           } else {
             ASSERT(scope_result == SCOPE_RESULT_GLOBAL);
             error("Cannot re-initialize an existing global.");
@@ -4814,6 +4810,39 @@ static Sym* struct_statement() {
   return new;
 }
 
+static void parse_global_variable_statement(Type type) {
+  Str name = parse_name("Expect variable or typed variable name.");
+
+  Sym* sym = NULL;
+  ScopeResult scope_result = scope_lookup_recursive(name, &sym);
+  bool have_init;
+  ASSERT(!type_is_none(type));
+  have_init = match(TOK_EQ);
+  uint32_t eq_offset = prev_offset();
+
+  if (scope_result == SCOPE_RESULT_UNDEFINED) {
+    Operand op = const_expression();
+    if (have_init) {
+      if (!op_is_const(op)) {
+        error("Global initializers must be constants.");
+      }
+      if (!convert_operand(&op, type)) {
+        errorf_offset(eq_offset, "Initializer cannot be converted from type %s to declared type %s.",
+                      type_as_str(op.type), type_as_str(type));
+      }
+      make_global(SYM_VAR, name, type, op.val);
+    } else {
+      // TODO: not sure about this, plus aggregates?
+      make_global(SYM_VAR, name, type, (Val){.p = 0});
+    }
+  } else {
+    ASSERT(scope_result == SCOPE_RESULT_GLOBAL);
+    error("Cannot re-initialize an existing global.");
+  }
+
+  expect_end_of_statement("global variable declaration");
+}
+
 static void parse_variable_statement(Type type) {
   Str name = parse_name("Expect variable or typed variable name.");
   ASSERT(name.i);
@@ -5000,7 +5029,11 @@ static LastStatementType parse_statement(bool toplevel) {
     default: {
       Type var_type = parse_type();
       if (!type_is_none(var_type)) {
-        parse_variable_statement(var_type);
+        if (toplevel) {
+          parse_global_variable_statement(var_type);
+        } else {
+          parse_variable_statement(var_type);
+        }
         break;
       }
 

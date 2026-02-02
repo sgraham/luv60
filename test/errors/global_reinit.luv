@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:5:3:x = 44
+# CERR: {ssss}       ^ error: Cannot re-initialize an existing global.
+int x = 55
+x = 44
+
+# This and untyped unfortunatley go through different codepaths.
