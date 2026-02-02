@@ -1,0 +1,12 @@
+# OUT: 3
+# OUT: 12
+# OUT: 24
+
+BLAH = 3
+
+def int main():
+    [BLAH]int nums
+    print len(nums)
+    print sizeof([BLAH]int)
+    print sizeof([BLAH]u64)
+    return 0

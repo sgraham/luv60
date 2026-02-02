@@ -73,6 +73,7 @@ typedef struct Sym {
       SqRef ref2;  // Upvals for SYM_FUNC
     };
     Module module;
+    Val val;  // SYM_CONST
   };
   SymScopeDecl scope_decl;
 } Sym;
@@ -4112,7 +4113,7 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
   }
 }
 
-static Operand handle_var_or_const(bool can_assign, Type* expected, bool is_var) {
+static Operand parse_variable(bool can_assign, Type* expected) {
   Str target = str_from_previous();
   Sym* sym = NULL;
   ScopeResult scope_result = scope_lookup_recursive(target, &sym);
@@ -4122,9 +4123,6 @@ static Operand handle_var_or_const(bool can_assign, Type* expected, bool is_var)
     switch (scope_result) {
       case SCOPE_RESULT_LOCAL: {
         // If we found an existing local, we're just assigning to it here.
-        if (!is_var) {
-          error("Cannot assign a new value to a constant.");
-        }
         ASSERT(sym);
         Operand op = parse_expression(NULL);
         if (!convert_operand(&op, sym->type)) {
@@ -4171,11 +4169,7 @@ static Operand handle_var_or_const(bool can_assign, Type* expected, bool is_var)
             return operand_none;
           } else {
             ASSERT(scope_result == SCOPE_RESULT_GLOBAL);
-            if (is_var){
-              error("Cannot re-initialize an existing global.");
-            } else {
-              error("Cannot assign a new value to a constant.");
-            }
+            error("Cannot re-initialize an existing global.");
           }
         }
       }
@@ -4195,12 +4189,69 @@ static Operand handle_var_or_const(bool can_assign, Type* expected, bool is_var)
   }
 }
 
-static Operand parse_variable(bool can_assign, Type* expected) {
-  return handle_var_or_const(can_assign, expected, /*is_var=*/true);
-}
-
 static Operand parse_constant(bool can_assign, Type* expected) {
-  return handle_var_or_const(can_assign, expected, /*is_var=*/false);
+  Str target = str_from_previous();
+  Sym* sym = NULL;
+  ScopeResult scope_result = scope_lookup_recursive(target, &sym);
+  if (can_assign && match_assignment()) {
+    TokenKind eq_kind = tu.tokbuf.cursor.prev_kind;
+    TokenKind eq_offset = prev_offset();
+    switch (scope_result) {
+      case SCOPE_RESULT_LOCAL: {
+        error("Cannot assign a new value to a constant.");
+      }
+      case SCOPE_RESULT_UNDEFINED:
+      case SCOPE_RESULT_GLOBAL: {
+        if (tu.cur_scope->is_function) {
+          ASSERT(!tu.cur_scope->is_module);
+
+          ASSERT((scope_result == SCOPE_RESULT_UNDEFINED && !sym) ||
+                 (scope_result == SCOPE_RESULT_GLOBAL && sym));
+          // If a local wasn't found, then implicitly create and initialize it.
+          // (If it was found in the global scope, then it's not relevant for
+          // assignment because a `global blah` will be found as a local with a
+          // scope_decl of GLOBAL instead.)
+          if (eq_kind == TOK_EQ) {
+            // Local variable declaration without a type.
+            Operand op = const_expression();
+            Sym* sym = make_local_and_alloc(SYM_CONST, target, op.type, &op);
+            sym->val = op.val;
+            return operand_none;
+          } else {
+            error_offset(eq_offset,
+                         "Cannot use an augmented assignment when declaring a constant.");
+          }
+        } else {
+          ASSERT(tu.cur_scope->is_module);
+          ASSERT(!tu.cur_scope->is_function);
+          ASSERT(eq_kind == TOK_EQ);
+          if (scope_result == SCOPE_RESULT_UNDEFINED) {
+            // Global variable declaration without a type.
+            Operand op = const_expression();
+            if (!op_is_const(op)) {
+              error("Global initializers must be constants.");
+            }
+            Sym* sym = make_global(SYM_CONST, target, op.type, &op.val);
+            sym->val = op.val;
+            return operand_none;
+          } else {
+            ASSERT(scope_result == SCOPE_RESULT_GLOBAL);
+            error("Cannot assign a new value to a constant.");
+          }
+        }
+      }
+
+      case SCOPE_RESULT_PARAMETER: {
+        error("internal error; const func param");
+      }
+
+      case SCOPE_RESULT_UPVALUE: {
+        error("internal error; const upval");
+      }
+    }
+  } else {
+    return operand_const(sym->type, sym->val);
+  }
 }
 
 // Has to match the order in tokens.inc.
