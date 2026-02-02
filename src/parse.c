@@ -4112,7 +4112,7 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
   }
 }
 
-static Operand parse_variable(bool can_assign, Type* expected) {
+static Operand handle_var_or_const(bool can_assign, Type* expected, bool is_var) {
   Str target = str_from_previous();
   Sym* sym = NULL;
   ScopeResult scope_result = scope_lookup_recursive(target, &sym);
@@ -4122,6 +4122,9 @@ static Operand parse_variable(bool can_assign, Type* expected) {
     switch (scope_result) {
       case SCOPE_RESULT_LOCAL: {
         // If we found an existing local, we're just assigning to it here.
+        if (!is_var) {
+          error("Cannot assign a new value to a constant.");
+        }
         ASSERT(sym);
         Operand op = parse_expression(NULL);
         if (!convert_operand(&op, sym->type)) {
@@ -4139,18 +4142,6 @@ static Operand parse_variable(bool can_assign, Type* expected) {
         if (tu.cur_scope->is_function) {
           ASSERT(!tu.cur_scope->is_module);
 
-#if 0
-          // Assigning to a global from a function.
-          ASSERT(sym);
-          Operand op = parse_expression(NULL);
-          if (!convert_operand(&op, sym->type)) {
-            errorf("Cannot assign type %s to type %s.", type_as_str(op.type),
-                   type_as_str(sym->type));
-          }
-          ASSERT(eq_kind == TOK_EQ);
-          ir_STORE(ir_CONST_ADDR(sym->addr), operand_to_irref_imm(&op));
-          return operand_none;
-#endif
           ASSERT((scope_result == SCOPE_RESULT_UNDEFINED && !sym) ||
                  (scope_result == SCOPE_RESULT_GLOBAL && sym));
           // If a local wasn't found, then implicitly create and initialize it.
@@ -4180,7 +4171,11 @@ static Operand parse_variable(bool can_assign, Type* expected) {
             return operand_none;
           } else {
             ASSERT(scope_result == SCOPE_RESULT_GLOBAL);
-            error("Cannot re-initialize an existing global.");
+            if (is_var){
+              error("Cannot re-initialize an existing global.");
+            } else {
+              error("Cannot assign a new value to a constant.");
+            }
           }
         }
       }
@@ -4198,6 +4193,14 @@ static Operand parse_variable(bool can_assign, Type* expected) {
     //dump_scope(tu.mod_scope);
     return load_value(scope_result, sym, target);
   }
+}
+
+static Operand parse_variable(bool can_assign, Type* expected) {
+  return handle_var_or_const(can_assign, expected, /*is_var=*/true);
+}
+
+static Operand parse_constant(bool can_assign, Type* expected) {
+  return handle_var_or_const(can_assign, expected, /*is_var=*/false);
 }
 
 // Has to match the order in tokens.inc.
@@ -4255,7 +4258,7 @@ static Rule rules[NUM_TOKEN_KINDS] = {
     {NULL, parse_binary, PREC_COMPARISON},                      // TOK_GT
     {parse_variable, NULL, PREC_NONE},                          // TOK_IDENT_VAR
     {parse_compound_literal, NULL, PREC_NONE},                  // TOK_IDENT_TYPE
-    {parse_variable, NULL, PREC_NONE},                          // TOK_IDENT_CONST
+    {parse_constant, NULL, PREC_NONE},                          // TOK_IDENT_CONST
     {parse_module_name_prefix, NULL, PREC_NONE},                // TOK_IDENT_IMPORT
     {NULL, NULL, PREC_NONE},                                    // TOK_IDENT_DECORATOR
     {NULL, NULL, PREC_NONE},                                    // TOK_IF

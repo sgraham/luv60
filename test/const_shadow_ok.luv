@@ -1,0 +1,7 @@
+# OUT: 44
+# Don't love that this is valid, but it's consistent with Python scoping rules.
+MYCONST = 1
+def int main():
+    MYCONST = 44
+    print MYCONST
+    return 0

@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:5:6:BLAH = 4
+# CERR: {ssss}          ^ error: Cannot assign a new value to a constant.
+BLAH = 3
+BLAH = 4
+def int main():
+    print BLAH
+    return 0
