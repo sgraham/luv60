@@ -1,0 +1,13 @@
+# OUT: Stuff(0, 0)
+struct Stuff:
+    int x
+    int y
+
+Stuff x
+
+on Stuff def str __str__(self):
+    return fmt("Stuff({}, {})", self.x, self.y)
+
+def int main():
+    print x
+    return 0

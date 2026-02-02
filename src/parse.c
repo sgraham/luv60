@@ -1236,39 +1236,45 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
   return new;
 }
 
-static Sym* make_global(SymKind kind, Str name, Type type, Val initial_value) {
+static Sym* make_global(SymKind kind, Str name, Type type, Val* initial_value) {
   Sym* new = sym_new(kind, name, type);
   sq_data_start(sq_linkage_default, cstr_copy(glob.arena, name));
-  switch (type_kind(type)) {
-    case TYPE_BOOL:
-      sq_data_byte((uint8_t)initial_value.b);
-      break;
-    case TYPE_U8:
-      sq_data_byte(initial_value.u8);
-      break;
-    case TYPE_I8:
-      sq_data_byte((uint8_t)initial_value.i8);
-      break;
-    case TYPE_U16:
-      sq_data_half(initial_value.u16);
-      break;
-    case TYPE_I16:
-      sq_data_half((uint16_t)initial_value.i16);
-      break;
-    case TYPE_U32:
-      sq_data_word(initial_value.u32);
-      break;
-    case TYPE_I32:
-      sq_data_word((uint32_t)initial_value.i32);
-      break;
-    case TYPE_U64:
-      sq_data_long(initial_value.u64);
-      break;
-    case TYPE_I64:
-      sq_data_long((uint64_t)initial_value.i64);
-      break;
-    default:
-      error("internal error: unexpected global const init.");
+  if (initial_value) {
+    switch (type_kind(type)) {
+      case TYPE_BOOL:
+        sq_data_byte((uint8_t)initial_value->b);
+        break;
+      case TYPE_U8:
+        sq_data_byte(initial_value->u8);
+        break;
+      case TYPE_I8:
+        sq_data_byte((uint8_t)initial_value->i8);
+        break;
+      case TYPE_U16:
+        sq_data_half(initial_value->u16);
+        break;
+      case TYPE_I16:
+        sq_data_half((uint16_t)initial_value->i16);
+        break;
+      case TYPE_U32:
+        sq_data_word(initial_value->u32);
+        break;
+      case TYPE_I32:
+        sq_data_word((uint32_t)initial_value->i32);
+        break;
+      case TYPE_U64:
+        sq_data_long(initial_value->u64);
+        break;
+      case TYPE_I64:
+        sq_data_long((uint64_t)initial_value->i64);
+        break;
+      default:
+        error("internal error: unexpected global const init.");
+    }
+  } else {
+    for (size_t i = 0; i < type_size(type); ++i) {
+      sq_data_byte(0);
+    }
   }
   new->global = sq_data_end();
   new->scope_decl = SSD_DECLARED_GLOBAL;
@@ -4170,7 +4176,7 @@ static Operand parse_variable(bool can_assign, Type* expected) {
             if (!op_is_const(op)) {
               error("Global initializers must be constants.");
             }
-            make_global(SYM_VAR, target, op.type, op.val);
+            make_global(SYM_VAR, target, op.type, &op.val);
             return operand_none;
           } else {
             ASSERT(scope_result == SCOPE_RESULT_GLOBAL);
@@ -4821,8 +4827,8 @@ static void parse_global_variable_statement(Type type) {
   uint32_t eq_offset = prev_offset();
 
   if (scope_result == SCOPE_RESULT_UNDEFINED) {
-    Operand op = const_expression();
     if (have_init) {
+      Operand op = const_expression();
       if (!op_is_const(op)) {
         error("Global initializers must be constants.");
       }
@@ -4830,10 +4836,9 @@ static void parse_global_variable_statement(Type type) {
         errorf_offset(eq_offset, "Initializer cannot be converted from type %s to declared type %s.",
                       type_as_str(op.type), type_as_str(type));
       }
-      make_global(SYM_VAR, name, type, op.val);
+      make_global(SYM_VAR, name, type, &op.val);
     } else {
-      // TODO: not sure about this, plus aggregates?
-      make_global(SYM_VAR, name, type, (Val){.p = 0});
+      make_global(SYM_VAR, name, type, NULL);
     }
   } else {
     ASSERT(scope_result == SCOPE_RESULT_GLOBAL);
