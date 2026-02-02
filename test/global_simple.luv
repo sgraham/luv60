@@ -1,0 +1,6 @@
+# OUT: 55
+int x = 55
+
+def int main():
+    print x
+    return 0
