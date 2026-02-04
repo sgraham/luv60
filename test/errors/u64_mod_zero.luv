@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:5:20:    x = 12345u64 % 0
+# CERR: {ssss}                         ^ error: Divide by zero.
+def int main():
+    x = 12345u64 % 0

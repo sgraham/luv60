@@ -1,0 +1,5 @@
+# CRET: 1
+# CERR: {self}:5:36:    x = 0x8000_0000_0000_0000u64 * 2
+# CERR: {ssss}                                         ^ error: 9223372036854775808 multiplied by 2 overflows.
+def int main():
+    x = 0x8000_0000_0000_0000u64 * 2

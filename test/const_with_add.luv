@@ -1,0 +1,12 @@
+# OUT: 15
+# OUT: 60
+# OUT: 120
+
+BLAH = sizeof(u64) + 7
+
+def int main():
+    [BLAH]int nums
+    print len(nums)
+    print sizeof([BLAH]int)
+    print sizeof([BLAH]u64)
+    return 0

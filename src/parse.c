@@ -2305,13 +2305,7 @@ static void unify_arithmetic_operands(Operand* left, Operand* right) {
   ASSERT(type_eq(left->type, right->type));
 }
 
-static unsigned long long eval_binary_op_ull(TokenKind op,
-                                             unsigned long long left,
-                                             unsigned long long right) {
-  error("TODO: ull binary const eval");
-}
-
-static unsigned long highest_bit_set(long long val) {
+static unsigned long highest_bit_set(unsigned long long val) {
 #if COMPILER_MSVC
   unsigned long index;
   bool is_nonzero = _BitScanForward64(&index, val);
@@ -2327,15 +2321,17 @@ static unsigned long highest_bit_set(long long val) {
 #endif
 }
 
-static long long eval_binary_op_ll(TokenKind op, long long left, long long right) {
+static unsigned long long eval_binary_op_ull(TokenKind op,
+                                             unsigned long long left,
+                                             unsigned long long right) {
   switch (op) {
     case TOK_STAR: {
-      long long result;
+      unsigned long long result;
       if (
 #if COMPILER_MSVC
-          _mul_overflow_i64(left, right, &result)
+          _mul_overflow_u64(left, right, &result)
 #else
-          __builtin_smulll_overflow(left, right, &result)
+          __builtin_umulll_overflow(left, right, &result)
 #endif
       ) {
         errorf("%llu multiplied by %llu overflows.", left, right);
@@ -2357,9 +2353,98 @@ static long long eval_binary_op_ll(TokenKind op, long long left, long long right
     case TOK_AMPERSAND:
       return left & right;
     case TOK_LSHIFT: {
-      long long required_bits = highest_bit_set(left) + right + 1;
+      unsigned long long required_bits = highest_bit_set(left) + right + 1;
       if (required_bits > 64) {
         errorf("%llu shifted left by %llu requires %llu bits.", left, right, required_bits);
+      }
+      return left << right;
+    }
+#if 0  // TODO: signed bit passing
+    case IR_SHR:
+      error("internal error: SHR on signed.");
+    case IR_SAR:
+      return left >> right;
+#endif
+    case TOK_PLUS: {
+      unsigned long long result;
+      if (
+#if COMPILER_MSVC
+          _add_overflow_u64(0, left, right, &result)
+#else
+          __builtin_uaddll_overflow(left, right, &result)
+#endif
+      ) {
+        errorf("%llu added to %llu overflows.", right, left);
+      }
+      return result;
+    }
+    case TOK_MINUS: {
+      unsigned long long result;
+      if (
+#if COMPILER_MSVC
+          _sub_overflow_u64(0, left, right, &result)
+#else
+          __builtin_usubll_overflow(left, right, &result)
+#endif
+      ) {
+        errorf("%llu subtracted from %llu overflows.", right, left);
+      }
+      return result;
+    }
+    case TOK_PIPE:
+      return left | right;
+    case TOK_CARET:
+      return left ^ right;
+    case TOK_EQEQ:
+      return left == right;
+    case TOK_BANGEQ:
+      return left != right;
+    case TOK_LT:
+      return left < right;
+    case TOK_LEQ:
+      return left <= right;
+    case TOK_GT:
+      return left > right;
+    case TOK_GEQ:
+      return left >= right;
+    default:
+      error("internal error: unexpected const op.");
+  }
+}
+
+static long long eval_binary_op_ll(TokenKind op, long long left, long long right) {
+  switch (op) {
+    case TOK_STAR: {
+      long long result;
+      if (
+#if COMPILER_MSVC
+          _mul_overflow_i64(left, right, &result)
+#else
+          __builtin_smulll_overflow(left, right, &result)
+#endif
+      ) {
+        errorf("%lld multiplied by %lld overflows.", left, right);
+      }
+      return result;
+    }
+    case TOK_SLASH:
+      if (right == 0) {
+        error("Divide by zero.");
+        return 0;
+      }
+      return left / right;
+    case TOK_PERCENT:
+      if (right == 0) {
+        error("Divide by zero.");
+        return 0;
+      }
+      return left % right;
+    case TOK_AMPERSAND:
+      return left & right;
+    case TOK_LSHIFT: {
+      long long required_bits = highest_bit_set(left) + right + 1;
+      if (required_bits > 64) {
+        errorf("%lld shifted left by %lld requires %lld bits.", left, right, required_bits);
       }
       return left << right;
     }
@@ -2378,7 +2463,7 @@ static long long eval_binary_op_ll(TokenKind op, long long left, long long right
           __builtin_saddll_overflow(left, right, &result)
 #endif
       ) {
-        errorf("%llu added to %llu overflows.", right, left);
+        errorf("%lld added to %lld overflows.", right, left);
       }
       return result;
     }
@@ -3653,7 +3738,7 @@ static Operand parse_sizeof(bool can_assign, Type* expected) {
     error("TODO: sizeof expr");
   }
   consume(TOK_RPAREN, "Expect ')' after sizeof.");
-  return operand_rvalue_imm(type_u64, sq_const_int(type_size(type)));
+  return operand_const(type_u64, (Val){.u64=type_size(type)});
 }
 
 static Operand parse_string(bool can_assign, Type* expected) {

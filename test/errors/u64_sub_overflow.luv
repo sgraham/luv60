@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:16:    x = 0u64 - 1
+# CERR: {ssss}                     ^ error: 1 subtracted from 0 overflows.
+def int main():
+    x = 0u64 - 1
+    return 0

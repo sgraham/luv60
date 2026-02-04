@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:33:    x = 0xffff_ffff_ffff_ffff + 1
+# CERR: {ssss}                                      ^ error: 1 added to 18446744073709551615 overflows.
+def int main():
+    ok = 0xffff_ffff_ffff_fffe + 1
+    x = 0xffff_ffff_ffff_ffff + 1
+    return 0
