@@ -1,0 +1,13 @@
+# Absolutely no reason this shouldn't work, but without erroring out it would try to emit
+# code at global scope and crash, so error out until all the typing is done.
+
+# CRET: 1
+# CERR: {self}:9:17:BLAH = cast u64 NEG
+# CERR: {ssss}                      ^ error: Constant evaluation for cast not implemented yet.
+
+NEG = -1i64
+BLAH = cast u64 NEG
+
+def int main():
+    return 0
+

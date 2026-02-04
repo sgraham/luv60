@@ -3940,6 +3940,9 @@ static Operand parse_unary(bool can_assign, Type* expected) {
     if (!is_castable(&expr, type)) {
       errorf("Cannot cast %s to %s.", type_as_str(expr.type), type_as_str(type));
     }
+    if (tu.evaluating_const) {
+      error("Constant evaluation for cast not implemented yet.");
+    }
     if (!cast_operand(&expr, type)) {
       error("internal error: failed to cast?");
     }
