@@ -1,0 +1,9 @@
+# OUT: false
+# OUT: true
+MYBOOL = false
+BLAH = not MYBOOL
+
+def int main():
+    print MYBOOL
+    print BLAH
+    return 0

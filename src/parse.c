@@ -3958,13 +3958,22 @@ static Operand parse_unary(bool can_assign, Type* expected) {
 #endif
       }
     } else if (op_kind == TOK_NOT) {
-      // TODO: const eval
-      if (type_is_condition(expr.type)) {
-        return operand_rvalue_imm(
-            expr.type, sq_i_ceqw(sqbasetype_from_type(expr.type), operand_to_sqref_imm(&expr),
-                                 sq_const_int(0)));
+      if (op_is_const(expr)) {
+        if (type_eq(expr.type, type_bool)) {
+          // Not really any point to is_condition I don't think, and makes the
+          // eval more complicated.
+          return operand_const(type_bool, (Val){.b = expr.val.b == 0});
+        } else {
+          errorf("Type %s cannot be used in a boolean not.", type_as_str(expr.type));
+        }
       } else {
-        errorf("Type %s cannot be used in a boolean not.", type_as_str(expr.type));
+        if (type_is_condition(expr.type)) {
+          return operand_rvalue_imm(
+              expr.type, sq_i_ceqw(sqbasetype_from_type(expr.type), operand_to_sqref_imm(&expr),
+                                   sq_const_int(0)));
+        } else {
+          errorf("Type %s cannot be used in a boolean not.", type_as_str(expr.type));
+        }
       }
     } else if (op_kind == TOK_AMPERSAND) {
       if (!op_is_lval(expr)) {
