@@ -2224,7 +2224,9 @@ static Operand parse_alignof(bool can_assign, Type* expected) {
 }
 
 static Operand parse_and(Operand left, bool can_assign, Type* expected) {
-  // TODO: could have const eval here
+  if (tu.evaluating_const) {
+    error("Constant evaluation for 'and' not implemented yet.");
+  }
   if (!type_is_condition(left.type)) {
     errorf("Left-hand side of or cannot be type %s.", type_as_str(left.type));
   }
@@ -3659,7 +3661,9 @@ static Operand parse_offsetof(bool can_assign, Type* expected) {
 }
 
 static Operand parse_or(Operand left, bool can_assign, Type* expected) {
-  // TODO: could have const eval here
+  if (tu.evaluating_const) {
+    error("Constant evaluation for 'and' not implemented yet.");
+  }
   if (!type_is_condition(left.type)) {
     errorf("Left-hand side of or cannot be type %s.", type_as_str(left.type));
   }
@@ -4353,6 +4357,9 @@ static Operand parse_constant(bool can_assign, Type* expected) {
       }
     }
   } else {
+    if (!sym) {
+      errorf("Undefined reference to '%.*s'.", (int)str_len(target), str_raw_ptr(target));
+    }
     return operand_const(sym->type, sym->val);
   }
 }

@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:11:    print BLAH
+# CERR: {ssss}                ^ error: Undefined reference to 'BLAH'.
+def int main():
+    print BLAH
+    return 0
