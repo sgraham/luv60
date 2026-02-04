@@ -252,7 +252,7 @@ typedef struct TranslationUnit {
   // that import this one.
   ImportedModuleScope* impscope;
 
-  int verbose;
+  int evaluating_const;
 
   SqType sq_type_str;
   SqType sq_type_list;
@@ -1643,10 +1643,12 @@ static SqRef emit_string_obj(StrView str) {
 // subset of #2's ability, we'll do that for now, and expand flexibility later
 // if necessary.
 static Operand const_expression(void) {
+  ++tu.evaluating_const;
   Operand expr = parse_expression(&type_u64);
   if (!op_is_const(expr)) {
     error("Expected constant expression.");
   }
+  --tu.evaluating_const;
   return expr;
 }
 
@@ -4199,6 +4201,10 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
 }
 
 static Operand parse_variable(bool can_assign, Type* expected) {
+  if (tu.evaluating_const) {
+    error("Expression is not constant.");
+  }
+
   Str target = str_from_previous();
   Sym* sym = NULL;
   ScopeResult scope_result = scope_lookup_recursive(target, &sym);
@@ -5338,6 +5344,7 @@ static void parse_impl(Arena* temp_arena, Module module) {
   tu.var_scope_arena = temp_arena;
   tu.num_scopes = 0;
   tu.cur_scope = NULL;
+  tu.evaluating_const = 0;
 
   enter_module_scope();
 
