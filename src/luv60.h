@@ -176,6 +176,41 @@ typedef struct {
 void fmtlex_start(const char* input_cstr);
 FmtToken fmtlex_next(void);
 
+
+// module.c
+typedef struct Module {
+  uint32_t u;
+} Module;
+
+typedef struct ImportNameAndModule {
+  Str name;
+  Module module;
+} ImportNameAndModule;
+
+void module_init(Arena* arena,
+                 Arena* parse_temp_arena,
+                 const char* source_dir,
+                 const char* output_dir,
+                 int verbose,
+                 bool syntax_only);
+Module module_add(StrView basename);
+
+typedef struct ImportedModuleScope ImportedModuleScope;
+
+static inline bool module_eq(Module a, Module b) { return a.u == b.u; }
+bool module_is_in_error(Module module);
+Str module_load_path(Module module);
+Str module_output_path(Module module);
+Str module_import_as(Module module);
+Str module_symbol_prefix(Module module);
+ReadFileResult module_read_file_result(Module module);
+void module_set_scope(Module module, ImportedModuleScope *scope);
+ImportedModuleScope* module_get_scope(Module module);
+
+size_t module_num_modules(void);
+Module module_get_module_by_index(size_t i);
+
+
 // type.c
 
 typedef struct Type {
@@ -272,6 +307,7 @@ Type type_new_struct(Str name,
                      bool has_initializer);
 void type_struct_set_initializer_symbol(Type type, SqSymbol init_sym);
 void type_struct_set_sqtype(Type type, SqType sqtype);
+void type_struct_set_module(Type type, Module module);
 
 static inline FORCE_INLINE bool type_is_none(Type a) { return a.u == 0; }
 static inline FORCE_INLINE bool type_eq(Type a, Type b) { return a.u == b.u; }
@@ -305,44 +341,12 @@ Str type_struct_decl_name(Type type);
 bool type_struct_has_initializer(Type type);
 SqSymbol type_struct_initializer_sym(Type type);
 SqType type_struct_sqtype(Type type);
+Module type_struct_module(Type type);
 Str type_struct_field_name(Type type, uint32_t i);
 Type type_struct_field_type(Type type, uint32_t i);
 uint32_t type_struct_field_offset(Type type, uint32_t i);
 uint32_t type_struct_field_index_by_name(Type type, Str name);  // == num_fields if not found
 bool type_struct_find_field_by_name(Type type, Str name, Type* out_type, uint32_t* out_offset);
-
-
-// module.c
-typedef struct Module {
-  uint32_t u;
-} Module;
-
-typedef struct ImportNameAndModule {
-  Str name;
-  Module module;
-} ImportNameAndModule;
-
-void module_init(Arena* arena,
-                 Arena* parse_temp_arena,
-                 const char* source_dir,
-                 const char* output_dir,
-                 int verbose,
-                 bool syntax_only);
-Module module_add(StrView basename);
-
-typedef struct ImportedModuleScope ImportedModuleScope;
-
-bool module_is_in_error(Module module);
-Str module_load_path(Module module);
-Str module_output_path(Module module);
-Str module_import_as(Module module);
-Str module_symbol_prefix(Module module);
-ReadFileResult module_read_file_result(Module module);
-void module_set_scope(Module module, ImportedModuleScope *scope);
-ImportedModuleScope* module_get_scope(Module module);
-
-size_t module_num_modules(void);
-Module module_get_module_by_index(size_t i);
 
 
 // parse.c

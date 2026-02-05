@@ -4,4 +4,4 @@ struct Thing:
     bool b
 
 on Thing def str get_my_stuff(self, int a, str b):
-    return fmt("my_stuff is {}, and {}, with modifiations {} and {}", self.x, self.b, a, b)
+    return fmt("my_stuff is {}, and {}, with modifications {} and {}", self.x, self.b, a, b)

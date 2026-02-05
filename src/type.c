@@ -67,6 +67,7 @@ typedef union TypeDataExtra {
   struct {
     SqSymbol initializer_symbol;
     SqType sqtype;
+    Module module;
   } STRUCT_EXTRA;
   struct {
     Type param[WORDS_IN_EXTRA];
@@ -302,6 +303,14 @@ void type_struct_set_sqtype(Type type, SqType sqtype) {
   TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
   TypeDataExtra* init_extra = &tde[type_struct_num_fields(type)];
   init_extra->STRUCT_EXTRA.sqtype = sqtype;
+}
+
+void type_struct_set_module(Type type, Module module) {
+  ASSERT(type_kind(type) == TYPE_STRUCT);
+  TypeData* td = type_td(type);
+  TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
+  TypeDataExtra* init_extra = &tde[type_struct_num_fields(type)];
+  init_extra->STRUCT_EXTRA.module = module;
 }
 
 // For TypeDatas that don't have extra entries.
@@ -634,6 +643,15 @@ SqType type_struct_sqtype(Type type) {
   SqType sqtype = init_extra->STRUCT_EXTRA.sqtype;
   ASSERT(sqtype.u);
   return sqtype;
+}
+
+Module type_struct_module(Type type) {
+  ASSERT(type_kind(type) == TYPE_STRUCT);
+  TypeData* td = type_td(type);
+  TypeDataExtra* tde = (TypeDataExtra*)(td + 1);
+  TypeDataExtra* init_extra = &tde[type_struct_num_fields(type)];
+  Module module = init_extra->STRUCT_EXTRA.module;
+  return module;
 }
 
 Str type_struct_field_name(Type type, uint32_t i) {

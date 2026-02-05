@@ -59,11 +59,12 @@ typedef enum SymScopeDecl {
   SSD_DECLARED_LOCAL,
   SSD_DECLARED_PARAMETER,
   SSD_DECLARED_NONLOCAL,
+  SSD_DECLARED_EXTERN,
 } SymScopeDecl;
 
 typedef struct Sym {
-  SymKind kind;
   Str name;
+  SymKind kind;
   Type type;
   union {
     SqRef ref;
@@ -72,8 +73,10 @@ typedef struct Sym {
       SqSymbol global;
       SqRef ref2;  // Upvals for SYM_FUNC
     };
-    Module module;
     Val val;  // SYM_CONST
+
+    // kind == _FUNC or _VAR and scope_decl == EXTERN, only in ImportedModuleScope.
+    Str extern_name;
   };
   SymScopeDecl scope_decl;
 } Sym;
@@ -151,25 +154,8 @@ typedef struct Scope {
   bool is_full_dict;
 } Scope;
 
-typedef enum ImportedSymbolKind {
-  ISYM_ERROR,
-  ISYM_TYPE,
-  ISYM_OBJECT,  // var, func
-  ISYM_CONST,
-} ImportedSymbolKind;
-
-typedef struct ImportedSymbol {
-  Str name;
-  SymKind kind;
-  Type type;
-  union {
-    Str extern_name;  // for VAR/FUNC
-    Val value;        // for CONST
-  };
-} ImportedSymbol;
-
 struct ImportedModuleScope {
-  // Str -> ImportedSymbol
+  // Str -> Sym (really just a set of Sym as it uses the name from Sym)
   DictImpl syms;
 };
 
@@ -253,7 +239,7 @@ typedef struct TranslationUnit {
   ImportedModuleScope* impscope;
 
   int evaluating_const;
-  Str module_prefix;
+  Module module;
 
   SqType sq_type_str;
   SqType sq_type_list;
@@ -752,9 +738,35 @@ static void copy_by_type(Operand* from, SqRef into) {
   }
 }
 
+static SqRef sqref_by_module_and_name(Module module, Str extern_name) {
+  Str module_name = module_symbol_prefix(module);
+
+  uint64_t saved_pos = arena_pos(glob.arena);
+
+  size_t module_len = str_len(module_name);
+  size_t extern_len = str_len(extern_name);
+
+  char* temp_name = arena_push(glob.arena, module_len + extern_len + 1, 1);
+  memcpy(temp_name, str_raw_ptr(module_name), module_len);
+  memcpy(&temp_name[module_len], str_raw_ptr(extern_name), extern_len);
+  temp_name[module_len + extern_len] = 0;
+  //printf("looking for extern '%s'\n", temp_name);
+
+  SqRef ret = sq_ref_extern(temp_name);
+
+  arena_pop_to(glob.arena, saved_pos);
+
+  return ret;
+}
+
 static SqRef sqref_for_sym(Sym* sym) {
   if (type_kind(sym->type) == TYPE_FUNC && type_func_flags(sym->type) & TFF_FOREIGN) {
     return sq_ref_extern(cstr_copy(glob.arena, sym->name));
+  } else if (type_kind(sym->type) == TYPE_FUNC && sym->scope_decl == SSD_DECLARED_EXTERN &&
+             type_func_is_memfn(sym->type)) {
+    // This is kind of gross, walking the self Type to get to the declared module.
+    Type self_type = type_ptr_subtype(type_func_param(sym->type, 0));
+    return sqref_by_module_and_name(type_struct_module(self_type), sym->name);
   } else {
     return sq_ref_for_symbol(sym->global);
   }
@@ -866,7 +878,7 @@ static Sym* sym_new(SymKind kind, Str name, Type type) {
     }
 
     nm->names[nm->num_entries] = name;
-    nm->syms[nm->num_entries] = (Sym){.kind = kind, .name = name, .type = type};
+    nm->syms[nm->num_entries] = (Sym){.name = name, .kind = kind, .type = type};
     Sym* ret = &nm->syms[nm->num_entries++];
     return ret;
   }
@@ -1168,15 +1180,30 @@ static Sym* lookup_memfn(Type type, Str name) {
   }
 
   Str memfn_name = memfn_name_from_type(type, name);
-  Sym* sym;
-  // TODO: this probably doesn't need to be fully recursive, just look at globals?
-  ScopeResult scope_result = scope_lookup_recursive(memfn_name, &sym);
-  if (scope_result == SCOPE_RESULT_UNDEFINED) {
-    return NULL;
-  } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_FUNC) {
-    return sym;
+
+  if (type_kind(type) != TYPE_STRUCT || module_eq(type_struct_module(type), tu.module)) {
+    // If it's not a struct, or it's defined in the current module, then it
+    // would be found in the current module scope (tu.scopes[0]).
+    Sym* sym;
+    ScopeResult scope_result =
+        scope_lookup_single(&tu.scopes[0], memfn_name, /*crossed_function=*/true, &sym);
+    if (scope_result == SCOPE_RESULT_UNDEFINED) {
+      return NULL;
+    } else if (scope_result == SCOPE_RESULT_GLOBAL && sym->kind == SYM_FUNC) {
+      return sym;
+    } else {
+      error("internal error: lookup_memfn");
+    }
   } else {
-    error("internal error: lookup_memfn");
+    // Otherwise, check the module where it was defined for the memfn.
+
+    Module module = type_struct_module(type);
+    ImportedModuleScope* scope = module_get_scope(module);
+    Sym sym = (Sym){.name = memfn_name};
+    DictRawIter iter =
+        dict_find(&scope->syms, &sym, start_str_hash_func, start_str_eq_func, sizeof(Sym));
+    // NULL is OK for not found here.
+    return (Sym*)dict_rawiter_get(&iter);
   }
 }
 
@@ -1246,7 +1273,7 @@ static Sym* make_local_and_alloc(SymKind kind, Str name, Type type, Operand* ini
 
 static Sym* make_global(SymKind kind, Str name, Type type, Val* initial_value) {
   Sym* new = sym_new(kind, name, type);
-  Str name_with_module = str_cat(tu.module_prefix, name);
+  Str name_with_module = str_cat(module_symbol_prefix(tu.module), name);
   sq_data_start(sq_linkage_default, cstr_copy(glob.arena, name_with_module));
   if (initial_value) {
     switch (type_kind(type)) {
@@ -1324,7 +1351,7 @@ static void enter_function_scope(Sym* funcsym) {
 
 static void enter_module_scope(void) {
   tu.impscope = arena_push(glob.arena, sizeof(ImportedModuleScope), _Alignof(ImportedModuleScope));
-  tu.impscope->syms = dict_new(glob.arena, 1 << 8, sizeof(ImportedSymbol), _Alignof(ImportedSymbol));
+  tu.impscope->syms = dict_new(glob.arena, 1 << 8, sizeof(Sym), _Alignof(Sym));
 
   ASSERT(tu.num_scopes == 0);
   tu.cur_scope = &tu.scopes[tu.num_scopes++];
@@ -1367,7 +1394,7 @@ static void enter_function(Sym* sym,
 
   // TODO: decorator for this, but probably still want magic main
   bool is_main = str_eq(sym->name, glob.static_str_main);
-  Str name_with_module = is_main ? sym->name : str_cat(tu.module_prefix, sym->name);
+  Str name_with_module = is_main ? sym->name : str_cat(module_symbol_prefix(tu.module), sym->name);
 
   tu.cur_scope->func_item_ctx =
       sq_func_start(linkage, type_to_sqtype(ret_type), cstr_copy(glob.arena, name_with_module));
@@ -1939,10 +1966,10 @@ static const char* sym_kind_to_expected_name(SymKind kind) {
   }
 }
 
-static ImportedSymbol* look_up_imported_symbol(Str package_name,
-                                               Str sym_name,
-                                               SymKind expected_kind,
-                                               Module* out_module) {
+static Sym* look_up_imported_symbol(Str package_name,
+                                    Str sym_name,
+                                    SymKind expected_kind,
+                                    Module* out_module) {
   ImportNameAndModule inam = {package_name, {0}};
   DictRawIter iter = dict_find(tu.tokbuf.import_dict, &inam, start_str_hash_func, start_str_eq_func,
                                sizeof(ImportNameAndModule));
@@ -1951,10 +1978,9 @@ static ImportedSymbol* look_up_imported_symbol(Str package_name,
     error("internal error; no module");
   }
   ImportedModuleScope* scope = module_get_scope(pinam->module);
-  ImportedSymbol is = (ImportedSymbol){.name = sym_name};
-  iter =
-      dict_find(&scope->syms, &is, start_str_hash_func, start_str_eq_func, sizeof(ImportedSymbol));
-  ImportedSymbol* pis = (ImportedSymbol*)dict_rawiter_get(&iter);
+  Sym is = (Sym){.name = sym_name};
+  iter = dict_find(&scope->syms, &is, start_str_hash_func, start_str_eq_func, sizeof(Sym));
+  Sym* pis = (Sym*)dict_rawiter_get(&iter);
   if (!pis) {
     errorf("%s '%.*s' not found in imported package '%.*s'.",
            sym_kind_to_expected_name(expected_kind), (int)str_len(sym_name), str_raw_ptr(sym_name),
@@ -1967,8 +1993,7 @@ static ImportedSymbol* look_up_imported_symbol(Str package_name,
 }
 
 static Type look_up_imported_type(Str package_name, Str type_name) {
-  ImportedSymbol* pis =
-      look_up_imported_symbol(package_name, type_name, SYM_TYPE, /*out_module=*/NULL);
+  Sym* pis = look_up_imported_symbol(package_name, type_name, SYM_TYPE, /*out_module=*/NULL);
   if (pis->kind != SYM_TYPE) {
     error("internal error; not type");
   }
@@ -2794,34 +2819,13 @@ static Operand parse_compound_literal_given_type(Type lit_type, bool can_assign,
   return operand_rvalue_local_addr(lit_type, base_addr);
 }
 
-static SqRef sqref_by_module_and_name(Module module, Str extern_name) {
-  Str module_name = module_symbol_prefix(module);
-
-  uint64_t saved_pos = arena_pos(glob.arena);
-
-  size_t module_len = str_len(module_name);
-  size_t extern_len = str_len(extern_name);
-
-  char* temp_name = arena_push(glob.arena, module_len + extern_len + 1, 1);
-  memcpy(temp_name, str_raw_ptr(module_name), module_len);
-  memcpy(&temp_name[module_len], str_raw_ptr(extern_name), extern_len);
-  temp_name[module_len + extern_len] = 0;
-  //printf("looking for extern '%s'\n", temp_name);
-
-  SqRef ret = sq_ref_extern(temp_name);
-
-  arena_pop_to(glob.arena, saved_pos);
-
-  return ret;
-}
-
 static Operand parse_module_name_prefix(bool can_assign, Type* expected) {
   Str package_name = str_from_previous();
   consume(TOK_DOT, "Expecting '.' after package name.");
   if (match(TOK_IDENT_VAR)) {
     Str var_or_func_name = str_from_previous();
     Module module;
-    ImportedSymbol* sym = look_up_imported_symbol(package_name, var_or_func_name, SYM_VAR, &module);
+    Sym* sym = look_up_imported_symbol(package_name, var_or_func_name, SYM_VAR, &module);
     SqRef ref = sqref_by_module_and_name(module, sym->extern_name);
     if (type_kind(sym->type) == TYPE_FUNC) {
       return operand_rvalue_global_addr(sym->type, ref);
@@ -4257,7 +4261,7 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
     }
     case SCOPE_RESULT_GLOBAL: {
       if (sym->kind == SYM_MODULE) {
-        return operand_const(sym->type, (Val){.m = sym->module});
+        error("internal error");
       } else {
         if (type_kind(sym->type) == TYPE_FUNC) {
           // Doesn't make sense in our use for GLOBAL to be bound I don't think.
@@ -5001,6 +5005,7 @@ static Sym* struct_statement() {
 
   Type strukt = type_new_struct(name, num_fields, field_names, field_types, have_initializers);
   type_struct_set_sqtype(strukt, sqtype);
+  type_struct_set_module(strukt, tu.module);
 
   if (have_initializers) {
     // Because we need to zero init fields, build this as if it was jitting into
@@ -5137,12 +5142,13 @@ static void global_statement(void) {
 }
 
 static void insert_into_impscope(Sym* sym) {
-  ImportedSymbol is = {.name = sym->name, .kind = sym->kind, .type = sym->type};
+  Sym isym = {
+      .name = sym->name, .kind = sym->kind, .type = sym->type, .scope_decl = SSD_DECLARED_EXTERN};
   switch (sym->kind) {
     case SYM_VAR:
     case SYM_FUNC:
       // TODO: decorator or whatever for source name vs. external name
-      is.extern_name = sym->name;
+      isym.extern_name = sym->name;
       break;
     case SYM_CONST:
       error("todo;");
@@ -5157,9 +5163,8 @@ static void insert_into_impscope(Sym* sym) {
       error("internal error");
   }
 
-  DictInsert res =
-      dict_insert(&tu.impscope->syms, &is, start_str_hash_func, start_str_eq_func,
-                  sizeof(ImportedSymbol), _Alignof(ImportedSymbol));
+  DictInsert res = dict_insert(&tu.impscope->syms, &isym, start_str_hash_func, start_str_eq_func,
+                               sizeof(Sym), _Alignof(Sym));
   if (!res.inserted) {
     errorf("Duplicate top-level definition of '%.*s'.", (int)str_len(sym->name),
            str_raw_ptr(sym->name));
@@ -5386,6 +5391,7 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
 
       // Need to push and pop around import, because main compiler uses `tu` directly.
       tb = tu.tokbuf;
+      Module saved_module = tu.module;
       ASSERT(tu.num_scopes == 0);
 
       Module newmod = module_add(inside_quotes);
@@ -5396,6 +5402,7 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
 
       // Restore current module.
       tu.tokbuf = tb;
+      tu.module = saved_module;
       ASSERT(tu.num_scopes == 0);
       token_init(file.buffer, tb.import_dict);
 
@@ -5418,7 +5425,7 @@ static void parse_impl(Arena* temp_arena, Module module) {
   tu.num_scopes = 0;
   tu.cur_scope = NULL;
   tu.evaluating_const = 0;
-  tu.module_prefix = module_symbol_prefix(module);
+  tu.module = module;
 
   parse_scan_for_imports(module_load_path(module), module_read_file_result(module));
 

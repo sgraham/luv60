@@ -1,5 +1,5 @@
-# DISABLED
-# OUT: my_stuff is
+# OUT: my_stuff is 44, and false, with modifications 100 and zippy
+# OUT: my_stuff is 44, and false, with modifications 500 and pony
 import "impmethod"
 
 def int main():
