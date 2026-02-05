@@ -19,6 +19,7 @@ typedef struct ModuleData {
   Str load_path;
   Str output_path;
   Str import_as;
+  Str sym_prefix;
   ReadFileResult file;
   ImportedModuleScope* globals;
 } ModuleData;
@@ -62,6 +63,7 @@ static Module alloc_module_error(const char* full_path) {
   md->load_path = str_intern_len(full_path, strlen(full_path));
   md->output_path = (Str){0};
   md->import_as = (Str){0};
+  md->sym_prefix = (Str){0};
   md->file = (ReadFileResult){0};
   md->state = MS_ERROR;
   return (Module){index};
@@ -78,6 +80,8 @@ static Module alloc_module(const char* full_path,
   md->load_path = str_intern_len(full_path, strlen(full_path));
   md->output_path = str_intern_len(output_path, strlen(output_path));
   md->import_as = str_intern_len(import_as, strlen(import_as));
+  // TODO: do we want this to be weird? or prefixed with the actual name?
+  md->sym_prefix = str_internf("M%d$", index);
   md->file = file;
   md->state = module_state;
   return (Module){index};
@@ -106,6 +110,10 @@ Str module_import_as(Module module) {
 
 ReadFileResult module_read_file_result(Module module) {
   return get_module_data(module)->file;
+}
+
+Str module_symbol_prefix(Module module) {
+  return get_module_data(module)->sym_prefix;
 }
 
 size_t module_num_modules(void) {

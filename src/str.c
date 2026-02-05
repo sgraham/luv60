@@ -203,6 +203,11 @@ Str str_internf(const char* fmt, ...) {
   return ret;
 }
 
+Str str_cat(Str a, Str b) {
+  // TODO
+  return str_internf("%.*s%.*s", (int)str_len(a), str_raw_ptr(a), (int)str_len(b), str_raw_ptr(b));
+}
+
 static char hex_digits[] = {
     ['0'] = 0,  ['1'] = 1,  ['2'] = 2,  ['3'] = 3,  ['4'] = 4,  ['5'] = 5,  ['6'] = 6,  ['7'] = 7,
     ['8'] = 8,  ['9'] = 9,  ['a'] = 10, ['b'] = 11, ['c'] = 12, ['d'] = 13, ['e'] = 14, ['f'] = 15,

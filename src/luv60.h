@@ -73,6 +73,8 @@ Str str_intern(const char* str);
 Str str_internf(const char* fmt, ...);
 uint32_t str_process_escapes(char* str, uint32_t len);
 
+Str str_cat(Str a, Str b);
+
 uint32_t str_len(Str str);
 const char* str_raw_ptr_impl_long_string(Str str);
 #define str_raw_ptr(str) \
@@ -334,6 +336,7 @@ bool module_is_in_error(Module module);
 Str module_load_path(Module module);
 Str module_output_path(Module module);
 Str module_import_as(Module module);
+Str module_symbol_prefix(Module module);
 ReadFileResult module_read_file_result(Module module);
 void module_set_scope(Module module, ImportedModuleScope *scope);
 ImportedModuleScope* module_get_scope(Module module);
