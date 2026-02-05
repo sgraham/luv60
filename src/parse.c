@@ -261,6 +261,12 @@ typedef struct TranslationUnit {
 
 static TranslationUnit tu;
 
+#define ERROR_IF_CONST()                       \
+  do {                                         \
+    if (tu.evaluating_const)                   \
+      error("Expecting constant expression."); \
+  } while (0)
+
 static void push_exit_call(SqRef func, SqRef obj) {
   ASSERT(tu.cur_scope->num_exit_calls < MAX_EXIT_CALLS);
   tu.cur_scope->exit_call_stack[tu.cur_scope->num_exit_calls++] =
@@ -2715,6 +2721,8 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
 }
 
 static Operand parse_compound_literal_given_type(Type lit_type, bool can_assign, Type* expected) {
+  ERROR_IF_CONST();
+
   consume(TOK_LPAREN, "Expecting '(' to start compound literal.");
   Str field_names[MAX_STRUCT_FIELDS];
   Operand field_values[MAX_STRUCT_FIELDS];
@@ -3312,6 +3320,8 @@ static void iteration_epilog(IterationData itd) {
 }
 
 static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for, Type* expected) {
+  ERROR_IF_CONST();
+
   tu.tokbuf.cursor = at_for;
   consume(TOK_FOR, "Expect 'for' to start list comprehension.");
   Str it = parse_name("Expect iterator name of list comprehension.");
@@ -3431,6 +3441,9 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
 }
 
 static Operand parse_list_literal(Type* expected) {
+  ERROR_IF_CONST();  // TODO: Maybe valid if all args are const? At least if
+                     // expected is array.
+
   OpVec elems;
   opv_init(&elems, glob.arena);
 
@@ -3661,9 +3674,8 @@ static Operand parse_offsetof(bool can_assign, Type* expected) {
 }
 
 static Operand parse_or(Operand left, bool can_assign, Type* expected) {
-  if (tu.evaluating_const) {
-    error("Constant evaluation for 'and' not implemented yet.");
-  }
+  ERROR_IF_CONST();  // TODO: Should be fine if args are const.
+
   if (!type_is_condition(left.type)) {
     errorf("Left-hand side of or cannot be type %s.", type_as_str(left.type));
   }
@@ -3693,6 +3705,8 @@ static Operand parse_or(Operand left, bool can_assign, Type* expected) {
 }
 
 static Operand parse_range_literal(bool can_assign, Type* expected) {
+  ERROR_IF_CONST();  // TODO: maybe fine if const args
+
   consume(TOK_LPAREN, "Expect '(' after range.");
   Operand first = parse_precedence(PREC_OR, &type_i64);
   if (!convert_operand(&first, type_i64)) {
@@ -3748,6 +3762,9 @@ static Operand parse_sizeof(bool can_assign, Type* expected) {
 }
 
 static Operand parse_string(bool can_assign, Type* expected) {
+  // TODO: not sure about this one, the global obj is a pointer so it can't
+  // be const, but it feels like it should be possible
+  ERROR_IF_CONST();
   StrView strview = get_strview_for_offsets(prev_offset(), cur_offset());
   StrView inside_quotes = {strview.data + 1, strview.size - 2};
   while (inside_quotes.data[inside_quotes.size] != '"') {
@@ -3770,6 +3787,9 @@ static Operand parse_string_interpolate(bool can_assign, Type* expected) {
 }
 
 static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
+  // TODO: make this work if we make const arrays a thing
+  ERROR_IF_CONST();
+
   SqRef target_addr;
   Type subtype;
 
@@ -4217,9 +4237,7 @@ static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
 }
 
 static Operand parse_variable(bool can_assign, Type* expected) {
-  if (tu.evaluating_const) {
-    error("Expression is not constant.");
-  }
+  ERROR_IF_CONST();
 
   Str target = str_from_previous();
   Sym* sym = NULL;

@@ -1,7 +1,7 @@
 # Maybe someday some constrained version of this could be allowed
 # CRET: 1
 # CERR: {self}:9:22:BLAH = sizeof(u64) + func()
-# CERR: {ssss}                           ^ error: Expression is not constant.
+# CERR: {ssss}                           ^ error: Expecting constant expression.
 
 def int func():
     return 43
