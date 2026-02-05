@@ -4068,6 +4068,7 @@ qbe_gvn_assoccon(Fn *fn, Blk *b, Ins *i1)
 	|| (i1->cls == Kw && (int32_t)c.bits.i < 0)) {
 		fail = qbe_gvn_negcon(i1->cls, &c);
 		SQ_ASSERT(fail == 0);
+		(void)fail;
 		op = Osub;
 	}
 
@@ -6611,6 +6612,7 @@ qbe_rega_move(int r, Ref to, RMap *m)
 	if (bshas(m->b, r)) {
 		/* r is used and not by to */
 		SQ_ASSERT(r1 != r);
+		(void)r1;
 		for (n=0; m->r[n] != r; n++)
 			SQ_ASSERT(n+1 < m->n);
 		t = m->t[n];
