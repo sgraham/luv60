@@ -2806,6 +2806,7 @@ static SqRef sqref_by_module_and_name(Module module, Str extern_name) {
   memcpy(temp_name, str_raw_ptr(module_name), module_len);
   memcpy(&temp_name[module_len], str_raw_ptr(extern_name), extern_len);
   temp_name[module_len + extern_len] = 0;
+  //printf("looking for extern '%s'\n", temp_name);
 
   SqRef ret = sq_ref_extern(temp_name);
 
@@ -4351,7 +4352,6 @@ static Operand parse_variable(bool can_assign, Type* expected) {
     }
   } else {
     //printf("looking %s\n", cstr_copy(glob.arena, target));
-    //dump_scope(tu.mod_scope);
     return load_value(scope_result, sym, target);
   }
 }
@@ -5386,8 +5386,7 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
 
       // Need to push and pop around import, because main compiler uses `tu` directly.
       tb = tu.tokbuf;
-      Scope* globscope = tu.cur_scope;
-      ASSERT(tu.num_scopes == 1);
+      ASSERT(tu.num_scopes == 0);
 
       Module newmod = module_add(inside_quotes);
       if (module_is_in_error(newmod)) {
@@ -5397,8 +5396,7 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
 
       // Restore current module.
       tu.tokbuf = tb;
-      tu.cur_scope = globscope;
-      tu.num_scopes = 1;
+      ASSERT(tu.num_scopes == 0);
       token_init(file.buffer, tb.import_dict);
 
       consume(TOK_NEWLINE, "Expecting newline after import.");
@@ -5409,10 +5407,6 @@ static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
       ImportNameAndModule inam = {import_as, newmod};
       dict_insert(tb.import_dict, &inam, start_str_hash_func, start_str_eq_func,
                   sizeof(ImportNameAndModule), _Alignof(ImportNameAndModule));
-
-      Sym* sym = sym_new(SYM_MODULE, import_as, type_module);
-      sym->module = newmod;
-      sym->scope_decl = SSD_DECLARED_GLOBAL;
     } else {
       break;
     }
@@ -5426,9 +5420,9 @@ static void parse_impl(Arena* temp_arena, Module module) {
   tu.evaluating_const = 0;
   tu.module_prefix = module_symbol_prefix(module);
 
-  enter_module_scope();
-
   parse_scan_for_imports(module_load_path(module), module_read_file_result(module));
+
+  enter_module_scope();
 
   SqConfiguration config = SQ_CONFIGURATION_DEFAULT;
   //config.target = SQ_TARGET_AMD64_APPLE;

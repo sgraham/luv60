@@ -1,0 +1,11 @@
+# DISABLED
+# OUT: my_stuff is
+import "impmethod"
+
+def int main():
+    thing = impmethod.Thing(44, false)
+
+    print thing.get_my_stuff(100, "zippy")
+    print thing.get_my_stuff(500, "pony")
+
+    return 0

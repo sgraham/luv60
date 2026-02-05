@@ -1,0 +1,11 @@
+# CRET: 1
+# CERR: {self}:8:13:    thing = Thing(44)
+# CERR: {ssss}                  ^ error: Undefined type Thing.
+import "imptype"
+
+def int main():
+    # Make sure imported types aren't leaked into this module.
+    thing = Thing(44)
+
+    return 0
+

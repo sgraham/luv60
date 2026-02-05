@@ -1,0 +1,3 @@
+# IMPORTED
+struct Thing:
+    int x
