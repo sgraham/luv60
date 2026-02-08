@@ -12,12 +12,12 @@ Build and test
 
 On Windows x64 (requires `python` in PATH):
 ```
-> m r test
+> m d test
 ```
 
 On macOS aarch64 (requires `python3` in PATH):
 ```
-$ ./m r test
+$ ./m d test
 ```
 
 Ordered goals
@@ -93,6 +93,7 @@ def int main():
     all = [i for i in range(100)]
     filt = [i for i in all if i % 2 == 1 and helper(i)]
     print filt
+    return 0
 ```
 Output:
 ```
@@ -113,7 +114,7 @@ struct MyStuff:
 on MyStuff def int get_full_value(self):
     ret = self.a
     if self.b:
-        ret *= 16
+        ret = ret * 16
     return ret
 
 def int main():
@@ -128,6 +129,8 @@ def int main():
     print mystuff3.get_full_value()
     print mystuff4.get_full_value()
     print mystuff5.get_full_value()
+
+    return 0
 ```
 Output:
 ```

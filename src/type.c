@@ -152,8 +152,7 @@ size_t type_align(Type type) {
     case TYPE_STRUCT:
       return ((type_td(type)->STRUCT.has_init_align_and_num_fields) >> 24) & 0x7f;
     case TYPE_FUNC:
-      ASSERT(false && "todo");
-      abort();
+      return 8;
     default:
       return type_td(type)->BASIC.align;
   }

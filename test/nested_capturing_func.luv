@@ -1,0 +1,14 @@
+# OUT: true
+# OUT: false
+def int main():
+    def bool helper(int x):
+        return x < 20
+
+    def sub():
+        print helper(10)
+        print helper(50)
+
+    sub()
+
+    return 0
+

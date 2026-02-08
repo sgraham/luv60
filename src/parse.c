@@ -102,10 +102,19 @@ typedef struct Upval {
   Type type;
   uint32_t offset;
   ScopeResult scope_result;
-  // Only valid when SCOPE_RESULT_LOCAL or _PARAMETER, and only in the specific
-  // scope it's meant for. GLOBAL/UNDEFINED are not valid, and UPVALUE means it
-  // needs to be acquired through the functions $up, not this ref.
-  SqRef ref;
+
+  union {
+    // Only valid when SCOPE_RESULT_LOCAL or _PARAMETER, and only in the specific
+    // scope it's meant for. GLOBAL/UNDEFINED are not valid, and UPVALUE means it
+    // needs to be acquired through the function's $up, not this ref.
+    SqRef ref;
+
+    // Only valid when type is a TYPE_FUNC.
+    struct {
+      SqSymbol func;
+      // TODO: bound?
+    };
+  };
 } Upval;
 
 typedef struct UpvalMap {
@@ -625,6 +634,8 @@ static SqRef load_by_type_from(Type type, SqRef from) {
     return sq_i_load(sq_type_double, from);
   } else if (type_kind(type) == TYPE_FLOAT) {
     return sq_i_load(sq_type_single, from);
+  } else if (type_kind(type) == TYPE_FUNC) {
+    return sq_i_load(resultsize, from);
   } else if (type_is_unsigned(type)) {
     switch (type_size(type)) {
       case 8:
@@ -768,6 +779,9 @@ static SqRef sqref_for_sym(Sym* sym) {
     Type self_type = type_ptr_subtype(type_func_param(sym->type, 0));
     return sqref_by_module_and_name(type_struct_module(self_type), sym->name);
   } else {
+    //printf("YHERE '%.*s'\n", str_len(sym->name), str_raw_ptr(sym->name));
+    ASSERT(sym->kind == SYM_FUNC ||
+           (sym->kind == SYM_VAR && sym->scope_decl == SSD_DECLARED_GLOBAL));
     return sq_ref_for_symbol(sym->global);
   }
 }
@@ -1463,7 +1477,16 @@ static void leave_function(void) {
         case SCOPE_RESULT_UNDEFINED:
           error("internal error, unexpected scope_result in upval capture");
         case SCOPE_RESULT_LOCAL: {
-          SqRef val = load_by_type_from(uv->type, uv->ref);
+          //printf("ZAP: '%.*s'\n", str_len(uv->name), str_raw_ptr(uv->name));
+          SqRef val;
+          // We can't stash an SqRef when we're compiling the body of the
+          // function that wants an upval reference to a function, so upval also
+          // has a symbol used for functions.
+          if (type_kind(uv->type) == TYPE_FUNC) {
+            val = sq_ref_for_symbol(uv->func);
+          } else {
+            val = load_by_type_from(uv->type, uv->ref);
+          }
           store_by_type_val_into(uv->type, val,
                                  sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
           break;
@@ -2725,9 +2748,15 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
   uint32_t num_args = 0;
 
   if (type_func_flags(left.type) & (TFF_NESTED | TFF_MEMFN)) {
-    ASSERT(op_has_ref2(left));
-    arg_values[0] = (SqCallArg){sq_type_long, left.ref2};
-    ++num_args;
+    // XXX HACK TEMP
+    if (op_has_ref2(left)) {
+      ASSERT(op_has_ref2(left));
+      arg_values[0] = (SqCallArg){sq_type_long, left.ref2};
+      ++num_args;
+    } else {
+      arg_values[0] = (SqCallArg){sq_type_long, sq_const_int(0)};
+      ++num_args;
+    }
   }
 
   if (!check(TOK_RPAREN)) {
@@ -4165,6 +4194,45 @@ static int create_upval(Scope* scope, Str name, Sym* sym) {
   *uv = (Upval){.name = name, .type = type, .offset = uvm->alloc_size};
   uvm->alloc_size += type_size(type);
 
+  // if we upval capture a func, it needs to be saved and loaded to the upval
+  // block somehow.
+
+/*
+  def int main():
+      def bool helper(int x):
+          return x < 20
+
+      def sub():
+          print helper(40)
+
+      sub()
+
+      return 0
+*/
+
+  // i think compiles to something that looks like:
+
+/*
+  def bool helper(int x):
+      return x < 20
+
+  def sub(sub_ups):
+      print sub_ups[0](40)
+
+  def int main():
+      sub_ups = [helper]
+      sub(sub_ups)
+      return 0
+*/
+
+  // that's without any captured upvals for helper.
+  //
+  // the upvals for sub need to capture just the function pointer (helper) but
+  // it could be helper, plus its upval reference.
+  //
+  // the SqRef for helper in main should be ok to go SqSymbol to SqRef, store
+  // that into sub_ups, and then reload? i'm not sure.
+
   // If we created a reference in the current scope, we need to walk up parent
   // scopes creating upvals there to make sure that middle scopes that didn't
   // otherwise use the value themselves will have it forwarded to them, so
@@ -4211,7 +4279,12 @@ static int create_upval(Scope* scope, Str name, Sym* sym) {
     // TODO: assert something about sym here.
     uv->scope_result =
         sym->scope_decl == SSD_DECLARED_LOCAL ? SCOPE_RESULT_LOCAL : SCOPE_RESULT_PARAMETER;
-    uv->ref = sym->ref;
+    if (type_kind(sym->type) == TYPE_FUNC) {
+      uv->func = sym->global;
+      // TODO: bound
+    } else {
+      uv->ref = sym->ref;
+    }
   }
 
   return upval_index;
@@ -4233,9 +4306,15 @@ static Operand find_or_create_upval(Scope* scope, Str name, Sym* sym) {
   }
 
   Type type = sym->type;
+  //printf("type for upv: %s\n", type_as_str(type));
   SqRef val = load_by_type_from(type, sq_i_add(sq_type_long, scope->upval_base,
                                                sq_const_int(uvm->upvals[upval_index].offset)));
-  return operand_rvalue_imm(type, val);
+  if (type_kind(type) == TYPE_FUNC) {
+    // TODO: bound
+    return operand_rvalue_global_addr(type, val);
+  } else {
+    return operand_rvalue_imm(type, val);
+  }
 }
 
 static Operand load_value(ScopeResult scope_result, Sym* sym, Str var_name) {
