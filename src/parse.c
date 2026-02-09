@@ -226,6 +226,11 @@ typedef struct CompilerGlobals {
   Str static_str_ret;
   Str static_str_up;
 
+  Type compr_func_param_types[1];
+  Str compr_func_param_names[1];
+  Type compr_func_type;
+  Type compr_func_list_unknown;
+
   Operand op_null_ptr;
 
   int verbose;
@@ -1360,20 +1365,6 @@ static Sym* make_param(Str name, Type type, int index) {
   return new;
 }
 
-static void enter_function_scope(Sym* funcsym) {
-  tu.cur_scope = &tu.scopes[tu.num_scopes++];
-  tu.cur_scope->func_sym = funcsym;
-  tu.cur_scope->num_exit_calls = 0;
-  tu.cur_scope->num_iteration_datas = 0;
-  tu.cur_scope->upval_map.num_upvals = 0;
-  tu.cur_scope->upval_map.alloc_size = 0;
-  tu.cur_scope->arena_pos = arena_pos(tu.var_scope_arena);
-  tu.cur_scope->is_function = true;
-  tu.cur_scope->is_module = false;
-  tu.cur_scope->is_full_dict = false;
-  flat_name_map_init(&tu.cur_scope->flat_map);
-}
-
 static void enter_module_scope(void) {
   tu.impscope = arena_push(glob.arena, sizeof(ImportedModuleScope), _Alignof(ImportedModuleScope));
   tu.impscope->syms = dict_new(glob.arena, 1 << 8, sizeof(Sym), _Alignof(Sym));
@@ -1400,15 +1391,26 @@ static void leave_scope(void) {
 }
 
 static void enter_function(Sym* sym,
-                           Str param_names[MAX_FUNC_PARAMS],
-                           Type param_types[MAX_FUNC_PARAMS]) {
+                           Str param_names[MAX_FUNC_PARAMS]) {
+  ASSERT(sym);
+
   bool is_nested = tu.num_scopes > 1;  // Module, parent.
   if (is_nested) {
     ASSERT(tu.scopes[tu.num_scopes - 1].is_function);
     ASSERT(tu.scopes[0].is_module);
   }
 
-  enter_function_scope(sym);
+  tu.cur_scope = &tu.scopes[tu.num_scopes++];
+  tu.cur_scope->func_sym = sym;
+  tu.cur_scope->num_exit_calls = 0;
+  tu.cur_scope->num_iteration_datas = 0;
+  tu.cur_scope->upval_map.num_upvals = 0;
+  tu.cur_scope->upval_map.alloc_size = 0;
+  tu.cur_scope->arena_pos = arena_pos(tu.var_scope_arena);
+  tu.cur_scope->is_function = true;
+  tu.cur_scope->is_module = false;
+  tu.cur_scope->is_full_dict = false;
+  flat_name_map_init(&tu.cur_scope->flat_map);
 
   // TODO: need to figure out what we want to do here
   //SqLinkage linkage =
@@ -3411,8 +3413,56 @@ static void iteration_epilog(IterationData itd) {
   sq_block_start(itd.loop_done);
 }
 
+// In order to get scoping correct, the inside of the list comprehension really
+// needs to be in its own function body. This is also necessary to be able to
+// have the expression and filter use bound functions because the upval binding
+// for this is handled by leave_function (currently at least).
+//
+// So, ideally we'd just enter a generated function definition, do the iteration
+// and list building and then return the result and leave the function.
+//
+// Unfortunately, there are (at least) two complexities:
+//
+// The first is that we can't tell that we're parsing a list comprehension until
+// we get to the "for" inside the []. For this, we have to scan ahead and then
+// reset the parse back once we figure out if it's a list literal or a list
+// comprehension and handle whichever case it is.
+//
+// The second one is that we don't know the type of list and its elements until
+// we've fully parsed the expression (which of course generates the code for
+// it). But, we need to: 1) declare the temporary function with the list return
+// type for the body of the comprehension, 2) declare locals in the body of the
+// function that have the right element type.
+//
+// Previously, we got away with allocating the list object on the stack as a
+// type-less list, because at allocation time, it's just a generic 24 bytes,
+// only appending to it needs to know the item size. And alloca'ing the item
+// later even though that was possibly terrible since it was in the loop body.
+//
+// One solution would be to have some sort of disabling of codegen temporarily
+// while we do a first-pass of the elem expression to determine the final list
+// element type. Then, reset, re-enable codegen, and continue since we could
+// correctly allocate returns and locals.
+//
+// Buuutttt, we don't currently have a way to do that disabling, and it feels
+// like it'd be pretty messy. All the iteration stuff of parsing the "over" has
+// to get set up, but not generate anything, and the parse the "elem" expression
+// in the same way, but all the code wants to work in SqRefs etc.
+//
+// So! Maybe what will work is declaring the function to return something like
+// List<unknown> to start with, which will let the sqbe code return the right
+// type of object (tu.sq_type_list via type_to_sqtype()), then we keep doing
+// the local opaque allocation in the body, and once the elem expression is
+// evaluated, hack the function Sym to the correct Type (created anew at that
+// point so as not to screw up Type-interning), and the the leave_function()
+// should work properly-normally.
+//
+// Maybe.
 static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for, Type* expected) {
   ERROR_IF_CONST();
+
+  Sym* func_sym = sym_new(SYM_FUNC, gensym_var_name(), glob.compr_func_type);
+  enter_function(func_sym, glob.compr_func_param_names);
 
   tu.tokbuf.cursor = at_for;
   consume(TOK_FOR, "Expect 'for' to start list comprehension.");
@@ -3425,6 +3475,7 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
   }
   bool have_condition = check(TOK_IF);
 
+
   // In general, we have to assume a slice output here because even if iterating
   // over an array, it could be filtered, so we can't know the number of
   // outputs. So this only creates an array if |expected| is provided
@@ -3433,12 +3484,6 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
   // has to be avoided.)
   if (expected && type_kind(*expected) == TYPE_ARRAY &&
       type_array_count(*expected) == type_array_count(over.type) && !have_condition) {
-    // TODO: enter a full function scope here? or some third non-module,
-    // non-function type of scope?
-    // I think it has to be equivalent to a nested function, because the iterator
-    // shadows.
-    enter_function_scope(NULL);
-
     Type subtype = type_array_subtype(*expected);
     SqRef arr_base = sq_i_alloc8(sq_const_int(type_size(subtype) * type_array_count(over.type)));
     SqRef store_ptr = sq_i_alloc8(sq_const_int(8));
@@ -3463,7 +3508,9 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
 
     iteration_epilog(itd);
 
-    leave_scope();
+    leave_function();
+
+    ASSERT(false && "todo; array case");
 
     tu.tokbuf.cursor = after_clauses;
 
@@ -3471,16 +3518,13 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
   } else {
     // General slice case.
 
-    // TODO: same question as above
-    enter_function_scope(NULL);
-
     // Ugly: We haven't parsed the iteration expression yet, so we don't know
     // the result type, so we just allocate a zero-initialized block of the
     // correct size for a List object, which will work with appending because by
     // the type we actually have an element to append we'll know the type of the
     // element.
     // 'i32' isn't important, as all list objs are the same size.
-    size_t untyped_list_size = type_size(type_list(type_i32));
+    size_t untyped_list_size = type_size(glob.compr_func_list_unknown);
     SqRef untyped_list = sq_i_alloc8(sq_const_int(untyped_list_size));
     SqRef memset_func = sq_ref_extern("memset");
     sq_i_call3(sq_type_void, memset_func, (SqCallArg){sq_type_long, untyped_list},
@@ -3507,8 +3551,8 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
 
     Operand elem = parse_expression(NULL);
 
-
-    // TODO: This is very bad, being inside the loop.
+    // TODO: This is very bad, being inside the loop. Maybe, uh, make a big
+    // alloca and then only use the part we need if qbe doesn't hoist this? barf
     Sym* lval = make_local_and_alloc(SYM_VAR, gensym_var_name(), elem.type, NULL);
     copy_by_type(&elem, lval->ref);
 
@@ -3524,11 +3568,14 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
 
     iteration_epilog(itd);
 
-    leave_scope();
+    Type actual_ret_type = type_list(elem.type);
+    func_sym->type = type_function(glob.compr_func_param_types, 1, actual_ret_type, TFF_NESTED);
+
+    leave_function();
 
     tu.tokbuf.cursor = after_clauses;
 
-    return operand_rvalue_imm(type_list(elem.type), untyped_list);
+    return operand_rvalue_imm(actual_ret_type, untyped_list);
   }
 }
 
@@ -4901,7 +4948,7 @@ static Sym* def_statement(void) {
 
   Sym* funcsym = sym_new(SYM_FUNC, name, functype);
   funcsym->scope_decl = is_nested ? SSD_DECLARED_LOCAL : SSD_DECLARED_GLOBAL;  // ?
-  enter_function(funcsym, param_names, param_types);
+  enter_function(funcsym, param_names);
   LastStatementType lst = parse_block();
   if (lst == LST_NON_RETURN) {
     if (!type_eq(type_void, type_func_return_type(functype))) {
@@ -4999,7 +5046,7 @@ static Sym* on_statement(void) {
   funcsym->scope_decl = SSD_DECLARED_GLOBAL;
 
   if (!is_foreign) {
-    enter_function(funcsym, param_names, param_types);
+    enter_function(funcsym, param_names);
     LastStatementType lst = parse_block();
     if (lst == LST_NON_RETURN) {
       if (!type_eq(type_void, type_func_return_type(functype))) {
@@ -5408,6 +5455,12 @@ static void parse_one_time_initialization_impl(Arena* main_arena, int verbose) {
   glob.static_str_up = str_intern_len("$up", 3);
 
   glob.op_null_ptr = operand_const(type_ptr(type_void), (Val){.p = 0});
+
+  glob.compr_func_param_types[0] = type_ptr(type_void);
+  glob.compr_func_list_unknown = type_list(type_ptr(type_void));
+  glob.compr_func_type =
+      type_function(glob.compr_func_param_types, 1, glob.compr_func_list_unknown, TFF_NESTED);
+  glob.compr_func_param_names[0] = glob.static_str_up;
 
   glob.uniq_counter = 0;
 

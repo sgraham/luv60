@@ -1,0 +1,11 @@
+# OUT: [1, 3, 5, 7, 9, 11, 13, 15, 17, 19]
+def int main():
+    cutoff = 20
+
+    def bool helper(int x):
+        return x < cutoff
+
+    all = [i for i in range(100)]
+    filt = [i for i in all if helper(i)]
+    print filt
+    return 0
