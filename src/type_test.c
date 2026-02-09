@@ -264,6 +264,29 @@ TEST(Type, ListBasic) {
   EXPECT_TRUE(!type_eq(a0, a2));
   EXPECT_TRUE(!type_eq(a1, a2));
 
+  EXPECT_TRUE(type_eq(type_list_subtype(a0), type_i32));
+  EXPECT_TRUE(type_eq(type_list_subtype(a1), type_i32));
+  EXPECT_TRUE(type_eq(type_list_subtype(a2), type_u32));
+
+  type_destroy_for_tests();
+  arena_destroy(arena);
+}
+
+TEST(Type, DictBasic) {
+  Arena* arena = arena_create(KiB(128), KiB(128));
+  type_init(arena);
+
+  Type a0 = type_dict(type_str, type_i32);
+  Type a1 = type_dict(type_str, type_i32);
+  EXPECT_TRUE(type_eq(a0, a1));
+
+  Type a2 = type_dict(type_i32, type_i32);
+  EXPECT_TRUE(!type_eq(a0, a2));
+  EXPECT_TRUE(!type_eq(a1, a2));
+
+  EXPECT_TRUE(type_eq(type_dict_key(a0), type_str));
+  EXPECT_TRUE(type_eq(type_dict_value(a0), type_i32));
+
   type_destroy_for_tests();
   arena_destroy(arena);
 }

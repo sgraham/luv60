@@ -297,6 +297,7 @@ Type type_function(Type* params, size_t num_params, Type return_type, TypeFuncFl
 Type type_ptr(Type subtype);
 Type type_array(Type subtype, size_t size);
 Type type_list(Type subtype);
+Type type_dict(Type key, Type value);
 // structs are different than e.g. ptrs in that they're never the same as
 // another one, so this is not 'intern'ing, but simply creating the Type value,
 // and every call will result in a different (new) Type being returned.
@@ -335,6 +336,9 @@ Type type_array_subtype(Type type);
 uint32_t type_array_count(Type type);
 
 Type type_list_subtype(Type type);
+
+Type type_dict_key(Type type);
+Type type_dict_value(Type type);
 
 uint32_t type_struct_num_fields(Type type);
 Str type_struct_decl_name(Type type);

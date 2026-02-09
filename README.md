@@ -56,8 +56,8 @@ implemented in this version yet!***
 
 - Gather some elements in a dictionary (aka map, unordered\_set, dict) mapping strings to
   strings
-- Iterate over all of them, building up a slice (aka list, vector) of strings
-  using Swift-style string interpolation.
+- Iterate over all of them, building up a list (aka vector) of strings
+  compile-time string interpolation with `fmt`.
 - Sort the slice, and then print it out.
 
 ```python
@@ -65,7 +65,7 @@ def int main():
     {str}str mymap = {"zip": "zap", "flim": "flam", "oink": "zoink"}
     []str res
     for a, b in mymap:
-        res.append("key: \(a) -> value: \(b)")
+        res.append(fmt("key: {} -> value: {}", a, b))
     res.sort()
     print "\n".join(res)
 ```

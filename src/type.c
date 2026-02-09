@@ -87,6 +87,7 @@ static DictImpl cached_func_types;
 static DictImpl cached_ptr_types;
 static DictImpl cached_array_types;
 static DictImpl cached_list_types;
+static DictImpl cached_dict_types;
 static Arena* arena_;
 
 static void set_builtin_typedata(uint32_t index, const char* name, uint32_t size, uint32_t align) {
@@ -380,7 +381,7 @@ Type type_list(Type subtype) {
   Type list = type_alloc(TYPE_LIST, 0, &rewind_location);
   TypeData* td = type_td(list);
   td->LIST.size = 24;
-  td->LIST.align = type_align(subtype);
+  td->LIST.align = 8;
   td->LIST.subtype = subtype;
 
   // The dict is only a set of intern'd Type, but we know they're all TYPE_LIST.
@@ -393,6 +394,28 @@ Type type_list(Type subtype) {
   } else {
     num_typedata = rewind_location;
     return *listtype;
+  }
+}
+
+Type type_dict(Type key, Type value) {
+  uint32_t rewind_location;
+  Type dict = type_alloc(TYPE_DICT, 0, &rewind_location);
+  TypeData* td = type_td(dict);
+  td->DICT.size = sizeof(DictImpl);
+  td->DICT.align = 8;  // ?
+  td->DICT.key = key;
+  td->DICT.value = value;
+
+  // The dict is only a set of intern'd Type, but we know they're all TYPE_DICT.
+  DictInsert res = dict_deferred_insert(&cached_dict_types, &dict, plaintype_hash_func,
+                                        plaintype_eq_func, sizeof(Type), _Alignof(Type));
+  Type* dicttype = ((Type*)dict_rawiter_get(&res.iter));
+  if (res.inserted) {
+    dicttype->u = dict.u;
+    return dict;
+  } else {
+    num_typedata = rewind_location;
+    return *dicttype;
   }
 }
 
@@ -443,6 +466,7 @@ void type_init(Arena* arena) {
   cached_ptr_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
   cached_array_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
   cached_list_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
+  cached_dict_types = dict_new(arena, 128, sizeof(Type), _Alignof(Type));
 
   set_builtin_typedata(TYPE_VOID, "void", 0, 1);
   set_builtin_typedata(TYPE_BOOL, "bool", 1, 1);
@@ -605,6 +629,18 @@ Type type_list_subtype(Type type) {
   ASSERT(type_kind(type) == TYPE_LIST);
   TypeData* td = type_td(type);
   return td->LIST.subtype;
+}
+
+Type type_dict_key(Type type) {
+  ASSERT(type_kind(type) == TYPE_DICT);
+  TypeData* td = type_td(type);
+  return td->DICT.key;
+}
+
+Type type_dict_value(Type type) {
+  ASSERT(type_kind(type) == TYPE_DICT);
+  TypeData* td = type_td(type);
+  return td->DICT.value;
 }
 
 uint32_t type_struct_num_fields(Type type) {

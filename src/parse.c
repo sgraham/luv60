@@ -2071,11 +2071,20 @@ static Type parse_type(void) {
   }
 
   if (match(TOK_LBRACE)) {
-    ASSERT(false); abort();
+    Type key = parse_type();
+    if (type_is_none(key)) {
+      error("Expecting key type of dict.");
+    }
+    consume(TOK_RBRACE, "Expect '}' after dict key type.");
+    Type value = parse_type();
+    if (type_is_none(value)) {
+      error("Expecting value type of dict.");
+    }
+    return type_dict(key, value);
   }
 
   if (match(TOK_DEF)) {
-    ASSERT(false); abort();
+    error("todo; func type");
   }
 
   if (tu.tokbuf.cursor.cur_kind >= TOK_BOOL && tu.tokbuf.cursor.cur_kind <= TOK_UINT) {
