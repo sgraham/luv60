@@ -112,7 +112,7 @@ typedef struct Upval {
     // Only valid when type is a TYPE_FUNC.
     struct {
       SqSymbol func;
-      // TODO: bound?
+      SqRef ref2;
     };
   };
 } Upval;
@@ -519,10 +519,18 @@ NORETURN static void errorf_offset_delta(uint32_t offset, int delta, const char*
 }
 
 static SqType sqbasetype_from_type(Type type) {
-  if (type_size(type) == 8) {
-    return sq_type_long;
+  size_t size = type_size(type);
+  switch (size) {
+    case 8:
+      return sq_type_long;
+    case 4:
+    case 2:
+    case 1:
+      return sq_type_word;
+    default:
+      ASSERT(false && "todo");
+      return sq_type_long;
   }
-  return sq_type_word;
 }
 
 static Str memfn_name_from_type_name(Str type_name, Str func_name) {
@@ -618,13 +626,15 @@ static void store_by_type_val_into(Type type, SqRef val, SqRef into) {
 }
 
 static SqRef load_by_type_from(Type type, SqRef from) {
-  SqType resultsize = sqbasetype_from_type(type);
-  ASSERT(resultsize.u == sq_type_long.u || resultsize.u == sq_type_word.u);
   if (type_is_aggregate(type)) {
     SqRef into = sq_i_alloc8(sq_const_int(type_size(type)));
     copy_bytes(from, into, type_size(type));
     return into;
-  } else if (type_kind(type) == TYPE_BOOL) {
+  }
+
+  SqType resultsize = sqbasetype_from_type(type);
+  ASSERT(resultsize.u == sq_type_long.u || resultsize.u == sq_type_word.u);
+  if (type_kind(type) == TYPE_BOOL) {
     return sq_i_loadub(resultsize, from);
   } else if (type_kind(type) == TYPE_CODEPT) {
     return sq_i_load(sq_type_word, from);
@@ -1356,6 +1366,7 @@ static void enter_function_scope(Sym* funcsym) {
   tu.cur_scope->num_exit_calls = 0;
   tu.cur_scope->num_iteration_datas = 0;
   tu.cur_scope->upval_map.num_upvals = 0;
+  tu.cur_scope->upval_map.alloc_size = 0;
   tu.cur_scope->arena_pos = arena_pos(tu.var_scope_arena);
   tu.cur_scope->is_function = true;
   tu.cur_scope->is_module = false;
@@ -1477,18 +1488,23 @@ static void leave_function(void) {
         case SCOPE_RESULT_UNDEFINED:
           error("internal error, unexpected scope_result in upval capture");
         case SCOPE_RESULT_LOCAL: {
-          //printf("ZAP: '%.*s'\n", str_len(uv->name), str_raw_ptr(uv->name));
-          SqRef val;
           // We can't stash an SqRef when we're compiling the body of the
           // function that wants an upval reference to a function, so upval also
           // has a symbol used for functions.
           if (type_kind(uv->type) == TYPE_FUNC) {
-            val = sq_ref_for_symbol(uv->func);
+            // TODO: TYPE_FUNC special case seems stinky.
+            SqRef val = sq_ref_for_symbol(uv->func);
+            SqRef val2 = uv->ref2;
+            store_by_type_val_into(type_ptr(type_void), val,
+                                   sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
+            store_by_type_val_into(
+                type_ptr(type_void), val2,
+                sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset + 8)));
           } else {
-            val = load_by_type_from(uv->type, uv->ref);
+            SqRef val = load_by_type_from(uv->type, uv->ref);
+            store_by_type_val_into(uv->type, val,
+                                   sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
           }
-          store_by_type_val_into(uv->type, val,
-                                 sq_i_add(sq_type_long, upval_data, sq_const_int(uv->offset)));
           break;
         }
         case SCOPE_RESULT_PARAMETER: {
@@ -1509,7 +1525,7 @@ static void leave_function(void) {
                                  cstr_copy(glob.arena, tu.cur_scope->func_sym->name),
                                  cstr_copy(glob.arena, uv->name),
                                  cstr_copy(glob.arena, child_func->name));
-                                 */
+              */
               ASSERT(tu.cur_scope->upval_base.u);
               SqRef val =
                   load_by_type_from(uv->type, sq_i_add(sq_type_long, tu.cur_scope->upval_base,
@@ -4194,45 +4210,6 @@ static int create_upval(Scope* scope, Str name, Sym* sym) {
   *uv = (Upval){.name = name, .type = type, .offset = uvm->alloc_size};
   uvm->alloc_size += type_size(type);
 
-  // if we upval capture a func, it needs to be saved and loaded to the upval
-  // block somehow.
-
-/*
-  def int main():
-      def bool helper(int x):
-          return x < 20
-
-      def sub():
-          print helper(40)
-
-      sub()
-
-      return 0
-*/
-
-  // i think compiles to something that looks like:
-
-/*
-  def bool helper(int x):
-      return x < 20
-
-  def sub(sub_ups):
-      print sub_ups[0](40)
-
-  def int main():
-      sub_ups = [helper]
-      sub(sub_ups)
-      return 0
-*/
-
-  // that's without any captured upvals for helper.
-  //
-  // the upvals for sub need to capture just the function pointer (helper) but
-  // it could be helper, plus its upval reference.
-  //
-  // the SqRef for helper in main should be ok to go SqSymbol to SqRef, store
-  // that into sub_ups, and then reload? i'm not sure.
-
   // If we created a reference in the current scope, we need to walk up parent
   // scopes creating upvals there to make sure that middle scopes that didn't
   // otherwise use the value themselves will have it forwarded to them, so
@@ -4266,8 +4243,8 @@ static int create_upval(Scope* scope, Str name, Sym* sym) {
         // This is not defined in the parent, so it must be an upval in the
         // parent (in a "middle" def that doesn't actually declare or use the
         // variable we're looking for). We recurse and create an upval in
-        // the parent, but we don't (cannot) create a "load" because the
-        // ir_ref values would be in the current function, not the parent.
+        // the parent, but we don't (cannot) create a "load" because the SqRef
+        // values would be in the current function, not the parent.
         uv->scope_result = SCOPE_RESULT_UPVALUE;
         create_upval(parent_scope, name, sym);
         break;
@@ -4280,8 +4257,9 @@ static int create_upval(Scope* scope, Str name, Sym* sym) {
     uv->scope_result =
         sym->scope_decl == SSD_DECLARED_LOCAL ? SCOPE_RESULT_LOCAL : SCOPE_RESULT_PARAMETER;
     if (type_kind(sym->type) == TYPE_FUNC) {
+      // TODO: TYPE_FUNC special case seems stinky.
       uv->func = sym->global;
-      // TODO: bound
+      uv->ref2 = sym->ref2;
     } else {
       uv->ref = sym->ref;
     }
@@ -4306,13 +4284,18 @@ static Operand find_or_create_upval(Scope* scope, Str name, Sym* sym) {
   }
 
   Type type = sym->type;
-  //printf("type for upv: %s\n", type_as_str(type));
-  SqRef val = load_by_type_from(type, sq_i_add(sq_type_long, scope->upval_base,
-                                               sq_const_int(uvm->upvals[upval_index].offset)));
   if (type_kind(type) == TYPE_FUNC) {
-    // TODO: bound
-    return operand_rvalue_global_addr(type, val);
+    // TODO: TYPE_FUNC special case seems stinky.
+    SqRef val = load_by_type_from(
+        type_ptr(type_void),  // funcptr
+        sq_i_add(sq_type_long, scope->upval_base, sq_const_int(uvm->upvals[upval_index].offset)));
+    SqRef val2 = load_by_type_from(type_ptr(type_void),  // upvals
+                                   sq_i_add(sq_type_long, scope->upval_base,
+                                            sq_const_int(uvm->upvals[upval_index].offset + 8)));
+    return operand_rvalue_global_addr_bound(type, val, val2);
   } else {
+    SqRef val = load_by_type_from(type, sq_i_add(sq_type_long, scope->upval_base,
+                                                 sq_const_int(uvm->upvals[upval_index].offset)));
     return operand_rvalue_imm(type, val);
   }
 }

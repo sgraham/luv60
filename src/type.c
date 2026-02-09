@@ -132,7 +132,7 @@ size_t type_size(Type type) {
     case TYPE_STRUCT:
       return type_td(type)->STRUCT.size;
     case TYPE_FUNC:
-      return 8;
+      return 16;  // 2 for bound
     default:
       return type_td(type)->BASIC.size;
   }

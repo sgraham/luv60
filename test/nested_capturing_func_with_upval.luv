@@ -1,0 +1,32 @@
+# OUT: false
+# OUT: false
+# OUT: true
+def int main():
+    cutoff = 20
+
+    # cutoff is captured for h1
+    def bool h1(int x):
+        return x < cutoff
+
+    # and sub captures h1 (so the upval map for sub has to have bound h1 and its cutoff value)
+    def sub():
+        print h1(25)
+
+    cutoff = 30
+
+    def sub2():
+        print h1(25)
+
+    # and make sure cutoff is captured at definition time; h1 should have the value of cutoff
+    # when it was defined, not the value at this point, or when sub2 is defined.
+    sub()
+    sub2()
+
+    # but a new function gets the new value of cutoff
+    def bool h2(int x):
+        return x < cutoff
+    def sub3():
+        print h2(25)
+    sub3()
+
+    return 0
