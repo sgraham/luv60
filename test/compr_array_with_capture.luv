@@ -1,0 +1,19 @@
+# OUT: [7, 107, 207, 307, 407, 507, 607, 707, 807, 907]
+def int main():
+    [10]int nums
+    for i in range(10):
+        nums[i] = i
+
+    scale = 100
+    offset = 7
+    def int magic(int x):
+        return x * scale + offset
+
+    [10]int res = [magic(x) for x in nums]
+    print res
+
+    # TODO: assert no allocations
+
+    return 0
+
+

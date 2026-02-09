@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:6:40:    [4]int scaled = [x*3 for x in nums if x % 2 == 1]
+# CERR: {ssss}                                             ^ error: Cannot filter list comprehension into explicitly typed array.
+def int main():
+    [4]int nums = [4, 3, 2, 1]
+    [4]int scaled = [x*3 for x in nums if x % 2 == 1]
+    print scaled
+    return 0

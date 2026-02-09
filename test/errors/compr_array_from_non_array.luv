@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:39:    [4]int all = [i for i in range(100)]
+# CERR: {ssss}                                            ^ error: Cannot generate list comprehension into array from non-array.
+def int main():
+    [4]int all = [i for i in range(100)]
+    return 0

@@ -226,10 +226,13 @@ typedef struct CompilerGlobals {
   Str static_str_ret;
   Str static_str_up;
 
-  Type compr_func_param_types[1];
-  Str compr_func_param_names[1];
-  Type compr_func_type;
-  Type compr_func_list_unknown;
+  Type compr_list_func_param_types[2];
+  Type compr_list_func_type;
+
+  Type compr_array_func_param_types[2];
+  Type compr_array_func_type;
+
+  Str compr_func_param_names[2];
 
   Operand op_null_ptr;
 
@@ -3461,7 +3464,20 @@ static void iteration_epilog(IterationData itd) {
 static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for, Type* expected) {
   ERROR_IF_CONST();
 
-  Sym* func_sym = sym_new(SYM_FUNC, gensym_var_name(), glob.compr_func_type);
+  bool doing_opt_array_case = false;
+
+  // Not sure if this complexity is worth it over just making this always create
+  // a list and writing the array version as explicit loops if trying to avoid
+  // allocations.
+  doing_opt_array_case = expected && type_kind(*expected) == TYPE_ARRAY;
+
+  Sym* func_sym;
+  if (doing_opt_array_case) {
+    func_sym = sym_new(SYM_FUNC, gensym_var_name(), glob.compr_array_func_type);
+  } else {
+    func_sym = sym_new(SYM_FUNC, gensym_var_name(), glob.compr_list_func_type);
+  }
+
   enter_function(func_sym, glob.compr_func_param_names);
 
   tu.tokbuf.cursor = at_for;
@@ -3473,21 +3489,34 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
   if (check(TOK_FOR)) {
     error("todo; multiple for in list compr");
   }
-  bool have_condition = check(TOK_IF);
+  bool have_condition = match(TOK_IF);
 
+  if (doing_opt_array_case && have_condition) {
+    error("Cannot filter list comprehension into explicitly typed array.");
+  }
+  if (doing_opt_array_case && type_kind(over.type) != TYPE_ARRAY) {
+    error("Cannot generate list comprehension into array from non-array.");
+  }
+  if (doing_opt_array_case && (type_array_count(*expected) != type_array_count(over.type))) {
+    error(
+        "Cannot generate list comprehension into explicitly typed array from an array with a "
+        "different number of elements.");
+  }
 
-  // In general, we have to assume a slice output here because even if iterating
-  // over an array, it could be filtered, so we can't know the number of
-  // outputs. So this only creates an array if |expected| is provided
-  // explicitly. (Not sure this case is worth it over just always returning a
-  // slice and writing array versions as loops for cases where the allocation
-  // has to be avoided.)
+  Sym* ret_sym = NULL;
+  ScopeResult ret_sym_sr = scope_lookup_recursive(glob.static_str_ret, &ret_sym);
+  ASSERT(ret_sym && ret_sym_sr == SCOPE_RESULT_PARAMETER);
+
+  // In general, we have to assume a slice output because even if iterating over
+  // an array, it could be filtered, so we can't know the number of outputs. So
+  // this only creates an array if |expected| is provided explicitly, and is
+  // passed in as the second argument to the function (first being upvals if
+  // any.)
   if (expected && type_kind(*expected) == TYPE_ARRAY &&
       type_array_count(*expected) == type_array_count(over.type) && !have_condition) {
     Type subtype = type_array_subtype(*expected);
-    SqRef arr_base = sq_i_alloc8(sq_const_int(type_size(subtype) * type_array_count(over.type)));
     SqRef store_ptr = sq_i_alloc8(sq_const_int(8));
-    sq_i_storel(arr_base, store_ptr);
+    sq_i_storel(ret_sym->ref, store_ptr);
 
     IterationData itd = iteration_prolog(it, &over);
     ASSERT(type_eq(itd.it_type, subtype));
@@ -3510,7 +3539,9 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
 
     leave_function();
 
-    ASSERT(false && "todo; array case");
+    SqRef arr_base = sq_i_alloc8(sq_const_int(type_size(subtype) * type_array_count(over.type)));
+    sq_i_call2(sq_type_void, sq_ref_for_symbol(func_sym->global),
+               (SqCallArg){sq_type_long, func_sym->ref2}, (SqCallArg){sq_type_long, arr_base});
 
     tu.tokbuf.cursor = after_clauses;
 
@@ -3518,25 +3549,11 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
   } else {
     // General slice case.
 
-    // Ugly: We haven't parsed the iteration expression yet, so we don't know
-    // the result type, so we just allocate a zero-initialized block of the
-    // correct size for a List object, which will work with appending because by
-    // the type we actually have an element to append we'll know the type of the
-    // element.
-    // 'i32' isn't important, as all list objs are the same size.
-    size_t untyped_list_size = type_size(glob.compr_func_list_unknown);
-    SqRef untyped_list = sq_i_alloc8(sq_const_int(untyped_list_size));
-    SqRef memset_func = sq_ref_extern("memset");
-    sq_i_call3(sq_type_void, memset_func, (SqCallArg){sq_type_long, untyped_list},
-               (SqCallArg){sq_type_word, sq_const_int(0)},
-               (SqCallArg){sq_type_long, sq_const_int(untyped_list_size)});
-
     IterationData itd = iteration_prolog(it, &over);
 
     SqBlock true_block = sq_block_declare();
     SqBlock false_block = sq_block_declare();
     if (have_condition) {
-      consume(TOK_IF, "Expect 'if'.");
       Operand cond = parse_expression(NULL);
       if (!type_is_condition(cond.type)) {
         errorf("Result of condition expression cannot be type %s.", type_as_str(cond.type));
@@ -3552,7 +3569,8 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
     Operand elem = parse_expression(NULL);
 
     // TODO: This is very bad, being inside the loop. Maybe, uh, make a big
-    // alloca and then only use the part we need if qbe doesn't hoist this? barf
+    // alloca and then only use the part we need and assert on size? (assuming
+    // qbe doesn't hoist this) barf.
     Sym* lval = make_local_and_alloc(SYM_VAR, gensym_var_name(), elem.type, NULL);
     copy_by_type(&elem, lval->ref);
 
@@ -3560,7 +3578,7 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
 
     // TODO: I can't come up with a case yet where promotion is needed, but it
     // seems like it might be here.
-    sq_i_call3(sq_type_void, list_append_func, (SqCallArg){sq_type_long, untyped_list},
+    sq_i_call3(sq_type_void, list_append_func, (SqCallArg){sq_type_long, ret_sym->ref},
                (SqCallArg){sq_type_long, lval->ref},
                (SqCallArg){sq_type_long, sq_const_int(type_size(elem.type))});
 
@@ -3568,14 +3586,18 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
 
     iteration_epilog(itd);
 
-    Type actual_ret_type = type_list(elem.type);
-    func_sym->type = type_function(glob.compr_func_param_types, 1, actual_ret_type, TFF_NESTED);
-
     leave_function();
+
+    Type actual_ret_type = type_list(elem.type);
+
+    Sym* into = make_local_and_alloc(SYM_VAR, gensym_var_name(), actual_ret_type, NULL);
+
+    sq_i_call2(sq_type_void, sq_ref_for_symbol(func_sym->global),
+               (SqCallArg){sq_type_long, func_sym->ref2}, (SqCallArg){sq_type_long, into->ref});
 
     tu.tokbuf.cursor = after_clauses;
 
-    return operand_rvalue_imm(actual_ret_type, untyped_list);
+    return operand_rvalue_imm(actual_ret_type, into->ref);
   }
 }
 
@@ -5456,11 +5478,20 @@ static void parse_one_time_initialization_impl(Arena* main_arena, int verbose) {
 
   glob.op_null_ptr = operand_const(type_ptr(type_void), (Val){.p = 0});
 
-  glob.compr_func_param_types[0] = type_ptr(type_void);
-  glob.compr_func_list_unknown = type_list(type_ptr(type_void));
-  glob.compr_func_type =
-      type_function(glob.compr_func_param_types, 1, glob.compr_func_list_unknown, TFF_NESTED);
+  Type compr_func_list_unknown = type_list(type_ptr(type_void));
+  glob.compr_list_func_param_types[0] = type_ptr(type_void);
+  // This is assuming all list objects are the same size, which they are.
+  glob.compr_list_func_param_types[1] = type_ptr(compr_func_list_unknown);
+  glob.compr_list_func_type =
+      type_function(glob.compr_list_func_param_types, 2, type_void, TFF_NESTED);
+
+  glob.compr_array_func_param_types[0] = type_ptr(type_void);
+  glob.compr_array_func_param_types[1] = type_ptr(type_void);
+  glob.compr_array_func_type =
+      type_function(glob.compr_array_func_param_types, 2, type_void, TFF_NESTED);
+
   glob.compr_func_param_names[0] = glob.static_str_up;
+  glob.compr_func_param_names[1] = glob.static_str_ret;
 
   glob.uniq_counter = 0;
 

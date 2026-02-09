@@ -6,6 +6,6 @@ def int main():
         return x < cutoff
 
     all = [i for i in range(100)]
-    filt = [i for i in all if helper(i)]
+    filt = [i for i in all if i % 2 == 1 and helper(i)]
     print filt
     return 0
