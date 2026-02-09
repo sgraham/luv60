@@ -128,8 +128,7 @@ size_t type_size(Type type) {
     case TYPE_LIST:
       return type_td(type)->LIST.size;
     case TYPE_DICT:
-      ASSERT(false && "todo");
-      abort();
+      return type_td(type)->DICT.size;
     case TYPE_STRUCT:
       return type_td(type)->STRUCT.size;
     case TYPE_FUNC:
@@ -148,8 +147,7 @@ size_t type_align(Type type) {
     case TYPE_LIST:
       return type_td(type)->LIST.align;
     case TYPE_DICT:
-      ASSERT(false && "todo");
-      abort();
+      return type_td(type)->DICT.align;
     case TYPE_STRUCT:
       return ((type_td(type)->STRUCT.has_init_align_and_num_fields) >> 24) & 0x7f;
     case TYPE_FUNC:

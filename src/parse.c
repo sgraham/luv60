@@ -1142,6 +1142,12 @@ static Sym* gen_list___str__(Type type) {
   return funcsym;
 }
 
+// on {K}V def str __str__(self):
+//     Dict$__str__(self, sizeof(K), &K::__str__, &V::__str__)
+static Sym* gen_dict___str__(Type type) {
+  error("todo; dict __str__ impl");
+}
+
 typedef struct GenericThunkCreators {
   const char* name;
   Sym* (*ensure_gen_thunk)(Type);
@@ -1156,6 +1162,10 @@ static GenericThunkCreators generic_list_functions[] = {
     {"__contains__", gen_list___contains__},
     {"__str__", gen_list___str__},
     {"append", gen_list_append},
+};
+
+static GenericThunkCreators generic_dict_functions[] = {
+    {"__str__", gen_dict___str__},
 };
 
 static Sym* lookup_memfn(Type type, Str name) {
@@ -1192,7 +1202,13 @@ static Sym* lookup_memfn(Type type, Str name) {
           }
           break;
         case TYPE_DICT:
-          error("TODO: polymorphic dict memfns");
+          for (int i = 0; i < COUNTOFI(generic_dict_functions); ++i) {
+            if (strncmp(generic_dict_functions[i].name, str_raw_ptr(name), str_len(name)) == 0) {
+              new_func = generic_dict_functions[i].ensure_gen_thunk(type);
+              break;
+            }
+          }
+          break;
           break;
         default:
           error("internal error");
@@ -2921,8 +2937,31 @@ static Operand parse_compound_literal(bool can_assign, Type* expected) {
 }
 
 static Operand parse_dict_literal(bool can_assign, Type* expected) {
-  ASSERT(false && "not implemented");
-  return operand_none;
+  ERROR_IF_CONST();
+
+  error("todo; dict literal");
+#if 0
+  // TODO: dict_new
+
+  for (;;) {
+    if (check(TOK_RBRACE)) {
+      // Allow trailing comma.
+      break;
+    }
+
+    Operand key = parse_expression(NULL);
+    consume(TOK_COLON, "Expecting ':' to separate key and value.");
+    Operand value = parse_expression(NULL);
+
+    // TODO: dict_insert(key, value)
+
+    if (!match(TOK_COMMA)) {
+      break;
+    }
+  }
+
+  return operand_rvalue_imm(type_dict(key, value), rv);
+#endif
 }
 
 static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
