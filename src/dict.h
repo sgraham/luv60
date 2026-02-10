@@ -149,12 +149,12 @@ static inline bool dict_bitmask_next(DictBitMask* self, uint32_t* bit) {
 _Static_assert(sizeof(size_t) == 8, "64 bit hash required");
 
 // https://github.com/cbreeden/fxhash
-static inline void dict_hash_write(size_t* state, const void* val, size_t len) {
-  const size_t seed = (size_t)(UINT64_C(0x517cc1b727220a95));
+static inline void dict_hash_write(uint64_t* state, const void* val, size_t len) {
+  const uint64_t seed = (size_t)(UINT64_C(0x517cc1b727220a95));
   const uint32_t rotate = 5;
 
   const char* p = (const char*)val;
-  size_t st = *state;
+  uint64_t st = *state;
   while (len > 0) {
     size_t word = 0;
     size_t to_read = len >= sizeof(st) ? sizeof(st) : len;
@@ -385,7 +385,7 @@ static inline bool dict_is_empty_or_deleted(DictControlByte c) {
 #define dict_assert_is_valid(ctrl) ASSERT(ctrl == NULL || dict_is_in_use(*(ctrl)))
 #define dict_assert_is_in_use(ctrl) ASSERT(ctrl != NULL && dict_is_in_use(*(ctrl)))
 
-typedef size_t (*DictKeyHashFunc)(void*);
+typedef uint64_t (*DictKeyHashFunc)(void*);
 typedef bool (*DictKeyEqFunc)(void*, void*);
 
 static inline size_t dict_normalize_capacity(size_t n) {

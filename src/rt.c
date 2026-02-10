@@ -72,6 +72,38 @@ void AppendToStringBufferList(List* sb, Str* str) {
   sb->size += str->size;
 }
 
+bool i8$__eq__(int8_t* self, int8_t* other) {
+  return *self == *other;
+}
+
+bool u8$__eq__(uint8_t* self, uint8_t* other) {
+  return *self == *other;
+}
+
+bool i16$__eq__(int16_t* self, int16_t* other) {
+  return *self == *other;
+}
+
+bool u16$__eq__(uint16_t* self, uint16_t* other) {
+  return *self == *other;
+}
+
+bool i32$__eq__(int32_t* self, int32_t* other) {
+  return *self == *other;
+}
+
+bool u32$__eq__(uint32_t* self, uint32_t* other) {
+  return *self == *other;
+}
+
+bool i64$__eq__(int64_t* self, int64_t* other) {
+  return *self == *other;
+}
+
+bool u64$__eq__(uint64_t* self, uint64_t* other) {
+  return *self == *other;
+}
+
 bool str$__eq__(Str* self, Str* other) {
   if (self->size != other->size) {
     return false;
@@ -195,6 +227,39 @@ bool List$__contains__(List* list,
   return Array$__contains__(list->data, list->size, item, item_size, subtype___eq__);
 }
 
+void Dict$ensure_init(DictImpl* into) {
+  if (into->arena) {
+    return;
+  }
+  // TODO: slot_size and align are unused if capacity is 0. We need to init the
+  // control bytes of the dict, and set the arena. Potentially arrange to make
+  // zero-init correct? Pass arena to everything would work, but potentially be
+  // confusing. For List too, should it be embedded? In theory list could
+  // relocate to a diff arena, not sure if that's useful or confusing for
+  // either.
+  *into = dict_new(current_arena_, /*capacity=*/0, /*slot_size=*/0, /*slot_align=*/0);
+}
+
+void Dict$insert(DictImpl* self,
+                 void* key,
+                 size_t key_size,
+                 void* value,
+                 size_t value_size,
+                 uint64_t (*hash_func)(void*),
+                 bool (*eq_func)(void*, void*)) {
+  Dict$ensure_init(self);
+
+  ASSERT(hash_func);
+  ASSERT(eq_func);
+
+  char* packed_value = alloca(key_size + value_size);
+  memcpy(packed_value, key, key_size);
+  memcpy(&packed_value[key_size], value, value_size);
+  DictInsert res =
+      dict_insert(self, packed_value, hash_func, eq_func, key_size + value_size, /*slot_align=*/8);
+  (void)res;
+}
+
 Str i8$__str__(int8_t* self) {
   char buf[40];
   snprintf(buf, sizeof(buf), "%d", *self);
@@ -270,7 +335,7 @@ Str double$__str__(double* self) {
 }
 
 static uint64_t memhash(const void* data, size_t len) {
-  size_t hash = 0;
+  uint64_t hash = 0;
   dict_hash_write(&hash, data, len);
   return hash;
 }
@@ -316,7 +381,7 @@ uint64_t u64$__hash__(uint64_t* self) {
 }
 
 uint64_t str$__hash__(Str* self) {
-  size_t hash = 0;
+  uint64_t hash = 0;
   dict_hash_write(&hash, self->data, self->size);
   return hash;
 }
@@ -389,19 +454,6 @@ Str Array$__str__(unsigned char* arr_base,
 // subtype___str__ might be null if there's none defined.
 Str List$__str__(List* list, uint64_t item_size, Str (*subtype___str__)(void* item)) {
   return Array$__str__(list->data, list->size, item_size, subtype___str__);
-}
-
-void Dict$ensure_init(DictImpl* into) {
-  if (into->arena) {
-    return;
-  }
-  // TODO: slot_size and align are unused if capacity is 0. We need to init the
-  // control bytes of the dict, and set the arena. Potentially arrange to make
-  // zero-init correct? Pass arena to everything would work, but potentially be
-  // confusing. For List too, should it be embedded? In theory list could
-  // relocate to a diff arena, not sure if that's useful or confusing for
-  // either.
-  *into = dict_new(current_arena_, /*capacity=*/0, /*slot_size=*/0, /*slot_align=*/0);
 }
 
 Str Dict$__str__(DictImpl* dict,

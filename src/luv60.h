@@ -57,13 +57,13 @@ typedef struct StartsWithStr {
 } StartsWithStr;
 
 static inline bool start_str_eq_func(void* void_a, void* void_b);
-static size_t inline start_str_hash_func(void* v);
+static uint64_t inline start_str_hash_func(void* v);
 
-static size_t inline start_str_hash_func(void* v) {
+static uint64_t inline start_str_hash_func(void* v) {
   (void)start_str_eq_func;
 
   StartsWithStr* sws = (StartsWithStr*)v;
-  size_t hash = 0;
+  uint64_t hash = 0;
   const char* str_data = str_raw_ptr(sws->s);
   dict_hash_write(&hash, (void*)str_data, str_len(sws->s));
   return hash;

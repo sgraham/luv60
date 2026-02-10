@@ -222,6 +222,8 @@ SqRef sq_i_call3(SqType result, SqRef func, SqCallArg ca0, SqCallArg ca1, SqCall
 SqRef sq_i_call4(SqType result, SqRef func, SqCallArg ca0, SqCallArg ca1, SqCallArg ca2, SqCallArg ca3);
 SqRef sq_i_call5(SqType result, SqRef func, SqCallArg ca0, SqCallArg ca1, SqCallArg ca2, SqCallArg ca3, SqCallArg ca4);
 SqRef sq_i_call6(SqType result, SqRef func, SqCallArg ca0, SqCallArg ca1, SqCallArg ca2, SqCallArg ca3, SqCallArg ca4, SqCallArg ca5);
+SqRef sq_i_call7(SqType result, SqRef func, SqCallArg ca0, SqCallArg ca1, SqCallArg ca2, SqCallArg ca3, SqCallArg ca4, SqCallArg ca5, SqCallArg ca6);
+SqRef sq_i_call8(SqType result, SqRef func, SqCallArg ca0, SqCallArg ca1, SqCallArg ca2, SqCallArg ca3, SqCallArg ca4, SqCallArg ca5, SqCallArg ca6, SqCallArg ca7);
 
 SqRef sq_i_add(SqType size_class, SqRef arg0 /*wlsd*/, SqRef arg1 /*wlsd*/);
 void sq_i_add_into(SqRef into, SqType size_class, SqRef arg0 /*wlsd*/, SqRef arg1 /*wlsd*/);
@@ -17053,6 +17055,35 @@ SqRef sq_i_call6(SqType result,
   SQ_ERR_CHECK((SqRef){0});
   SqCallArg cas[6] = {ca0, ca1, ca2, ca3, ca4, ca5};
   return sq_i_calla(result, func, 6, cas);
+}
+
+SqRef sq_i_call7(SqType result,
+                 SqRef func,
+                 SqCallArg ca0,
+                 SqCallArg ca1,
+                 SqCallArg ca2,
+                 SqCallArg ca3,
+                 SqCallArg ca4,
+                 SqCallArg ca5,
+                 SqCallArg ca6) {
+  SQ_ERR_CHECK((SqRef){0});
+  SqCallArg cas[7] = {ca0, ca1, ca2, ca3, ca4, ca5, ca6};
+  return sq_i_calla(result, func, 7, cas);
+}
+
+SqRef sq_i_call8(SqType result,
+                 SqRef func,
+                 SqCallArg ca0,
+                 SqCallArg ca1,
+                 SqCallArg ca2,
+                 SqCallArg ca3,
+                 SqCallArg ca4,
+                 SqCallArg ca5,
+                 SqCallArg ca6,
+                 SqCallArg ca7) {
+  SQ_ERR_CHECK((SqRef){0});
+  SqCallArg cas[8] = {ca0, ca1, ca2, ca3, ca4, ca5, ca6, ca7};
+  return sq_i_calla(result, func, 8, cas);
 }
 
 void sq_i_jmp(SqBlock block) {

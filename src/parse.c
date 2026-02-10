@@ -923,9 +923,9 @@ typedef struct NameTypeSymP {
   Sym* sym;
 } NameTypeSymP;
 
-static size_t nametypesymp_hash_func(void* p) {
+static uint64_t nametypesymp_hash_func(void* p) {
   NameTypeSymP* ntsp = (NameTypeSymP*)p;
-  size_t hash = 0;
+  uint64_t hash = 0;
   dict_hash_write(&hash, (void*)str_raw_ptr(ntsp->name), str_len(ntsp->name));
   // Not the best hash for Type, but I think it's valid.
   dict_hash_write(&hash, (void*)&ntsp->type, sizeof(Type));
@@ -4165,12 +4165,18 @@ static Operand subscript_for_dict(Operand left, bool can_assign, Type* expected)
     if (!convert_operand(&rhs, type_dict_value(left.type))) {
       errorf("Cannot store type %s into type %s.", type_as_str(rhs.type), type_as_str(left.type));
     }
-    // TODO store rhs at key in left
-    // dict_insert is messy
-    // need a layed out slot (alignment)
-    // hash func
-    // eq func
-    // slot/align
+
+    Sym* key_hash_func = lookup_memfn(key.type, glob.static_str___hash__);
+    Sym* key_eq_func = lookup_memfn(key.type, glob.static_str___eq__);
+
+    sq_i_call7(sq_type_void, sq_ref_extern("Dict$insert"),
+               (SqCallArg){sq_type_long, operand_to_sqref_lval(&left)},
+               (SqCallArg){sq_type_long, operand_to_sqref_lval(&key)},
+               (SqCallArg){sq_type_long, sq_const_int(type_size(key.type))},
+               (SqCallArg){sq_type_long, operand_to_sqref_lval(&rhs)},
+               (SqCallArg){sq_type_long, sq_const_int(type_size(rhs.type))},
+               (SqCallArg){sq_type_long, sqref_for_sym(key_hash_func)},
+               (SqCallArg){sq_type_long, sqref_for_sym(key_eq_func)});
   } else {
     // TODO: load left[key]
   }
@@ -5568,8 +5574,17 @@ static void declare_rt_foreign_memfn1(Type on, Type return_type, Str name, Type 
 
 static void declare_all_rt_foreigns(void) {
   declare_rt_foreign_memfn1(type_str, type_str, str_intern("join"), type_list(type_str));
-  declare_rt_foreign_memfn1(type_str, type_bool, glob.static_str___eq__, type_str);
   declare_rt_foreign_memfn1(type_str, type_bool, glob.static_str___contains__, type_str);
+
+  declare_rt_foreign_memfn1(type_i8, type_bool, glob.static_str___eq__, type_ptr(type_i8));
+  declare_rt_foreign_memfn1(type_u8, type_bool, glob.static_str___eq__, type_ptr(type_u8));
+  declare_rt_foreign_memfn1(type_i16, type_bool, glob.static_str___eq__, type_ptr(type_i16));
+  declare_rt_foreign_memfn1(type_u16, type_bool, glob.static_str___eq__, type_ptr(type_u16));
+  declare_rt_foreign_memfn1(type_i32, type_bool, glob.static_str___eq__, type_ptr(type_i32));
+  declare_rt_foreign_memfn1(type_u32, type_bool, glob.static_str___eq__, type_ptr(type_u32));
+  declare_rt_foreign_memfn1(type_i64, type_bool, glob.static_str___eq__, type_ptr(type_i64));
+  declare_rt_foreign_memfn1(type_u64, type_bool, glob.static_str___eq__, type_ptr(type_u64));
+  declare_rt_foreign_memfn1(type_str, type_bool, glob.static_str___eq__, type_ptr(type_str));
 
   declare_rt_foreign_memfn0(type_bool, type_str, glob.static_str___str__);
   declare_rt_foreign_memfn0(type_codept, type_str, glob.static_str___str__);

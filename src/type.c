@@ -164,9 +164,9 @@ static Type type_alloc(TypeKind kind, int extra, uint32_t* out_rewind_location) 
   return ret;
 }
 
-static size_t functype_hash_func(void* functype) {
+static uint64_t functype_hash_func(void* functype) {
   Type t = *(Type*)functype;
-  size_t hash = 0;
+  uint64_t hash = 0;
   TypeData* td = type_td(t);
   size_t typedata_blocks = 1 + ROUND_UP(td->FUNC.num_params, WORDS_IN_EXTRA);
   dict_hash_write(&hash, td, typedata_blocks * sizeof(TypeData));
@@ -312,9 +312,9 @@ void type_struct_set_module(Type type, Module module) {
 }
 
 // For TypeDatas that don't have extra entries.
-static size_t plaintype_hash_func(void* functype) {
+static uint64_t plaintype_hash_func(void* functype) {
   Type t = *(Type*)functype;
-  size_t hash = 0;
+  uint64_t hash = 0;
   TypeData* td = type_td(t);
   dict_hash_write(&hash, td, sizeof(TypeData));
   return hash;

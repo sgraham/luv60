@@ -79,9 +79,9 @@ void str_intern_pool_destroy_for_tests(void) {
    (((index) & 0x3fffffffull) << 32ull) | /* 30bit index */ \
    (((len) & 0x3fffffffull)) /* 30bit len */)
 
-static size_t str_hash_func(void* strvoid) {
+static uint64_t str_hash_func(void* strvoid) {
   Str a = *(Str*)strvoid;
-  size_t hash = 0;
+  uint64_t hash = 0;
   dict_hash_write(&hash, (void*)str_raw_ptr(a), str_len(a));
   return hash;
 }
