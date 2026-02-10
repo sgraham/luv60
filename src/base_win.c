@@ -1,8 +1,6 @@
-#include "luv60.h"
+#include "shared.h"
 
-#if !OS_WINDOWS
-#  error
-#endif
+#if OS_WINDOWS
 
 #include <windows.h>
 
@@ -95,3 +93,5 @@ uint64_t base_timer_now(void) {
   }
   return result;
 }
+
+#endif

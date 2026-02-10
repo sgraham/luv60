@@ -1,53 +1,10 @@
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include "shared.h"
 
-#define COUNTOF(a) (sizeof(a)/sizeof(a[0]))
-
-#if defined(_MSC_VER)
-
-void* memmem(const void* haystack, size_t haystacklen, const void* needle, size_t needlelen) {
-  const unsigned char* h = haystack;
-  const unsigned char* n = needle;
-
-  // Edge cases
-  if (needlelen == 0) {
-    return (void*)haystack;  // Empty needle matches at start
-  }
-
-  if (needlelen > haystacklen) {
-    return NULL;  // Needle can't fit in haystack
-  }
-
-  // Search through haystack
-  size_t search_len = haystacklen - needlelen + 1;
-
-  for (size_t i = 0; i < search_len; i++) {
-    // Check if needle matches at current position
-    size_t j;
-    for (j = 0; j < needlelen; j++) {
-      if (h[i + j] != n[j]) {
-        break;
-      }
-    }
-
-    // If we checked all bytes and they matched
-    if (j == needlelen) {
-      return (void*)(h + i);
-    }
-  }
-
-  return NULL;  // Not found
-}
-
-#endif // _MSC_VER
-
-void CheckFailed(void) {
-  fprintf(stderr, "check failed!\n");
-  exit(127);
-}
+#include "rt_util_win.c"
+#include "arena.c"
+#include "base_win.c"
+#include "base_mac.c"
+#include "dict.h"
 
 typedef struct Str {
   const char* data;
@@ -66,6 +23,15 @@ typedef struct List {
   uint64_t capacity;
 } List;
 
+void CheckFailed(void) {
+  fprintf(stderr, "check failed!\n");
+  exit(127);
+}
+
+void PrintStr(Str* str) {
+  printf("%.*s\n", (int)str->size, str->data);
+}
+
 static Str str_copy_cstr(const char* cstr) {
   // Note, no NUL, not sure if this will be annoying in practice.
   size_t size = strlen(cstr);
@@ -77,10 +43,6 @@ static Str str_copy_cstr(const char* cstr) {
 static Str str_const_cstr(const char* cstr) {
   size_t size = strlen(cstr);
   return (Str){cstr, size};
-}
-
-void PrintStr(Str* str) {
-  printf("%.*s\n", (int)str->size, str->data);
 }
 
 void List$reserve(List* list, uint64_t capacity, uint64_t item_size) {
@@ -126,45 +88,6 @@ bool str$__contains__(Str* self, Str other) {
   // TODO: probably unicode utf8 blah blah
   return memmem(self->data, self->size, other.data, other.size) != NULL;
 }
-
-#define RT_CHECK(cond) if (!(cond)) { fprintf(stderr, "%s\n", #cond); CheckFailed(); }
-
-#if 0
-// The QBE %env is stashed in RAX on x64, or in x9 on aarch64. This is used to
-// pass additional data to the type-erased implementations of the generic
-// functions without needing to generate more complex thunks for each function
-// per type instantiation.
-
-#if defined(__amd64__) || defined(__amd64) || defined(__x86_64__) || defined(__x86_64)
-
-#  ifdef _MSC_VER
-
-// This is a pretty hokey implementation, might need to make a "0xC3 ret"
-// somewhere in the code segment instead that we can extern here instead so that
-// we can be sure that the C compiler doesn't inline/opt/whatever this and make
-// it not retrieve RAX.
-#    pragma warning(push)
-#    pragma warning(disable : 4716)
-uint64_t _impl_NothingRetrieveRAX(void) {}
-#    pragma warning(pop)
-
-#    define GET_ENV_DATA(into) \
-      { into = _impl_NothingRetrieveRAX(); }
-
-#  else
-#    error port non-msvc win
-#  endif
-
-#elif defined(__aarch64__)
-
-#  define GET_ENV_DATA(into) asm volatile("mov %0, x9" : "=r"(into)::);
-
-#else
-#  error port
-#endif
-
-#define LOAD_LIST_DATA() uint64_t item_size; GET_ENV_DATA(item_size)
-#endif
 
 #if 0
 void List$free(List* list) {
@@ -226,7 +149,7 @@ List List$slice_from_list(List* list, uint64_t item_size, int64_t start, int64_t
 }
 
 void List$insert(List* list, int64_t index, void* item, uint64_t item_size) {
-  RT_CHECK(index >= 0 && "todo; negative index");
+  CHECK(index >= 0 && "todo; negative index");
   List$reserve(list, list->size + 1, item_size);
   void* at_index = &list->data[index * item_size];
   void* after_index = &list->data[(index + 1) * item_size];
@@ -409,21 +332,6 @@ Str List$__str__(List* list, uint64_t item_size, Str (*subtype___str__)(void* it
 }
 
 void List$unchecked_get(List* list, int64_t index, void* into, uint64_t item_size) {
-  RT_CHECK(index >= 0 && "todo; negative index");
+  CHECK(index >= 0 && "todo; negative index");
   memcpy(into, &list->data[index * item_size], item_size);
 }
-
-#if 0
-void List$__contains__()
-void List$__getitem__()
-void List$__iter__()
-void List$__len__()
-void List$__repr__()
-void List$__reversed__()
-void List$__setitem__()
-void List$__str__()
-void List$extend()
-void List$insert()
-void List$pop()
-void List$sort()
-#endif

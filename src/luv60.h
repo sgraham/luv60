@@ -1,9 +1,10 @@
 #pragma once
 
-#include "base_config.h"
-#include "base_core.h"
+#include "shared.h"
 
 #include "../third_party/sqbe/sqbe.h"
+
+#include "dict.h"
 
 #if OS_WINDOWS && ARCH_X64
 #include <intrin.h>
@@ -13,51 +14,6 @@ typedef struct StrView {
   const char* data;
   uint32_t size;
 } StrView;
-
-// arena.c
-
-#define ARENA_HEADER_SIZE 128
-typedef struct Arena {
-  uint64_t original_commit_size;
-  uint64_t original_reserve_size;
-  uint64_t cur_pos;
-  uint64_t cur_commit;
-  uint64_t cur_reserve;
-} Arena;
-
-_Static_assert(sizeof(Arena) < ARENA_HEADER_SIZE, "Arena too large");
-
-#define KiB(size) ((size)<<10)
-#define MiB(size) ((size)<<20)
-
-Arena* arena_create(uint64_t reserve_size, uint64_t commit_size);
-void arena_destroy(Arena* arena);
-void* arena_push(Arena* arena, uint64_t size, uint64_t align);
-uint64_t arena_pos(Arena* arena);
-void arena_pop_to(Arena* arena, uint64_t pos);
-
-#include "dict.h"
-
-// base_{win,mac}.c
-
-typedef struct ReadFileResult {
-  unsigned char* buffer;
-  size_t file_size;
-  size_t allocated_size;
-} ReadFileResult;
-
-int base_writef_stderr(const char* fmt, ...);
-uint64_t base_page_size(void);
-void *base_mem_reserve(uint64_t size);
-bool base_mem_commit(void* ptr, uint64_t size);
-void *base_mem_large_alloc(uint64_t size);
-void base_mem_decommit(void* ptr, uint64_t size);
-void base_mem_release(void* ptr, uint64_t size);
-ReadFileResult base_read_file(const char* filename);
-NORETURN void base_exit(int rc);
-void base_timer_init(void);
-uint64_t base_timer_now(void);
-
 
 // str.c
 

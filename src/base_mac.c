@@ -1,8 +1,6 @@
-#include "luv60.h"
+#include "shared.h"
 
-#if !OS_MAC
-#error
-#endif
+#if OS_MAC
 
 #include <sys/mman.h>
 #include <time.h>
@@ -89,3 +87,5 @@ ReadFileResult base_read_file(const char* filename) {
 NORETURN void base_exit(int rc) {
   exit(rc);
 }
+
+#endif
