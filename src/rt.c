@@ -269,6 +269,58 @@ Str double$__str__(double* self) {
   return str_copy_cstr(buf);
 }
 
+static uint64_t memhash(const void* data, size_t len) {
+  size_t hash = 0;
+  dict_hash_write(&hash, data, len);
+  return hash;
+}
+
+uint64_t bool$__hash__(bool* self) {
+  return memhash(self, sizeof(*self));
+}
+
+uint64_t codept$__hash__(uint32_t* self) {
+  return memhash(self, sizeof(*self));
+}
+
+uint64_t i8$__hash__(int8_t* self) {
+  return memhash(self, sizeof(*self));
+}
+
+uint64_t u8$__hash__(uint8_t* self) {
+  return memhash(self, sizeof(*self));
+}
+
+uint64_t i16$__hash__(int16_t* self) {
+  return memhash(self, sizeof(*self));
+}
+
+uint64_t u16$__hash__(uint16_t* self) {
+  return memhash(self, sizeof(*self));
+}
+
+uint64_t i32$__hash__(int32_t* self) {
+  return memhash(self, sizeof(*self));
+}
+
+uint64_t u32$__hash__(uint32_t* self) {
+  return memhash(self, sizeof(*self));
+}
+
+uint64_t i64$__hash__(int64_t* self) {
+  return memhash(self, sizeof(*self));
+}
+
+uint64_t u64$__hash__(uint64_t* self) {
+  return memhash(self, sizeof(*self));
+}
+
+uint64_t str$__hash__(Str* self) {
+  size_t hash = 0;
+  dict_hash_write(&hash, self->data, self->size);
+  return hash;
+}
+
 bool range$__contains__(Range* range, int64_t value) {
   // Step cannot be zero
   if (range->step == 0) {

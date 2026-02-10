@@ -149,7 +149,7 @@ static inline bool dict_bitmask_next(DictBitMask* self, uint32_t* bit) {
 _Static_assert(sizeof(size_t) == 8, "64 bit hash required");
 
 // https://github.com/cbreeden/fxhash
-static inline void dict_hash_write(size_t* state, void* val, size_t len) {
+static inline void dict_hash_write(size_t* state, const void* val, size_t len) {
   const size_t seed = (size_t)(UINT64_C(0x517cc1b727220a95));
   const uint32_t rotate = 5;
 

@@ -222,6 +222,7 @@ typedef struct CompilerGlobals {
   Str static_str___contains__;
   Str static_str___enter__;
   Str static_str___eq__;
+  Str static_str___hash__;
   Str static_str___exit__;
   Str static_str_ret;
   Str static_str_up;
@@ -5585,6 +5586,18 @@ static void declare_all_rt_foreigns(void) {
   declare_rt_foreign_memfn0(type_str, type_str, glob.static_str___str__);
   declare_rt_foreign_memfn0(type_range, type_str, glob.static_str___str__);
 
+  declare_rt_foreign_memfn0(type_bool, type_str, glob.static_str___hash__);
+  declare_rt_foreign_memfn0(type_codept, type_str, glob.static_str___hash__);
+  declare_rt_foreign_memfn0(type_i8, type_str, glob.static_str___hash__);
+  declare_rt_foreign_memfn0(type_u8, type_str, glob.static_str___hash__);
+  declare_rt_foreign_memfn0(type_i16, type_str, glob.static_str___hash__);
+  declare_rt_foreign_memfn0(type_u16, type_str, glob.static_str___hash__);
+  declare_rt_foreign_memfn0(type_i32, type_str, glob.static_str___hash__);
+  declare_rt_foreign_memfn0(type_u32, type_str, glob.static_str___hash__);
+  declare_rt_foreign_memfn0(type_i64, type_str, glob.static_str___hash__);
+  declare_rt_foreign_memfn0(type_u64, type_str, glob.static_str___hash__);
+  declare_rt_foreign_memfn0(type_str, type_u64, glob.static_str___hash__);
+
   declare_rt_foreign_memfn1(type_range, type_bool, glob.static_str___contains__, type_i64);
 }
 
@@ -5598,6 +5611,7 @@ static void parse_one_time_initialization_impl(Arena* main_arena, int verbose) {
   glob.static_str___contains__ = str_intern_len("__contains__", 12);
   glob.static_str___enter__ = str_intern_len("__enter__", 9);
   glob.static_str___eq__ = str_intern_len("__eq__", 6);
+  glob.static_str___hash__ = str_intern_len("__hash__", 8);
   glob.static_str___exit__ = str_intern_len("__exit__", 8);
   glob.static_str_ret = str_intern_len("$ret", 4);
   glob.static_str_up = str_intern_len("$up", 3);
