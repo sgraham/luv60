@@ -331,6 +331,48 @@ Str List$__str__(List* list, uint64_t item_size, Str (*subtype___str__)(void* it
   return Array$__str__(list->data, list->size, item_size, subtype___str__);
 }
 
+Str Dict$__str__(DictImpl* dict,
+                 uint64_t key_size,
+                 uint64_t value_size,
+                 Str (*key___str__)(void* item),
+                 Str (*value___str__)(void* item)) {
+  List string_buffer = {0};
+  AppendToStringBufferList(&string_buffer, &(Str){"{", 1});
+
+  uint64_t count = 0;
+  DictRawIter iter = dict_iter(dict, key_size + value_size);
+  char* item = dict_rawiter_get(&iter);
+  while (item) {
+    if (!key___str__) {
+      AppendToStringBufferList(&string_buffer, &(Str){"???", 3});
+    } else {
+      Str tmp = key___str__(item);
+      AppendToStringBufferList(&string_buffer, &tmp);
+    }
+
+    AppendToStringBufferList(&string_buffer, &(Str){": ", 2});
+
+    if (!value___str__) {
+      AppendToStringBufferList(&string_buffer, &(Str){"???", 3});
+    } else {
+      Str tmp = value___str__(&item[key_size]);
+      AppendToStringBufferList(&string_buffer, &tmp);
+    }
+
+    AppendToStringBufferList(&string_buffer, &(Str){", ", 2});
+
+    item = dict_rawiter_next(&iter, key_size + value_size);
+    ++count;
+  }
+
+  if (count) {
+    string_buffer.size -= 2;
+  }
+  AppendToStringBufferList(&string_buffer, &(Str){"}", 1});
+
+  return (Str){(const char*)string_buffer.data, string_buffer.size};
+}
+
 void List$unchecked_get(List* list, int64_t index, void* into, uint64_t item_size) {
   CHECK(index >= 0 && "todo; negative index");
   memcpy(into, &list->data[index * item_size], item_size);

@@ -1145,7 +1145,39 @@ static Sym* gen_list___str__(Type type) {
 // on {K}V def str __str__(self):
 //     Dict$__str__(self, sizeof(K), &K::__str__, &V::__str__)
 static Sym* gen_dict___str__(Type type) {
-  error("todo; dict __str__ impl");
+  Type key = type_dict_key(type);
+  Type value = type_dict_value(type);
+  Str full_name = memfn_name_from_type_name(
+      str_internf("Dict_%s_%s", type_as_str(key), type_as_str(value)), glob.static_str___str__);
+
+  sq_func_start(sq_linkage_default, tu.sq_type_str, cstr_copy(glob.arena, full_name));
+
+  SqRef self = sq_func_param(sq_type_long);
+
+  uint64_t key_size = type_size(key);
+  uint64_t value_size = type_size(value);
+
+  Sym* key_str_func = lookup_memfn(key, glob.static_str___str__);
+  Sym* value_str_func = lookup_memfn(value, glob.static_str___str__);
+
+  SqRef ret = sq_i_call5(
+      tu.sq_type_str, sq_ref_extern("Dict$__str__"), (SqCallArg){sq_type_long, self},
+      (SqCallArg){sq_type_long, sq_const_int(key_size)},
+      (SqCallArg){sq_type_long, sq_const_int(value_size)},
+      (SqCallArg){sq_type_long, key_str_func ? sqref_for_sym(key_str_func) : sq_const_int(0)},
+      (SqCallArg){sq_type_long, value_str_func ? sqref_for_sym(value_str_func) : sq_const_int(0)});
+  sq_i_ret(ret);
+  SqSymbol str_func = sq_func_end();
+
+  Type param_types[] = {type_ptr(type_dict(key, value))};
+  Type functype = type_function(param_types, COUNTOF(param_types), type_str, TFF_MEMFN);
+
+  Sym* funcsym = sym_new(SYM_FUNC, full_name, functype);
+  funcsym->global = str_func;
+  funcsym->scope_decl = SSD_DECLARED_GLOBAL;
+
+  sq_itemctx_activate(tu.cur_scope->func_item_ctx);
+  return funcsym;
 }
 
 typedef struct GenericThunkCreators {
