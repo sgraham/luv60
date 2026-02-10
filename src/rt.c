@@ -43,7 +43,7 @@ void RtPreMain(void) {
 static Str str_copy_cstr(const char* cstr) {
   // Note, no NUL, not sure if this will be annoying in practice.
   size_t size = strlen(cstr);
-  Str ret = {malloc(size), size};
+  Str ret = {arena_push(current_arena_, size, 1), size};
   memcpy((void*)ret.data, cstr, size);
   return ret;
 }
@@ -60,10 +60,18 @@ void List$reserve(List* list, uint64_t capacity, uint64_t item_size) {
     }
     return;
   }
+
+  uint64_t old_capacity = list->capacity;
+
   while (list->capacity < capacity) {
     list->capacity = list->capacity > 0 ? list->capacity * 2 : 16;
   }
-  list->data = realloc(list->data, list->capacity * item_size);
+
+  void* new_data = arena_push(current_arena_, list->capacity * item_size, /*align=*/8);
+  if (list->data) {
+    memcpy(new_data, list->data, old_capacity * item_size);
+  }
+  list->data = new_data;
 }
 
 void AppendToStringBufferList(List* sb, Str* str) {
