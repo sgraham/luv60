@@ -450,6 +450,10 @@ const char* type_as_str(Type type) {
     case TYPE_LIST: {
       return cstr_copy(arena_, str_internf("[]%s", type_as_str(type_list_subtype(type))));
     }
+    case TYPE_DICT: {
+      return cstr_copy(arena_, str_internf("{%s}%s", type_as_str(type_dict_key(type)),
+                                           type_as_str(type_dict_value(type))));
+    }
     case TYPE_STRUCT: {
       return cstr_copy(arena_, type_struct_decl_name(type));
     }

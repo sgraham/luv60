@@ -23,6 +23,9 @@ typedef struct List {
   uint64_t capacity;
 } List;
 
+static Arena* backing_arena_;
+static Arena* current_arena_;
+
 void CheckFailed(void) {
   fprintf(stderr, "check failed!\n");
   exit(127);
@@ -30,6 +33,11 @@ void CheckFailed(void) {
 
 void PrintStr(Str* str) {
   printf("%.*s\n", (int)str->size, str->data);
+}
+
+void RtPreMain(void) {
+  backing_arena_ = arena_create(MiB(1024), KiB(64));
+  current_arena_ = backing_arena_;
 }
 
 static Str str_copy_cstr(const char* cstr) {
@@ -331,11 +339,26 @@ Str List$__str__(List* list, uint64_t item_size, Str (*subtype___str__)(void* it
   return Array$__str__(list->data, list->size, item_size, subtype___str__);
 }
 
+void Dict$ensure_init(DictImpl* into) {
+  if (into->arena) {
+    return;
+  }
+  // TODO: slot_size and align are unused if capacity is 0. We need to init the
+  // control bytes of the dict, and set the arena. Potentially arrange to make
+  // zero-init correct? Pass arena to everything would work, but potentially be
+  // confusing. For List too, should it be embedded? In theory list could
+  // relocate to a diff arena, not sure if that's useful or confusing for
+  // either.
+  *into = dict_new(current_arena_, /*capacity=*/0, /*slot_size=*/0, /*slot_align=*/0);
+}
+
 Str Dict$__str__(DictImpl* dict,
                  uint64_t key_size,
                  uint64_t value_size,
                  Str (*key___str__)(void* item),
                  Str (*value___str__)(void* item)) {
+  Dict$ensure_init(dict);
+
   List string_buffer = {0};
   AppendToStringBufferList(&string_buffer, &(Str){"{", 1});
 

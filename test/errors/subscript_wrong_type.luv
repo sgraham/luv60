@@ -1,6 +1,6 @@
 # CRET: 1
-# CERR: {self}:6:11:    x = y[7]
-# CERR: {ssss}                ^ error: Cannot subscript type i32.
+# CERR: {self}:6:10:    x = y[7]
+# CERR: {ssss}               ^ error: Cannot subscript type i32.
 def int main():
     y = 4
     x = y[7]

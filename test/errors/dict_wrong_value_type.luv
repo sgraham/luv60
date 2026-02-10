@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:21:    things["wee"] = 32
+# CERR: {ssss}                          ^ error: Cannot store type i32 into type {str}str.
+def int main():
+    {str}str things
+    things["wee"] = 32
+    return 0

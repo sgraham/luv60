@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:6:11:    stuff[12] = 13
+# CERR: {ssss}                ^ error: Cannot subscript type {str}i32 using type i32.
+def int main():
+    {str}int stuff
+    stuff[12] = 13
+    return 0

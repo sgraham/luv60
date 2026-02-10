@@ -1489,6 +1489,10 @@ static void enter_function(Sym* sym,
     ASSERT(type_eq(type_ptr_subtype(param_syms[0]->type), type_void));
     tu.cur_scope->upval_base = param_syms[0]->ref;
   }
+
+  if (is_main) {
+    sq_i_call0(sq_type_void, sq_ref_extern("RtPreMain"));
+  }
 }
 
 static void leave_function(void) {
@@ -4027,15 +4031,12 @@ static Operand parse_string_interpolate(bool can_assign, Type* expected) {
   return operand_none;
 }
 
-static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
-  // TODO: make this work if we make const arrays a thing
-  ERROR_IF_CONST();
-
+static Operand subscript_for_contig(TypeKind left_type_kind,
+                                    Operand left,
+                                    bool can_assign,
+                                    Type* expected) {
   SqRef target_addr;
   Type subtype;
-
-  TypeKind left_type_kind = type_kind(left.type);
-  // TODO: type_generic_subtype for array/list/str/ptr maybe
 
   if (match(TOK_COLON)) {
     if (check(TOK_RSQUARE)) {  // [:]
@@ -4130,7 +4131,7 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
           }
         break;
         default:
-          errorf("Cannot subscript type %s.", type_as_str(left.type));
+          errorf("internal error: type %s.", type_as_str(left.type));
         }
       }
     }
@@ -4147,6 +4148,51 @@ static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
     return operand_none;
   } else {
     return operand_lvalue_local(subtype, target_addr);
+  }
+}
+
+static Operand subscript_for_dict(Operand left, bool can_assign, Type* expected) {
+  Operand key = parse_expression(NULL);
+  if (!convert_operand(&key, type_dict_key(left.type))) {
+    errorf("Cannot subscript type %s using type %s.", type_as_str(left.type),
+           type_as_str(key.type));
+  }
+  consume(TOK_RSQUARE, "Expect ']' to complete subscript.");
+
+  if (can_assign && match_assignment()) {
+    Operand rhs = parse_expression(NULL);
+    if (!convert_operand(&rhs, type_dict_value(left.type))) {
+      errorf("Cannot store type %s into type %s.", type_as_str(rhs.type), type_as_str(left.type));
+    }
+    // TODO store rhs at key in left
+    // dict_insert is messy
+    // need a layed out slot (alignment)
+    // hash func
+    // eq func
+    // slot/align
+  } else {
+    // TODO: load left[key]
+  }
+  return operand_none;
+}
+
+static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
+  // TODO: make this work if we make const arrays a thing
+  ERROR_IF_CONST();
+
+  TypeKind left_type_kind = type_kind(left.type);
+  // TODO: type_generic_subtype for array/list/str/ptr maybe
+
+  switch (left_type_kind) {
+    case TYPE_PTR:
+    case TYPE_LIST:
+    case TYPE_ARRAY:
+    case TYPE_STR:
+      return subscript_for_contig(left_type_kind, left, can_assign, expected);
+    case TYPE_DICT:
+      return subscript_for_dict(left, can_assign, expected);
+    default:
+      errorf("Cannot subscript type %s.", type_as_str(left.type));
   }
 }
 
