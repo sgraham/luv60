@@ -4948,7 +4948,7 @@ static void for_statement(void) {
 
   if (check(TOK_COLON)) {
     // Nothing, case 1:
-  } else {  // if (check(TOK_IDENT_VAR) && peek(2, TOK_IN)) {
+  } else if (check(TOK_IDENT_VAR) && peek(TOK_IN)) {
     // Case 3.
     Str it_name = parse_name("Expect iterator name.");
     consume(TOK_IN, "Expect 'in'.");
@@ -4971,6 +4971,10 @@ static void for_statement(void) {
     } else {
       errorf("Unhandled for/in over type %s.", type_as_str(expr.type));
     }
+  } else if (check(TOK_IDENT_VAR) && peek2(TOK_COMMA, TOK_IDENT_VAR)) {
+    error("todo; two iters");
+  } else {
+    error("todo");
   }
 }
 
