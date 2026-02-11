@@ -245,6 +245,7 @@ void Dict$ensure_init(DictImpl* into) {
   // confusing. For List too, should it be embedded? In theory list could
   // relocate to a diff arena, not sure if that's useful or confusing for
   // either.
+  memset(into, 0, sizeof(*into));
   *into = dict_new(current_arena_, /*capacity=*/0, /*slot_size=*/0, /*slot_align=*/0);
 }
 

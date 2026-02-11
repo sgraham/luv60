@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:17:    []int bad = {}
+# CERR: {ssss}                      ^ error: Cannot convert empty dict literal to expected type []i32.
+def int main():
+    []int bad = {}
+    return 0

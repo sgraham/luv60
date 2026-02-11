@@ -1,0 +1,7 @@
+# CRET: 1
+# CERR: {self}:5:19:    x = {1: 2, 3: "blah"}
+# CERR: {ssss}                        ^ error: Dict item value is of type str which does not match value type i32 of first element.
+def int main():
+    x = {1: 2, 3: "blah"}
+    return 0
+

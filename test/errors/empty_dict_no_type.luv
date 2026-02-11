@@ -1,0 +1,6 @@
+# CRET: 1
+# CERR: {self}:5:9:    x = {}
+# CERR: {ssss}             ^ error: Cannot deduce type of empty dict with no explicit type on left-hand side.
+def int main():
+    x = {}
+    return 0

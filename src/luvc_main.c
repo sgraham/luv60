@@ -111,7 +111,7 @@ int assemble_and_link(Arena* arena,
     append_cstr(&cmd, " ");
   }
 
-  append_cstr(&cmd, "-o ");
+  append_cstr(&cmd, "-g -o ");
   append_cstr(&cmd, output_dir);
   append_cstr(&cmd, "/");
   append_cstr(&cmd, basename);

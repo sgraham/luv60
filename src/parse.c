@@ -2976,9 +2976,12 @@ static Operand parse_compound_literal(bool can_assign, Type* expected) {
 static Operand parse_dict_literal(bool can_assign, Type* expected) {
   ERROR_IF_CONST();
 
-  error("todo; dict literal");
-#if 0
-  // TODO: dict_new
+  SqRef dict_obj = sq_i_alloc8(sq_const_int(sizeof(DictImpl)));
+  initialize_aggregate(dict_obj, type_dict(type_i32, type_i32));
+
+  bool got_element = false;
+  Type key_type = {0};
+  Type value_type = {0};
 
   for (;;) {
     if (check(TOK_RBRACE)) {
@@ -2986,19 +2989,57 @@ static Operand parse_dict_literal(bool can_assign, Type* expected) {
       break;
     }
 
+    uint32_t key_offset = cur_offset();
     Operand key = parse_expression(NULL);
     consume(TOK_COLON, "Expecting ':' to separate key and value.");
     Operand value = parse_expression(NULL);
 
-    // TODO: dict_insert(key, value)
+    if (got_element) {
+      if (!convert_operand(&key, key_type)) {
+        errorf_offset(key_offset,
+                      "Dict item key is of type %s which does not match key type %s of first element.", type_as_str(key.type),
+                      type_as_str(key_type));
+      }
+      if (!convert_operand(&value, value_type)) {
+        errorf("Dict item value is of type %s which does not match value type %s of first element.",
+               type_as_str(value.type), type_as_str(value_type));
+      }
+    }
+
+    got_element = true;
+    key_type = key.type;
+    value_type = value.type;
+
+    Sym* key_hash_func = lookup_memfn(key.type, glob.static_str___hash__);
+    Sym* key_eq_func = lookup_memfn(key.type, glob.static_str___eq__);
+
+    sq_i_call7(sq_type_void, sq_ref_extern("Dict$insert"),  //
+               (SqCallArg){sq_type_long, dict_obj},
+               (SqCallArg){sq_type_long, operand_to_sqref_lval(&key)},
+               (SqCallArg){sq_type_long, sq_const_int(type_size(key.type))},
+               (SqCallArg){sq_type_long, operand_to_sqref_lval(&value)},
+               (SqCallArg){sq_type_long, sq_const_int(type_size(value.type))},
+               (SqCallArg){sq_type_long, sqref_for_sym(key_hash_func)},
+               (SqCallArg){sq_type_long, sqref_for_sym(key_eq_func)});
 
     if (!match(TOK_COMMA)) {
       break;
     }
   }
 
-  return operand_rvalue_imm(type_dict(key, value), rv);
-#endif
+  consume(TOK_RBRACE, "Expect '}' to terminate dict.");
+
+  if (got_element) {
+    return operand_rvalue_imm(type_dict(key_type, value_type), dict_obj);
+  } else {
+    if (!expected) {
+      error("Cannot deduce type of empty dict with no explicit type on left-hand side.");
+    }
+    if (type_kind(*expected) != TYPE_DICT) {
+      errorf("Cannot convert empty dict literal to expected type %s.", type_as_str(*expected));
+    }
+    return operand_rvalue_imm(*expected, dict_obj);
+  }
 }
 
 static Operand parse_dot(Operand left, bool can_assign, Type* expected) {
@@ -4177,10 +4218,10 @@ static Operand subscript_for_dict(Operand left, bool can_assign, Type* expected)
                (SqCallArg){sq_type_long, sq_const_int(type_size(rhs.type))},
                (SqCallArg){sq_type_long, sqref_for_sym(key_hash_func)},
                (SqCallArg){sq_type_long, sqref_for_sym(key_eq_func)});
+    return operand_none;
   } else {
-    // TODO: load left[key]
+    error("load left[key]");
   }
-  return operand_none;
 }
 
 static Operand parse_subscript(Operand left, bool can_assign, Type* expected) {
