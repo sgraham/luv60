@@ -2793,6 +2793,20 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
                                      left, rhs, op_offset);
       }
     } else {
+      // TODO: I guess all the __ cmps
+      if (op == TOK_EQEQ || op == TOK_BANGEQ) {
+        Sym* eq_func = lookup_memfn(left.type, glob.static_str___eq__);
+        if (eq_func) {
+          SqRef result = sq_i_call2(sq_type_word, sqref_for_sym(eq_func),
+                                    (SqCallArg){sq_type_long, operand_to_sqref_lval(&left)},
+                                    (SqCallArg){sq_type_long, operand_to_sqref_lval(&rhs)});
+          if (op == TOK_BANGEQ) {
+            return operand_rvalue_imm(type_bool, sq_i_ceqw(sq_type_word, result, sq_const_int(0)));
+          } else {
+            return operand_rvalue_imm(type_bool, result);
+          }
+        }
+      }
       errorf_offset(op_offset, "Cannot compare %s and %s.", type_as_str(left.type),
                     type_as_str(rhs.type));
     }

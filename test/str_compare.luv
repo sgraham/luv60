@@ -1,0 +1,23 @@
+# OUT: true
+# OUT: false
+# OUT: false
+# OUT: true
+# OUT: true
+# OUT: false
+# OUT: true
+# OUT: false
+def int main():
+    str x = "stuff"
+
+    print "a" == "a"
+    print "a" == "b"
+    print "a" != "a"
+    print "a" != "b"
+
+    print x == "stuff"
+    print x != "stuff"
+    print "stuff" == x
+    print "stuff" != x
+
+    return 0
+
