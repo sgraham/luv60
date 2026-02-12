@@ -119,6 +119,13 @@ bool str$__eq__(Str* self, Str* other) {
   return memcmp(self->data, other->data, self->size) == 0;
 }
 
+Str str$__plus__(Str* self, Str* other) {
+  char* new = arena_push(current_arena_, self->size + other->size, 1);
+  memcpy(new, self->data, self->size);
+  memcpy(&new[self->size], other->data, other->size);
+  return (Str){new, self->size + other->size};
+}
+
 Str str$join(Str* str, List* strings) {
   List string_buffer = {0};
   for (size_t i = 0; i < strings->size; ++i) {

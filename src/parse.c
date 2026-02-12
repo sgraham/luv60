@@ -222,6 +222,7 @@ typedef struct CompilerGlobals {
   Str static_str___contains__;
   Str static_str___enter__;
   Str static_str___eq__;
+  Str static_str___plus__;
   Str static_str___hash__;
   Str static_str___exit__;
   Str static_str_ret;
@@ -2814,7 +2815,18 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
     if (type_is_arithmetic(left.type) && type_is_arithmetic(rhs.type)) {
       return resolve_binary_arithmetic_op(op, tok_to_bin_op[op].func, left, rhs, op_offset);
     } else {
-      // TODO: special case str here
+      if (op == TOK_PLUS && type_eq(left.type, type_str) && type_eq(rhs.type, type_str)) {
+        Sym* add_func = lookup_memfn(left.type, glob.static_str___plus__);
+        if (!add_func) {
+          error("internal error: no __plus__");
+        }
+        SqRef result = sq_i_call2(tu.sq_type_str, sqref_for_sym(add_func),
+                                  (SqCallArg){sq_type_long, operand_to_sqref_lval(&left)},
+                                  (SqCallArg){sq_type_long, operand_to_sqref_lval(&rhs)});
+        return operand_rvalue_imm(type_str, result);
+      }
+
+      // TODO: other memfns
 
       errorf_offset(op_offset, tok_to_bin_op[op].err_msg, type_as_str(left.type),
                     type_as_str(rhs.type));
@@ -5696,6 +5708,8 @@ static void declare_all_rt_foreigns(void) {
   declare_rt_foreign_memfn1(type_u64, type_bool, glob.static_str___eq__, type_ptr(type_u64));
   declare_rt_foreign_memfn1(type_str, type_bool, glob.static_str___eq__, type_ptr(type_str));
 
+  declare_rt_foreign_memfn1(type_str, type_str, glob.static_str___plus__, type_ptr(type_str));
+
   declare_rt_foreign_memfn0(type_bool, type_str, glob.static_str___str__);
   declare_rt_foreign_memfn0(type_codept, type_str, glob.static_str___str__);
   declare_rt_foreign_memfn0(type_i8, type_str, glob.static_str___str__);
@@ -5736,6 +5750,7 @@ static void parse_one_time_initialization_impl(Arena* main_arena, int verbose) {
   glob.static_str___contains__ = str_intern_len("__contains__", 12);
   glob.static_str___enter__ = str_intern_len("__enter__", 9);
   glob.static_str___eq__ = str_intern_len("__eq__", 6);
+  glob.static_str___plus__ = str_intern_len("__plus__", 8);
   glob.static_str___hash__ = str_intern_len("__hash__", 8);
   glob.static_str___exit__ = str_intern_len("__exit__", 8);
   glob.static_str_ret = str_intern_len("$ret", 4);

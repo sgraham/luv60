@@ -1,0 +1,13 @@
+# OUT: wee
+# OUT: waa
+# OUT: weewaa
+# OUT: true
+def int main():
+    str x = "wee"
+    str y = "waa"
+    z = x + y
+    print x
+    print y
+    print z
+    print z == "weewaa"
+    return 0
