@@ -1,0 +1,11 @@
+# OUT: KEY 100 -> VALUE bloop
+# OUT: KEY 1 -> VALUE blah
+# OUT: done
+def int main():
+    {int}str things = {1: "blah", 100: "bloop", 500: "zippy" }
+    for k,v in things:
+        print fmt("KEY {} -> VALUE {}", k, v)
+        if k == 1:
+            print "done"
+            break
+    return 0

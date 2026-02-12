@@ -21,6 +21,8 @@ typedef struct Str {
   uint64_t i;
 } Str;
 
+#define str_none (Str){0}
+
 void str_intern_pool_init(Arena* arena);
 void str_intern_pool_destroy_for_tests(void);
 

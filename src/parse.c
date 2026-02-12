@@ -262,6 +262,7 @@ typedef struct TranslationUnit {
   SqType sq_type_str;
   SqType sq_type_list;
   SqType sq_type_range;
+  SqType sq_type_dict_iter_helper;
 } TranslationUnit;
 
 static TranslationUnit tu;
@@ -2893,7 +2894,7 @@ static Operand parse_compound_literal_given_type(Type lit_type, bool can_assign,
         field_names[num_fields] = field_name;
         consume(TOK_EQ, "Expecting '=' following initializer name.");
       } else {
-        field_names[num_fields] = (Str){0};
+        field_names[num_fields] = str_none;
       }
 
       field_offsets[num_fields] = cur_offset();
@@ -3390,6 +3391,7 @@ typedef enum IterationKind {
   ITK_LIST,
   ITK_STR,
   ITK_RANGE,
+  ITK_DICT,
 } IterationKind;
 
 struct IterationData {
@@ -3410,12 +3412,18 @@ struct IterationData {
       SqRef step;
       SqRef is_neg;
     } RANGE;
+    struct {
+      SqRef iterhelper;
+      Sym* it2sym;
+      Type it2_type;
+    } DICT;
   };
 };
 
-static IterationData iteration_prolog(Str it, Operand* over) {
+static IterationData iteration_prolog(Str it, Str it2, Operand* over) {
   IterationData itd = {0};
   if (type_kind(over->type) == TYPE_ARRAY) {
+    ASSERT(str_is_none(it2));
     itd.kind = ITK_ARRAY;
     itd.it_type = type_array_subtype(over->type);
     itd.itsym = make_local_and_alloc(SYM_VAR, it, itd.it_type, NULL);
@@ -3426,6 +3434,7 @@ static IterationData iteration_prolog(Str it, Operand* over) {
                          sq_const_int(type_array_count(over->type) * type_size(itd.it_type))),
                 itd.CONTIG.end);
   } else if (type_kind(over->type) == TYPE_LIST) {
+    ASSERT(str_is_none(it2));
     itd.kind = ITK_LIST;
     itd.it_type = type_list_subtype(over->type);
     itd.itsym = make_local_and_alloc(SYM_VAR, it, itd.it_type, NULL);
@@ -3438,6 +3447,7 @@ static IterationData iteration_prolog(Str it, Operand* over) {
                          sq_i_mul(sq_type_long, sq_const_int(type_size(itd.it_type)), count)),
                 itd.CONTIG.end);
   } else if (type_kind(over->type) == TYPE_STR) {
+    ASSERT(str_is_none(it2));
     itd.kind = ITK_STR;
     itd.it_type = type_codept;
     itd.itsym = make_local_and_alloc(SYM_VAR, it, itd.it_type, NULL);
@@ -3448,6 +3458,7 @@ static IterationData iteration_prolog(Str it, Operand* over) {
     SqRef count = sq_i_load(sq_type_long, sq_i_add(sq_type_long, over->ref, sq_const_int(8)));
     sq_i_storel(sq_i_add(sq_type_long, base, count), itd.CONTIG.end);
   } else if (type_eq(over->type, type_range)) {
+    ASSERT(str_is_none(it2));
     itd.kind = ITK_RANGE;
     itd.it_type = type_i64;
     itd.itsym = make_local_and_alloc(SYM_VAR, it, itd.it_type, NULL);
@@ -3465,6 +3476,20 @@ static IterationData iteration_prolog(Str it, Operand* over) {
     // TODO: This probably needs work if the Range isn't trivial, start
     // should be using the Operand expr or something maybe
     sq_i_storel(start, itd.itsym->ref);
+  } else if (type_kind(over->type) == TYPE_DICT) {
+    ASSERT(!str_is_none(it));
+    ASSERT(!str_is_none(it2));
+    itd.kind = ITK_DICT;
+    itd.it_type = type_dict_key(over->type);
+    itd.DICT.it2_type = type_dict_value(over->type);
+    itd.itsym = make_local_and_alloc(SYM_VAR, it, itd.it_type, NULL);
+    itd.DICT.it2sym = make_local_and_alloc(SYM_VAR, it2, itd.DICT.it2_type, NULL);
+
+    itd.DICT.iterhelper = sq_i_call3(
+        tu.sq_type_dict_iter_helper, sq_ref_extern("Dict$iter"),
+        (SqCallArg){sq_type_long, over->ref},
+        (SqCallArg){sq_type_long, sq_const_int(type_size(itd.it_type))},
+        (SqCallArg){sq_type_long, sq_const_int(type_size(itd.DICT.it2_type))});
   } else {
     errorf("Can't iterate over type %s.", type_as_str(over->type));
   }
@@ -3512,6 +3537,14 @@ static IterationData iteration_prolog(Str it, Operand* over) {
     sq_i_jnz(sq_i_csltl(sq_type_long, cur, itd.RANGE.stop), block_cont, itd.loop_done);
 
     sq_block_start(block_cont);
+  } else if (itd.kind == ITK_DICT) {
+    SqRef more = sq_i_call3(sq_type_word, sq_ref_extern("Dict$iter_next"),
+                            (SqCallArg){sq_type_long, itd.DICT.iterhelper},
+                            (SqCallArg){sq_type_long, itd.itsym->ref},
+                            (SqCallArg){sq_type_long, itd.DICT.it2sym->ref});
+
+    sq_i_jnz(more, block_body, itd.loop_done);
+    sq_block_start(block_body);
   } else {
     error("internal error: unhandled case in iter prolog");
   }
@@ -3534,6 +3567,8 @@ static void iteration_epilog(IterationData itd) {
     SqRef it_val = sq_i_load(sq_type_long, itd.itsym->ref);
     SqRef inc = sq_i_add(sq_type_long, it_val, itd.RANGE.step);
     sq_i_storel(inc, itd.itsym->ref);
+  } else if (itd.kind == ITK_DICT) {
+    // Nothing, done in Dict$iter_next.
   } else {
     error("internal error: unhandled case in iter epilog");
   }
@@ -3644,7 +3679,7 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
     SqRef store_ptr = sq_i_alloc8(sq_const_int(8));
     sq_i_storel(ret_sym->ref, store_ptr);
 
-    IterationData itd = iteration_prolog(it, &over);
+    IterationData itd = iteration_prolog(it, str_none, &over);
     ASSERT(type_eq(itd.it_type, subtype));
 
     TokenCursor after_clauses = tu.tokbuf.cursor;
@@ -3675,7 +3710,7 @@ static Operand parse_list_comprehension(TokenCursor original, TokenCursor at_for
   } else {
     // General slice case.
 
-    IterationData itd = iteration_prolog(it, &over);
+    IterationData itd = iteration_prolog(it, str_none, &over);
 
     SqBlock true_block = sq_block_declare();
     SqBlock false_block = sq_block_declare();
@@ -4950,16 +4985,14 @@ static void for_statement(void) {
     // Nothing, case 1:
   } else if (check(TOK_IDENT_VAR) && peek(TOK_IN)) {
     // Case 3.
+    uint32_t it_offset = cur_offset();
     Str it_name = parse_name("Expect iterator name.");
     consume(TOK_IN, "Expect 'in'.");
     Operand expr = parse_expression(NULL);
     TypeKind expr_type = type_kind(expr.type);
     if (type_eq(expr.type, type_range) || expr_type == TYPE_ARRAY || expr_type == TYPE_LIST ||
         expr_type == TYPE_STR) {
-      IterationData itd = iteration_prolog(it_name, &expr);
-
-      // TODO: maybe move this into iteration_prolog, but not needed for
-      // comprehensions, so maybe it makes more sense here.
+      IterationData itd = iteration_prolog(it_name, str_none, &expr);
       tu.cur_scope->iteration_datas[tu.cur_scope->num_iteration_datas++] = &itd;
 
       consume_block_header("for");
@@ -4967,12 +5000,30 @@ static void for_statement(void) {
       iteration_epilog(itd);
 
       --tu.cur_scope->num_iteration_datas;
-
+    } else if (type_kind(expr.type) == TYPE_DICT) {
+      error_offset(it_offset, "Expecting two iterators for dict iteration.");
     } else {
       errorf("Unhandled for/in over type %s.", type_as_str(expr.type));
     }
   } else if (check(TOK_IDENT_VAR) && peek2(TOK_COMMA, TOK_IDENT_VAR)) {
-    error("todo; two iters");
+    Str key_name = parse_name("Expect key iterator name.");
+    consume(TOK_COMMA, "Expect ','.");
+    Str value_name = parse_name("Expect value iterator name.");
+    consume(TOK_IN, "Expect 'in'.");
+    Operand over = parse_expression(NULL);
+    TypeKind over_type = type_kind(over.type);
+    if (over_type != TYPE_DICT) {
+      error("Expecting dict to iterate over.");
+    }
+
+    IterationData itd = iteration_prolog(key_name, value_name, &over);
+    tu.cur_scope->iteration_datas[tu.cur_scope->num_iteration_datas++] = &itd;
+
+    consume_block_header("for");
+    parse_block();
+    iteration_epilog(itd);
+
+    --tu.cur_scope->num_iteration_datas;
   } else {
     error("todo");
   }
@@ -5139,7 +5190,7 @@ static Sym* def_statement(void) {
     ASSERT(tu.scopes[0].is_module);
   }
   uint32_t num_params =
-      parse_func_params(is_nested, /*memfn_self=*/NULL, (Str){0}, param_types, param_names);
+      parse_func_params(is_nested, /*memfn_self=*/NULL, str_none, param_types, param_names);
 
   consume_block_header("function body");
 
@@ -5173,7 +5224,7 @@ static Sym* foreign_statement(void) {
 
   Type param_types[MAX_FUNC_PARAMS];
   Str param_names[MAX_FUNC_PARAMS];
-  uint32_t num_params = parse_func_params(/*is_nested=*/false, /*memfn_self=*/NULL, (Str){0},
+  uint32_t num_params = parse_func_params(/*is_nested=*/false, /*memfn_self=*/NULL, str_none,
                                           param_types, param_names);
   Type functype =
       type_function(param_types, num_params, return_type, TFF_FOREIGN);
@@ -5810,6 +5861,14 @@ static void parse_impl(Arena* temp_arena, Module module) {
   sq_type_add_field(sq_type_long); // step
   tu.sq_type_range = sq_type_struct_end();
 
+  sq_type_struct_start("DictIterHelper", 8);
+  sq_type_add_field(sq_type_long);  // key_size
+  sq_type_add_field(sq_type_long);  // value_size
+  sq_type_add_field(sq_type_long);  // raw_iter.dict
+  sq_type_add_field(sq_type_long);  // raw_iter.ctrl
+  sq_type_add_field(sq_type_long);  // raw_iter.slot
+  sq_type_add_field(sq_type_long);  // item_ptr
+  tu.sq_type_dict_iter_helper = sq_type_struct_end();
 
   declare_all_rt_foreigns();
 

@@ -509,7 +509,26 @@ Str Dict$__str__(DictImpl* dict,
   return (Str){(const char*)string_buffer.data, string_buffer.size};
 }
 
-void List$unchecked_get(List* list, int64_t index, void* into, uint64_t item_size) {
-  CHECK(index >= 0 && "todo; negative index");
-  memcpy(into, &list->data[index * item_size], item_size);
+typedef struct DictIterHelper {
+  uint64_t key_size;
+  uint64_t value_size;
+  DictRawIter raw_iter;
+  const char* item_ptr;
+} DictIterHelper;
+
+DictIterHelper Dict$iter(DictImpl* self, uint64_t key_size, uint64_t value_size) {
+  DictRawIter raw_iter = dict_iter(self, key_size + value_size);
+  const char* item_ptr = dict_rawiter_get(&raw_iter);
+  return (DictIterHelper){key_size, value_size, raw_iter, item_ptr};
+}
+
+bool Dict$iter_next(DictIterHelper* dih, void* copy_key_into, void* copy_value_into) {
+  if (!dih->item_ptr) {
+    return false;
+  }
+
+  memcpy(copy_key_into, dih->item_ptr, dih->key_size);
+  memcpy(copy_value_into, &dih->item_ptr[dih->key_size], dih->value_size);
+  dih->item_ptr = dict_rawiter_next(&dih->raw_iter, dih->key_size + dih->value_size);
+  return true;
 }

@@ -61,9 +61,9 @@ static Module alloc_module_error(const char* full_path) {
   ModuleData* md = &modules_[index];
   CHECK(index < MAX_NUM_MODULES);
   md->load_path = str_intern_len(full_path, strlen(full_path));
-  md->output_path = (Str){0};
-  md->import_as = (Str){0};
-  md->sym_prefix = (Str){0};
+  md->output_path = str_none;
+  md->import_as = str_none;
+  md->sym_prefix = str_none;
   md->file = (ReadFileResult){0};
   md->state = MS_ERROR;
   return (Module){index};

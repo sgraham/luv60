@@ -1,0 +1,8 @@
+# CRET: 1
+# CERR: {self}:6:9:    for x in d:
+# CERR: {ssss}             ^ error: Expecting two iterators for dict iteration.
+def int main():
+    d = {1:2, 3:4}
+    for x in d:
+        print x
+    return 0

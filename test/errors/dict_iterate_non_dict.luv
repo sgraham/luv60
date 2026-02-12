@@ -1,0 +1,9 @@
+# CRET: 1
+# CERR: {self}:6:16:    for k,v in blah:
+# CERR: {ssss}                     ^ error: Expecting dict to iterate over.
+def int main():
+    blah = "thingy"
+    for k,v in blah:
+        print k
+        print v
+    return 0

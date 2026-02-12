@@ -115,7 +115,7 @@ Str type_decl_name(Type type) {
   } else if (type_is_basic(type)) {
     return type_td(type)->BASIC.name;
   } else {
-    return (Str){0};
+    return str_none;
   }
 }
 

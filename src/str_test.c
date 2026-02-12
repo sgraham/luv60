@@ -5,7 +5,7 @@ TEST(Str, NoneAndEmpty) {
   Arena* arena = arena_create(MiB(128), KiB(128));
   str_intern_pool_init(arena);
 
-  Str x = {0};
+  Str x = str_none;
   EXPECT_TRUE(str_is_none(x));
 
   Str y = str_intern("a");
