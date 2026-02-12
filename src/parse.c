@@ -1093,11 +1093,11 @@ static Sym* gen_list___contains__(Type type) {
 
   Sym* sub_eq_func = lookup_memfn(subtype, glob.static_str___eq__);
 
-  sq_i_call4(
-      sq_type_void, sq_ref_extern("List$__contains__"), (SqCallArg){sq_type_long, self},
+  SqRef ret = sq_i_call4(
+      sq_type_ubyte, sq_ref_extern("List$__contains__"), (SqCallArg){sq_type_long, self},
       (SqCallArg){sq_type_long, tmp}, (SqCallArg){sq_type_long, sq_const_int(subtype_size)},
       (SqCallArg){sq_type_long, sub_eq_func ? sqref_for_sym(sub_eq_func) : sq_const_int(0)});
-  sq_i_ret_void();
+  sq_i_ret(ret);
   SqSymbol contains_func = sq_func_end();
 
   Type param_types[] = { type_ptr(type_list(subtype)), subtype };
@@ -2798,7 +2798,7 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
       if (op == TOK_EQEQ || op == TOK_BANGEQ) {
         Sym* eq_func = lookup_memfn(left.type, glob.static_str___eq__);
         if (eq_func) {
-          SqRef result = sq_i_call2(sq_type_word, sqref_for_sym(eq_func),
+          SqRef result = sq_i_call2(sq_type_ubyte, sqref_for_sym(eq_func),
                                     (SqCallArg){sq_type_long, operand_to_sqref_lval(&left)},
                                     (SqCallArg){sq_type_long, operand_to_sqref_lval(&rhs)});
           if (op == TOK_BANGEQ) {
@@ -3188,7 +3188,7 @@ static Operand parse_in_or_not_in(Operand left, bool can_assign, Type* expected)
         type_is_aggregate(left.type) ? operand_to_sqref_lval(&left) : operand_to_sqref_imm(&left);
 
     Operand res = operand_rvalue_imm(
-        type_bool, sq_i_call2(sq_type_word, sqref_for_sym(sym),
+        type_bool, sq_i_call2(sq_type_byte, sqref_for_sym(sym),
                               (SqCallArg){sq_type_long, operand_to_sqref_lval(&rhs)},
                               (SqCallArg){type_to_sqtype(left.type), arg}));
     if (negated) {
@@ -3564,7 +3564,7 @@ static IterationData iteration_prolog(Str it, Str it2, Operand* over) {
 
     sq_block_start(block_cont);
   } else if (itd.kind == ITK_DICT) {
-    SqRef more = sq_i_call3(sq_type_word, sq_ref_extern("Dict$iter_next"),
+    SqRef more = sq_i_call3(sq_type_byte, sq_ref_extern("Dict$iter_next"),
                             (SqCallArg){sq_type_long, itd.DICT.iterhelper},
                             (SqCallArg){sq_type_long, itd.itsym->ref},
                             (SqCallArg){sq_type_long, itd.DICT.it2sym->ref});
