@@ -1,4 +1,4 @@
-#if OS_WINDOWS && COMPILER_MSVC
+#if OS_WINDOWS
 
 void* memmem(const void* haystack, size_t haystacklen, const void* needle, size_t needlelen) {
   const unsigned char* h = haystack;
