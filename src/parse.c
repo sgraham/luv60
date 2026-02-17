@@ -762,6 +762,41 @@ static SqRef operand_to_sqref_lval(Operand* op) {
   }
 }
 
+static SqRef extend_retval(SqRef from_call, Type actual_type) {
+  SqType sqtype = type_to_sqtype(actual_type);
+  if (sqtype.u == SQ_TYPE_UB) {
+    return sq_i_extub(sq_type_word, from_call);
+  } else if (sqtype.u == SQ_TYPE_SB) {
+    return sq_i_extsb(sq_type_word, from_call);
+  } else if (sqtype.u == SQ_TYPE_UH) {
+    return sq_i_extuh(sq_type_word, from_call);
+  } else if (sqtype.u == SQ_TYPE_SH) {
+    return sq_i_extsh(sq_type_word, from_call);
+  } else {
+    return from_call;
+  }
+}
+
+static SqRef sqfunc_param_with_extension_named(Type type, const char* name) {
+  SqType sqtype = type_to_sqtype(type);
+  SqRef item = sq_func_param_named(sqtype, name);
+  if (sqtype.u == SQ_TYPE_UB) {
+    return sq_i_extub(sq_type_word, item);
+  } else if (sqtype.u == SQ_TYPE_SB) {
+    return sq_i_extsb(sq_type_word, item);
+  } else if (sqtype.u == SQ_TYPE_UH) {
+    return sq_i_extuh(sq_type_word, item);
+  } else if (sqtype.u == SQ_TYPE_SH) {
+    return sq_i_extsh(sq_type_word, item);
+  } else {
+    return item;
+  }
+}
+
+static SqRef sqfunc_param_with_extension(Type type) {
+  return sqfunc_param_with_extension_named(type, NULL);
+}
+
 static void copy_by_type(Operand* from, SqRef into) {
   if (type_is_aggregate(from->type)) {
     copy_bytes(from->ref, into, type_size(from->type));
@@ -994,8 +1029,7 @@ static Sym* gen_array___contains__(Type type) {
 
   SqRef self = sq_func_param(sq_type_long);
 
-  SqType sqsubtype = type_to_sqtype(subtype);
-  SqRef item = sq_func_param(sqsubtype);
+  SqRef item = sqfunc_param_with_extension(subtype);
 
   uint64_t subtype_size = type_size(subtype);
 
@@ -1011,7 +1045,7 @@ static Sym* gen_array___contains__(Type type) {
       (SqCallArg){sq_type_long, sq_const_int(count)}, (SqCallArg){sq_type_long, tmp},
       (SqCallArg){sq_type_long, sq_const_int(subtype_size)},
       (SqCallArg){sq_type_long, sub_eq_func ? sqref_for_sym(sub_eq_func) : sq_const_int(0)});
-  sq_i_ret(ret);
+  sq_i_ret(extend_retval(ret, type_bool));
   SqSymbol contains_func = sq_func_end();
 
   Type param_types[] = {type_ptr(type_array(subtype, count)), subtype};
@@ -1037,8 +1071,7 @@ static Sym* gen_list_append(Type type) {
 
   SqRef self = sq_func_param(sq_type_long);
 
-  SqType sqsubtype = type_to_sqtype(subtype);
-  SqRef item = sq_func_param(sqsubtype);
+  SqRef item = sqfunc_param_with_extension(subtype);
 
   uint64_t subtype_size = type_size(subtype);
 
@@ -1076,8 +1109,7 @@ static Sym* gen_list___contains__(Type type) {
 
   SqRef self = sq_func_param(sq_type_long);
 
-  SqType sqsubtype = type_to_sqtype(subtype);
-  SqRef item = sq_func_param(sqsubtype);
+  SqRef item = sqfunc_param_with_extension(subtype);
 
   uint64_t subtype_size = type_size(subtype);
 
@@ -1097,7 +1129,7 @@ static Sym* gen_list___contains__(Type type) {
       sq_type_ubyte, sq_ref_extern("List$__contains__"), (SqCallArg){sq_type_long, self},
       (SqCallArg){sq_type_long, tmp}, (SqCallArg){sq_type_long, sq_const_int(subtype_size)},
       (SqCallArg){sq_type_long, sub_eq_func ? sqref_for_sym(sub_eq_func) : sq_const_int(0)});
-  sq_i_ret(ret);
+  sq_i_ret(extend_retval(ret, type_bool));
   SqSymbol contains_func = sq_func_end();
 
   Type param_types[] = { type_ptr(type_list(subtype)), subtype };
@@ -1408,7 +1440,7 @@ static Sym* make_global(SymKind kind, Str name, Type type, Val* initial_value) {
 static Sym* make_param(Str name, Type type, int index) {
   Sym* new = sym_new(SYM_VAR, name, type);
   // Parameters are values, not variables.
-  new->ref = sq_func_param_named(type_to_sqtype(type),
+  new->ref = sqfunc_param_with_extension_named(type,
 #if BUILD_DEBUG
                                  cstr_copy(glob.arena, name)
 #else
@@ -2801,10 +2833,12 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
           SqRef result = sq_i_call2(sq_type_ubyte, sqref_for_sym(eq_func),
                                     (SqCallArg){sq_type_long, operand_to_sqref_lval(&left)},
                                     (SqCallArg){sq_type_long, operand_to_sqref_lval(&rhs)});
+          SqRef extended = extend_retval(result, type_bool);
           if (op == TOK_BANGEQ) {
-            return operand_rvalue_imm(type_bool, sq_i_ceqw(sq_type_word, result, sq_const_int(0)));
+            return operand_rvalue_imm(type_bool,
+                                      sq_i_ceqw(sq_type_word, extended, sq_const_int(0)));
           } else {
-            return operand_rvalue_imm(type_bool, result);
+            return operand_rvalue_imm(type_bool, extended);
           }
         }
       }
@@ -2901,8 +2935,9 @@ static Operand parse_call(Operand left, bool can_assign, Type* expected) {
 
   consume(TOK_RPAREN, "Expect ')' after arguments.");
   Type ret_type = type_func_return_type(left.type);
-  return operand_rvalue_imm(ret_type,
-                            sq_i_calla(type_to_sqtype(ret_type), left.ref, num_args, arg_values));
+  SqRef result = sq_i_calla(type_to_sqtype(ret_type), left.ref, num_args, arg_values);
+  SqRef extended = extend_retval(result, ret_type);
+  return operand_rvalue_imm(ret_type, extended);
 }
 
 static Operand parse_compound_literal_given_type(Type lit_type, bool can_assign, Type* expected) {
@@ -3187,10 +3222,11 @@ static Operand parse_in_or_not_in(Operand left, bool can_assign, Type* expected)
     SqRef arg =
         type_is_aggregate(left.type) ? operand_to_sqref_lval(&left) : operand_to_sqref_imm(&left);
 
-    Operand res = operand_rvalue_imm(
-        type_bool, sq_i_call2(sq_type_byte, sqref_for_sym(sym),
+    SqRef result = sq_i_call2(sq_type_byte, sqref_for_sym(sym),
                               (SqCallArg){sq_type_long, operand_to_sqref_lval(&rhs)},
-                              (SqCallArg){type_to_sqtype(left.type), arg}));
+                              (SqCallArg){type_to_sqtype(left.type), arg});
+    SqRef extended = extend_retval(result, type_bool);
+    Operand res = operand_rvalue_imm(type_bool, extended);
     if (negated) {
       return operand_rvalue_imm(
           type_bool, sq_i_ceqw(sq_type_word, operand_to_sqref_imm(&res), sq_const_int(0)));
@@ -3568,8 +3604,9 @@ static IterationData iteration_prolog(Str it, Str it2, Operand* over) {
                             (SqCallArg){sq_type_long, itd.DICT.iterhelper},
                             (SqCallArg){sq_type_long, itd.itsym->ref},
                             (SqCallArg){sq_type_long, itd.DICT.it2sym->ref});
+    SqRef extended = extend_retval(more, type_bool);
 
-    sq_i_jnz(more, block_body, itd.loop_done);
+    sq_i_jnz(extended, block_body, itd.loop_done);
     sq_block_start(block_body);
   } else {
     error("internal error: unhandled case in iter prolog");
@@ -5868,7 +5905,7 @@ static void parse_impl(Arena* temp_arena, Module module) {
   config.output_function = sqbe_callback_output_function;
   if (glob.verbose == 2) {
     config.debug_flags = "PT";
-  } else if (glob.verbose > 3) {
+  } else if (glob.verbose >= 3) {
     config.debug_flags = "PMNCFKAILSRT";
   }
   sq_init(&config);
