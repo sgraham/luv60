@@ -11613,7 +11613,7 @@ amd64_memargs(int op)
 	.memargs = amd64_memargs, \
 	.abi0 = elimsb, \
 	.isel = amd64_isel, \
-	.cansel = 1, \
+	.cansel = 1,
 
 static Target T_amd64_sysv = {
 	.name = "amd64_sysv",
@@ -11731,6 +11731,16 @@ bits amd64_winabi_retregs(Ref r, int p[2]) {
   return b;
 }
 
+static uint amd64_winbi_popcnt(bits b) {
+  b = (b & 0x5555555555555555) + ((b >> 1) & 0x5555555555555555);
+  b = (b & 0x3333333333333333) + ((b >> 2) & 0x3333333333333333);
+  b = (b & 0x0f0f0f0f0f0f0f0f) + ((b >> 4) & 0x0f0f0f0f0f0f0f0f);
+  b += (b >> 8);
+  b += (b >> 16);
+  b += (b >> 32);
+  return b & 0xff;
+}
+
 bits amd64_winabi_argregs(Ref r, int p[2]) {
   SQ_ASSERT(rtype(r) == RCall);
 
@@ -11741,24 +11751,22 @@ bits amd64_winabi_argregs(Ref r, int p[2]) {
   bool env_param = (r.val >> 12) & 1;
 
   bits b = 0;
-  int num_int = 0;
-  int num_float = 0;
-  b |= (int_passed & 1) ? (++num_int, BIT(QBE_AMD64_RCX)) : 0;
-  b |= (int_passed & 2) ? (++num_int, BIT(QBE_AMD64_RDX)) : 0;
-  b |= (int_passed & 4) ? (++num_int, BIT(QBE_AMD64_R8)) : 0;
-  b |= (int_passed & 8) ? (++num_int, BIT(QBE_AMD64_R9)) : 0;
-  b |= (float_passed & 1) ? (++num_float, BIT(QBE_AMD64_XMM0)) : 0;
-  b |= (float_passed & 2) ? (++num_float, BIT(QBE_AMD64_XMM1)) : 0;
-  b |= (float_passed & 4) ? (++num_float, BIT(QBE_AMD64_XMM2)) : 0;
-  b |= (float_passed & 8) ? (++num_float, BIT(QBE_AMD64_XMM3)) : 0;
+  b |= (int_passed & 1) ? BIT(QBE_AMD64_RCX) : 0;
+  b |= (int_passed & 2) ? BIT(QBE_AMD64_RDX) : 0;
+  b |= (int_passed & 4) ? BIT(QBE_AMD64_R8) : 0;
+  b |= (int_passed & 8) ? BIT(QBE_AMD64_R9) : 0;
+  b |= (float_passed & 1) ? BIT(QBE_AMD64_XMM0) : 0;
+  b |= (float_passed & 2) ? BIT(QBE_AMD64_XMM1) : 0;
+  b |= (float_passed & 4) ? BIT(QBE_AMD64_XMM2) : 0;
+  b |= (float_passed & 8) ? BIT(QBE_AMD64_XMM3) : 0;
   b |= env_param ? BIT(QBE_AMD64_RAX) : 0;
   if (p) {
     // TODO: The only place this is used is live.c. I'm not sure what should be
     // returned here wrt to using the same counter for int/float regs on win.
     // For now, try the number of registers in use even though they're not
     // contiguous.
-    p[0] = num_int;
-    p[1] = num_float;
+    p[0] = amd64_winbi_popcnt(int_passed);
+    p[1] = amd64_winbi_popcnt(float_passed);
   }
   return b;
 }
@@ -12255,7 +12263,8 @@ static void lower_args_for_block(Fn* func,
 
   // emit/emiti add instructions from the end to the beginning of the temporary
   // global buffer. dup the final version into the final block storage.
-  idup(block, GC(curi), &GC(insb)[NIns]-GC(curi));
+  block->nins = &GC(insb)[NIns] - GC(curi);
+  idup(block, GC(curi), block->nins);
 }
 
 static Ins* find_end_of_func_parameters(Blk* start_block) {
