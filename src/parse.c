@@ -240,6 +240,8 @@ typedef struct CompilerGlobals {
 
   int verbose;
 
+  bool obj_output;
+
   int uniq_counter;
 } CompilerGlobals;
 
@@ -5777,7 +5779,7 @@ static void declare_all_rt_foreigns(void) {
   declare_rt_foreign_memfn1(type_range, type_bool, glob.static_str___contains__, type_i64);
 }
 
-static void parse_one_time_initialization_impl(Arena* main_arena, int verbose) {
+static void parse_one_time_initialization_impl(Arena* main_arena, int verbose, bool obj_output) {
   type_init(main_arena);
   glob.arena = main_arena;
   glob.generics_thunk_cache = dict_new(glob.arena, 128, sizeof(NameSymPair), _Alignof(NameSymPair));
@@ -5813,6 +5815,8 @@ static void parse_one_time_initialization_impl(Arena* main_arena, int verbose) {
   glob.uniq_counter = 0;
 
   glob.verbose = verbose;
+
+  glob.obj_output = obj_output;
 }
 
 static void parse_scan_for_imports(Str load_filename, ReadFileResult file) {
@@ -5895,7 +5899,9 @@ static void parse_impl(Arena* temp_arena, Module module) {
   enter_module_scope();
 
   SqConfiguration config = SQ_CONFIGURATION_DEFAULT;
-  //config.target = SQ_TARGET_AMD64_APPLE;
+  if (glob.obj_output) {
+    config.format = SQ_FORMAT_OBJ_MACHO;
+  }
   const char* output_copy = cstr_copy(temp_arena, module_output_path(module));
   config.output = fopen(output_copy, "wb");
   if (!config.output) {

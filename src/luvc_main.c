@@ -101,8 +101,8 @@ int assemble_and_link(Arena* arena,
 
   for (size_t i = 0; i < module_num_modules(); ++i) {
     Module m = module_get_module_by_index(i);
-    Str dot_s = module_output_path(m);
-    append_str(&cmd, dot_s);
+    Str s_or_o = module_output_path(m);
+    append_str(&cmd, s_or_o);
     append_cstr(&cmd, " ");
   }
 
@@ -150,8 +150,14 @@ int main(int argc, char** argv) {
   path_split(main_arena, input, &source_dir, &filename);
   path_trim_extension_if_exists(filename, ".luv");
 
-  module_init(main_arena, parse_temp_arena, source_dir, output_dir,
-              verbose, syntax_only);
+#if 0 // OS_MAC && ARCH_ARM64
+  bool obj_output = true;
+#else
+  bool obj_output = false;
+#endif
+
+  module_init(main_arena, parse_temp_arena, source_dir, output_dir, verbose, syntax_only,
+              obj_output);
   Module main = module_add((StrView){filename, strlen(filename)});
   if (module_is_in_error(main)) {
     Str path = module_load_path(main);

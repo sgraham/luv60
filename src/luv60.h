@@ -150,7 +150,8 @@ void module_init(Arena* arena,
                  const char* source_dir,
                  const char* output_dir,
                  int verbose,
-                 bool syntax_only);
+                 bool syntax_only,
+                 bool obj_output);
 Module module_add(StrView basename);
 
 typedef struct ImportedModuleScope ImportedModuleScope;
@@ -313,8 +314,8 @@ bool type_struct_find_field_by_name(Type type, Str name, Type* out_type, uint32_
 
 // parse.c
 
-void parse_one_time_initialization_code_gen(Arena* main_arena, int verbose);
+void parse_one_time_initialization_code_gen(Arena* main_arena, int verbose, bool obj_output);
 void parse_code_gen(Arena* temp_arena, Module module);
 
-void parse_one_time_initialization_syntax_check(Arena* main_arena, int verbose);
+void parse_one_time_initialization_syntax_check(Arena* main_arena, int verbose, bool obj_output);
 void parse_syntax_check(Arena* temp_arena, Module module);

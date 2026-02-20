@@ -32,13 +32,15 @@ static size_t num_modules_;
 static const char* source_dir_;
 static const char* output_dir_;
 static bool syntax_only_;
+static bool obj_output_;
 
 void module_init(Arena* arena,
                  Arena* parse_temp_arena,
                  const char* source_dir,
                  const char* output_dir,
                  int verbose,
-                 bool syntax_only) {
+                 bool syntax_only,
+                 bool obj_output) {
   arena_ = arena;
   parse_temp_arena_ = parse_temp_arena;
   num_modules_ = 0;
@@ -48,11 +50,12 @@ void module_init(Arena* arena,
   source_dir_ = source_dir;
   output_dir_ = output_dir;
   syntax_only_ = syntax_only;
+  obj_output_ = obj_output;
 
   if (syntax_only_) {
-    parse_one_time_initialization_syntax_check(arena_, verbose);
+    parse_one_time_initialization_syntax_check(arena_, verbose, obj_output_);
   } else {
-    parse_one_time_initialization_code_gen(arena_, verbose);
+    parse_one_time_initialization_code_gen(arena_, verbose, obj_output_);
   }
 }
 
@@ -149,10 +152,11 @@ Module module_add(StrView basename) {
     return alloc_module_error(full_path);
   }
 
-  // 1 for slash, 3 for ".s\0"
+  // 1 for slash, 3 for ".s\0" or ".o\0"
   size_t output_full_path_len = strlen(output_dir_) + 1 + basename.size + 2 + 1;
   char* output_path = arena_push(arena_, output_full_path_len, 1);
-  sprintf(output_path, "%s/%.*s.s", output_dir_, (int)basename.size, basename.data);
+  sprintf(output_path, "%s/%.*s%s", output_dir_, (int)basename.size, basename.data,
+          obj_output_ ? ".o" : ".s");  // Note: careful when switching to .obj
 
   // TODO: import as
   const char* unused_dir;

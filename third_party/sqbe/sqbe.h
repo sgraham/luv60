@@ -40,6 +40,10 @@ typedef enum SqTarget {
   SQ_TARGET_RV64,         //
 } SqTarget;
 
+typedef enum SqFormat {
+  SQ_FORMAT_TEXT_S,     // Default textual .s to be assembled by system as
+  SQ_FORMAT_OBJ_MACHO,  // macOS Mach-O .o
+} SqFormat;
 
 typedef int (*SqOutputFn)(const char* fmt, va_list ap);
 
@@ -47,6 +51,8 @@ typedef struct SqConfiguration {
   // SQ_TARGET_DEFAULT for compiling for the current (host) platform, otherwise
   // specify the target to cross-compile to.
   SqTarget target;
+
+  SqFormat format;
 
   // Where the final assembler is written to.
   FILE* output;
@@ -83,6 +89,7 @@ typedef struct SqConfiguration {
 
 #define SQ_CONFIGURATION_DEFAULT                                \
   ((SqConfiguration){.target = SQ_TARGET_DEFAULT,               \
+                     .format = SQ_FORMAT_TEXT_S,                \
                      .output = stdout,                          \
                      .debug_flags = "",                         \
                      .max_blocks_per_function = 2048,           \
@@ -469,6 +476,7 @@ typedef struct Field Field;
 typedef struct Dat Dat;
 typedef struct Lnk Lnk;
 typedef struct Target Target;
+typedef struct MachoCtx MachoCtx;
 
 typedef struct Asmbits Asmbits;
 typedef struct Edge Edge;
@@ -1186,6 +1194,8 @@ typedef struct GlobalContext {
 	/* main.c */
 	FILE* main__outf;
 	int main__dbg;
+	int main__objmode;
+	MachoCtx *main__macho_ctx;
 
 	/* parse.c */
 	int parse__lexinit_done;
@@ -1573,6 +1583,14 @@ static void arm64_isel(Fn *);
 static void arm64_emitfn(Fn *, FILE *);
 #undef G
 /*** END FILE: arm64/all.h ***/
+/*** START FILE: arm64/emitmacho.h ***/
+static MachoCtx* macho_new(void);
+static void macho_free(MachoCtx*);
+static void macho_emitdat(Dat*, MachoCtx*);
+static void macho_emitfn(Fn*, MachoCtx*);
+static void macho_write(MachoCtx*, FILE*);
+#undef G
+/*** END FILE: arm64/emitmacho.h ***/
 /*** START FILE: rv64/all.h ***/
 /* skipping ../all.h */
 
@@ -5123,6 +5141,7 @@ loadopt(Fn *fn)
 /*** END FILE: load.c ***/
 /*** START FILE: main.c ***/
 /* skipping all.h */
+/* skipping arm64/emitmacho.h */
 /* skipping config.h */
 #include <ctype.h>
 /* skipping getopt.h */
@@ -5145,10 +5164,17 @@ qbe_main_data(Dat *d)
 {
 	if (G(dbg))
 		return;
-	emitdat(d, G(outf));
-  ret_on_err();
+	if (G(objmode)) {
+		macho_emitdat(d, G(macho_ctx));
+		ret_on_err();
+	} else {
+		emitdat(d, G(outf));
+		ret_on_err();
+		if (d->type == DEnd) {
+			fputs("/* end data */\n\n", G(outf));
+		}
+	}
 	if (d->type == DEnd) {
-		fputs("/* end data */\n\n", G(outf));
 		freeall();
 	}
 }
@@ -5182,7 +5208,7 @@ qbe_main_func(Fn *fn)
 	filluse(fn);
 	filldom(fn);
 	ssacheck(fn);
-  ret_on_err();
+	ret_on_err();
 	gvn(fn);
 	fillcfg(fn);
 	simplcfg(fn);
@@ -5214,24 +5240,29 @@ qbe_main_func(Fn *fn)
 	simpljmp(fn);
 	fillcfg(fn);
 	SQ_ASSERT(fn->rpo[0] == fn->start);
-	for (n=0;; n++)
+	for (n=0;; n++) {
 		if (n == fn->nblk-1) {
 			fn->rpo[n]->link = 0;
 			break;
 		} else
 			fn->rpo[n]->link = fn->rpo[n+1];
-	if (!G(dbg)) {
+	}
+	if (G(objmode)) {
+		macho_emitfn(fn, G(macho_ctx));
+	} else if (!G(dbg)) {
 		GC(T).emitfn(fn, G(outf));
 		fprintf(G(outf), "/* end function %s */\n\n", fn->name);
-	} else
+	} else {
 		fprintf(stderr, "\n");
+	}
 	freeall();
 }
 
 static void
 qbe_main_dbgfile(char *fn)
 {
-	emitdbgfile(fn, G(outf));
+	if (!G(objmode))
+		emitdbgfile(fn, G(outf));
 }
 #undef G
 /*** END FILE: main.c ***/
@@ -13976,8 +14007,18 @@ arm64_emitfn(Fn *fn, FILE *out)
 				t = b->s1;
 				b->s1 = b->s2;
 				b->s2 = t;
-			} else
+			} else {
 				c = cmpneg(c);
+				/* cmpneg of ordered float comparisons gives
+				 * conditions that don't fire for unordered (NaN)
+				 * after fcmpe; remap to include the unordered case */
+				switch (c) {
+				case NCmpI+Cfge: c = Ciuge; break; /* bge -> bcs */
+				case NCmpI+Cfgt: c = Ciugt; break; /* bgt -> bhi */
+				case NCmpI+Cfle: c = Cisle; break; /* bls -> ble */
+				case NCmpI+Cflt: c = Cislt; break; /* bmi -> blt */
+				}
+			}
 			fprintf(e->f,
 				"\tb%s\t%s%d\n",
 				ctoa[c], GC(T).asloc, G(arm64_emitfn_id0)+b->s2->id
@@ -13992,6 +14033,1686 @@ arm64_emitfn(Fn *fn, FILE *out)
 #undef CMP
 #undef G
 /*** END FILE: arm64/emit.c ***/
+/*** START FILE: arm64/emitmacho.c ***/
+/* skipping all.h */
+
+/* skipping emitmacho.h */
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Mach-O constants
+#define MH_MAGIC_64 0xFEEDFACFu
+#define CPU_TYPE_ARM64 0x0100000Cu
+#define MH_OBJECT 1u
+#define MH_SUBSECTIONS_VIA_SYMBOLS 0x2000u
+#define LC_SEGMENT_64 0x19u
+#define LC_SYMTAB 0x2u
+#define LC_DYSYMTAB 0xBu
+#define LC_BUILD_VERSION 0x32u
+#define PLATFORM_MACOS 1u
+#define N_UNDF 0x0u
+#define N_SECT 0xEu
+#define N_EXT 0x1u
+#define ARM64_RELOC_UNSIGNED 0u
+#define ARM64_RELOC_BRANCH26 2u
+#define ARM64_RELOC_PAGE21 3u
+#define ARM64_RELOC_PAGEOFF12 4u
+#define ARM64_RELOC_TLVP_LOAD_PAGE21 8u
+#define ARM64_RELOC_TLVP_LOAD_PAGEOFF12 9u
+#define ARM64_RELOC_ADDEND 10u
+#define S_REGULAR 0u
+#define S_ZEROFILL 1u
+#define S_ATTR_PURE_INSTRUCTIONS 0x80000000u
+#define S_ATTR_SOME_INSTRUCTIONS 0x00000400u
+
+// Sentinel sect values: resolved to real section numbers in macho_write
+#define SECT_DATA 0xFEu
+#define SECT_BSS 0xFDu
+
+// Mach-O structs (no system headers, exact field layout)
+
+struct mach_header_64 {
+  uint32_t magic, cputype, cpusubtype, filetype;
+  uint32_t ncmds, sizeofcmds, flags, reserved;
+};
+
+struct segment_command_64 {
+  uint32_t cmd, cmdsize;
+  char segname[16];
+  uint64_t vmaddr, vmsize, fileoff, filesize;
+  uint32_t maxprot, initprot, nsects, flags;
+};
+
+struct section_64 {
+  char sectname[16];
+  char segname[16];
+  uint64_t addr, size;
+  uint32_t offset, align, reloff, nreloc, flags;
+  uint32_t reserved1, reserved2, reserved3;
+};
+
+struct symtab_command {
+  uint32_t cmd, cmdsize, symoff, nsyms, stroff, strsize;
+};
+
+struct dysymtab_command {
+  uint32_t cmd, cmdsize;
+  uint32_t ilocalsym, nlocalsym;
+  uint32_t iextdefsym, nextdefsym;
+  uint32_t iundefsym, nundefsym;
+  uint32_t tocoff, ntoc;
+  uint32_t modtaboff, nmodtab;
+  uint32_t extrefsymoff, nextrefsyms;
+  uint32_t indirectsymoff, nindirectsyms;
+  uint32_t extreloff, nextrel;
+  uint32_t locreloff, nlocrel;
+};
+
+struct nlist_64 {
+  uint32_t n_strx;
+  uint8_t n_type, n_sect;
+  uint16_t n_desc;
+  uint64_t n_value;
+};
+
+struct relocation_info {
+  int32_t r_address;
+  uint32_t r_info;
+};
+
+struct build_version_command {
+  uint32_t cmd, cmdsize, platform, minos, sdk, ntools;
+};
+
+MAKESURE(mach_header_64_size, sizeof(struct mach_header_64) == 32);
+MAKESURE(segment_command_64_size, sizeof(struct segment_command_64) == 72);
+MAKESURE(section_64_size, sizeof(struct section_64) == 80);
+MAKESURE(symtab_command_size, sizeof(struct symtab_command) == 24);
+MAKESURE(dysymtab_command_size, sizeof(struct dysymtab_command) == 80);
+MAKESURE(nlist_64_size, sizeof(struct nlist_64) == 16);
+MAKESURE(relocation_info_size, sizeof(struct relocation_info) == 8);
+MAKESURE(build_version_command, sizeof(struct build_version_command) == 24);
+
+typedef struct {
+  int32_t addr;
+  uint32_t info;
+} MReloc;
+
+typedef struct {
+  uint32_t strx;
+  uint8_t type, sect;
+  uint16_t desc;
+  uint64_t value;
+} MSym;
+
+struct MachoCtx {
+  uint8_t* text;
+  uint32_t textsz, textcap;
+  uint8_t* data;
+  uint32_t datasz, datacap;
+  uint32_t bsssz;
+  MReloc* dreloc;
+  uint32_t ndreloc, drelocap;
+  MReloc* treloc;
+  uint32_t ntreloc, trelocap;
+  MSym* syms;
+  uint32_t nsyms, symcap;
+  char* strtab;
+  uint32_t strtabsz, strtabcap;
+  // forward BL fixups: resolved in macho_write
+  struct {
+    uint32_t off;
+    uint32_t symidx;
+  }* blfixup;
+  uint32_t nblfixup, blfixupap;
+  // current data item state
+  char datname[NString];
+  Lnk* datlnk;
+  int64_t dleadzero;  // >=0: accumulating leading zeros; -1: data started
+  uint32_t datstart;  // ctx->datasz at DStart
+};
+
+static void* qbe_realloc(void* oldp, uint32_t old_size, size_t new_size) {
+  void* newp = emalloc(new_size);
+  if (oldp) {
+    memcpy(newp, oldp, old_size);
+    qbe_free(oldp);
+  }
+  return newp;
+}
+
+static void buf_append(uint8_t** buf, uint32_t* sz, uint32_t* cap, const void* src, uint32_t n) {
+  if (*sz + n > *cap) {
+    uint32_t newcap = *cap ? *cap * 2 : 64;
+    uint32_t oldcap = *cap;
+    while (newcap < *sz + n) {
+      newcap *= 2;
+    }
+    *buf = qbe_realloc(*buf, oldcap, newcap);
+    if (!*buf) {
+      die("obj: out of memory");
+    }
+    *cap = newcap;
+  }
+  memcpy(*buf + *sz, src, n);
+  *sz += n;
+}
+
+static uint32_t strintern(MachoCtx* ctx, const char* s) {
+  uint32_t off = ctx->strtabsz;
+  uint32_t n = (uint32_t)strlen(s) + 1;
+  buf_append((uint8_t**)&ctx->strtab, &ctx->strtabsz, &ctx->strtabcap, s, n);
+  return off;
+}
+
+static void symname(char out[NString], const char* n) {
+  if (n[0] == '"') {
+    size_t len = strlen(n);
+    int inner = len >= 2 ? (int)(len - 2) : 0;
+    snprintf(out, NString, "%.*s", inner, n + 1);
+  } else {
+    snprintf(out, NString, "_%s", n);
+  }
+}
+
+static uint32_t symadd(MachoCtx* ctx,
+                       const char* name,
+                       uint8_t type,
+                       uint8_t sect,
+                       uint64_t value) {
+  MSym sym;
+  sym.strx = strintern(ctx, name);
+  sym.type = type;
+  sym.sect = sect;
+  sym.desc = 0;
+  sym.value = value;
+  if (ctx->nsyms == ctx->symcap) {
+    uint32_t oldcap = ctx->symcap;
+    ctx->symcap = ctx->symcap ? ctx->symcap * 2 : 8;
+    ctx->syms = qbe_realloc(ctx->syms, oldcap * sizeof(MSym), ctx->symcap * sizeof(MSym));
+    if (!ctx->syms) {
+      die("obj: out of memory");
+    }
+  }
+  ctx->syms[ctx->nsyms] = sym;
+  return ctx->nsyms++;
+}
+
+static void relocadd(MachoCtx* ctx, int32_t addr, uint32_t symidx, int type, int ext, int length) {
+  MReloc r;
+  r.addr = addr;
+  r.info = (symidx & 0xFFFFFFu) | ((uint32_t)length << 25) | ((uint32_t)ext << 27) |
+           ((uint32_t)type << 28);
+  if (ctx->ndreloc == ctx->drelocap) {
+    uint32_t oldcap = ctx->drelocap;
+    ctx->drelocap = ctx->drelocap ? ctx->drelocap * 2 : 8;
+    ctx->dreloc = qbe_realloc(ctx->dreloc, oldcap * sizeof(MReloc), ctx->drelocap * sizeof(MReloc));
+    if (!ctx->dreloc) {
+      die("obj: out of memory");
+    }
+  }
+  ctx->dreloc[ctx->ndreloc++] = r;
+}
+
+static void trelocadd(MachoCtx* ctx,
+                      int32_t addr,
+                      uint32_t symidx,
+                      int type,
+                      int length,
+                      int pcrel) {
+  MReloc r;
+  r.addr = addr;
+  r.info = (symidx & 0xFFFFFFu) | ((uint32_t)pcrel << 24)  // r_pcrel
+           | ((uint32_t)length << 25) | (1u << 27)         // r_extern = 1
+           | ((uint32_t)type << 28);
+  if (ctx->ntreloc == ctx->trelocap) {
+    uint32_t oldcap = ctx->trelocap;
+    ctx->trelocap = ctx->trelocap ? ctx->trelocap * 2 : 8;
+    ctx->treloc = qbe_realloc(ctx->treloc, oldcap * sizeof(MReloc), ctx->trelocap * sizeof(MReloc));
+    if (!ctx->treloc) {
+      die("obj: out of memory");
+    }
+  }
+  ctx->treloc[ctx->ntreloc++] = r;
+}
+
+static uint32_t callee_symidx(MachoCtx* ctx, const char* name) {
+  uint32_t i;
+  for (i = 0; i < ctx->nsyms; i++) {
+    if (strcmp(ctx->strtab + ctx->syms[i].strx, name) == 0) {
+      return i;
+    }
+  }
+  // not present: add as undefined external
+  return symadd(ctx, name, N_UNDF | N_EXT, 0, 0);
+}
+
+static uint32_t align_up(uint32_t v, uint32_t a) {
+  return (v + a - 1) & ~(a - 1);
+}
+
+static void emit_u32(MachoCtx* ctx, uint32_t insn) {
+  buf_append(&ctx->text, &ctx->textsz, &ctx->textcap, &insn, 4);
+}
+
+// ARM64 condition codes indexed by CmpI
+static const uint8_t arm64cond[NCmp] = {
+    // integer comparisons
+    [Cieq] = 0x0,
+    [Cine] = 0x1,
+    [Cisge] = 0xA,
+    [Cisgt] = 0xC,
+    [Cisle] = 0xD,
+    [Cislt] = 0xB,
+    [Ciuge] = 0x2,
+    [Ciugt] = 0x8,
+    [Ciule] = 0x9,
+    [Ciult] = 0x3,
+    // float comparisons (after FCMPE, ARM64 QBE_ARM64_FP flags = integer flags)
+    [NCmpI + Cfeq] = 0x0,
+    [NCmpI + Cfge] = 0xA,
+    [NCmpI + Cfgt] = 0xC,
+    [NCmpI + Cfle] = 0x9,
+    [NCmpI + Cflt] = 0x4,
+    [NCmpI + Cfne] = 0x1,
+    [NCmpI + Cfo] = 0x7,
+    [NCmpI + Cfuo] = 0x6,
+};
+
+// Branch fixup: records a branch instruction to patch after all blocks emitted
+typedef struct {
+  uint32_t off;
+  Blk* tgt;
+  int cond;
+} BrFix;
+
+static void grow_fixes(BrFix** fixes, uint32_t* fixcap) {
+  uint32_t oldcap = *fixcap;
+  *fixcap *= 2;
+  *fixes = qbe_realloc(*fixes, oldcap * sizeof(**fixes), *fixcap * sizeof(**fixes));
+  if (!*fixes) {
+    die("emitobj: qbe_realloc");
+  }
+}
+
+MachoCtx*
+macho_new(void) {
+  MachoCtx* ctx = emalloc(sizeof *ctx);
+  memset(ctx, 0, sizeof *ctx);
+  // string table always starts with a null byte
+  ctx->strtab = emalloc(64);
+  ctx->strtab[0] = '\0';
+  ctx->strtabsz = 1;
+  ctx->strtabcap = 64;
+  return ctx;
+}
+
+void
+macho_free(MachoCtx* ctx) {
+  qbe_free(ctx->text);
+  qbe_free(ctx->data);
+  qbe_free(ctx->dreloc);
+  qbe_free(ctx->treloc);
+  qbe_free(ctx->syms);
+  qbe_free(ctx->strtab);
+  qbe_free(ctx->blfixup);
+  qbe_free(ctx);
+}
+
+// Encode a constant into rd, matching loadcon() in arm64/emit.c.
+static void emit_movcon(MachoCtx* ctx, int rd, int cls, Con* c) {
+  int64_t n;
+  int wide, sh;
+  uint32_t movz, movn, movk;
+
+  if (c->type == CAddr) {
+    char sname[NString];
+    uint32_t symidx;
+    symname(sname, str(c->sym.id));
+    symidx = callee_symidx(ctx, sname);
+    if (c->bits.i != 0) {
+      die("obj: CAddr with non-zero offset in Ocopy");
+    }
+    if (c->sym.type == SThr) {
+      // Thread-local: ADRP Xd, sym@tlvppage
+      //             + LDR  Xd, [Xd, sym@tlvppageoff]
+      trelocadd(ctx, (int32_t)ctx->textsz, symidx, ARM64_RELOC_TLVP_LOAD_PAGE21, 2, 1);
+      emit_u32(ctx, 0x90000000u | (uint32_t)rd);
+      trelocadd(ctx, (int32_t)ctx->textsz, symidx, ARM64_RELOC_TLVP_LOAD_PAGEOFF12, 2, 0);
+      // LDR Xd, [Xd, #0] - loads descriptor ptr
+      emit_u32(ctx, 0xF9400000u | ((uint32_t)rd << 5) | (uint32_t)rd);
+    } else {
+      // Global: ADRP Xd, sym@page
+      //       + ADD  Xd, Xd, sym@pageoff
+      trelocadd(ctx, (int32_t)ctx->textsz, symidx, ARM64_RELOC_PAGE21, 2, 1);
+      emit_u32(ctx, 0x90000000u | (uint32_t)rd);
+      trelocadd(ctx, (int32_t)ctx->textsz, symidx, ARM64_RELOC_PAGEOFF12, 2, 0);
+      emit_u32(ctx, 0x91000000u | ((uint32_t)rd << 5) | (uint32_t)rd);
+    }
+    return;
+  }
+  SQ_ASSERT(c->type == CBits);
+
+  wide = (cls == Kl);
+  n = c->bits.i;
+  if (!wide) {
+    n = (int64_t)(int32_t)n;  // sign-extend to 64 bits
+  }
+
+  movz = wide ? 0xD2800000u : 0x52800000u;  // MOVZ
+  movn = wide ? 0x92800000u : 0x12800000u;  // MOVN
+  movk = wide ? 0xF2800000u : 0x72800000u;  // MOVK
+
+  {
+    // For Kw work with the 32-bit unsigned value; Kl uses all 64.
+    uint64_t un = wide ? (uint64_t)n : (uint64_t)(uint32_t)n;
+    uint64_t cn = wide ? ~un : (~un & 0xFFFFFFFFu);
+    int nhw = wide ? 4 : 2;
+    int hw;
+    uint64_t mask;
+    uint32_t imm16;
+
+    // Case 1: single MOVZ - un has exactly one nonzero 16-bit chunk.
+    for (hw = 0; hw < nhw; hw++) {
+      mask = (uint64_t)0xFFFF << (hw * 16);
+      if ((un & ~mask) == 0) {
+        imm16 = (uint32_t)((un >> (hw * 16)) & 0xFFFF);
+        emit_u32(ctx, movz | ((uint32_t)hw << 21) | (imm16 << 5) | (uint32_t)rd);
+        return;
+      }
+    }
+
+    // Case 2: single MOVN - ~un has exactly one nonzero 16-bit chunk.
+    // Matches loadcon's "(n | 0xffff) == -1" and similar patterns.
+    for (hw = 0; hw < nhw; hw++) {
+      mask = (uint64_t)0xFFFF << (hw * 16);
+      if ((cn & ~mask) == 0) {
+        imm16 = (uint32_t)((cn >> (hw * 16)) & 0xFFFF);
+        emit_u32(ctx, movn | ((uint32_t)hw << 21) | (imm16 << 5) | (uint32_t)rd);
+        return;
+      }
+    }
+  }
+
+  // Case 3: MOVZ + optional MOVKs, matching loadcon()'s else branch.
+  emit_u32(ctx, movz | (((uint32_t)(n & 0xffff)) << 5) | (uint32_t)rd);
+  for (sh = 16; (n >>= 16) != 0; sh += 16) {
+    if ((!wide && sh == 32) || sh == 64) {
+      break;
+    }
+    emit_u32(ctx,
+             movk | ((uint32_t)(sh / 16) << 21) | (((uint32_t)(n & 0xffff)) << 5) | (uint32_t)rd);
+  }
+}
+
+// Mirror arm64/emit.c slot() for RSlot -> x29-relative byte offset.
+// s == -1: frame-start marker used by apple_selvastart (Oaddr SLOT(-1)).
+// s < 0:   above-frame caller argument at byte offset -(s+2) above frame.
+// s >= 0:  local / callee-save slot.
+static uint32_t slot_off(int s, int padding, int framesz) {
+  if (s == -1) {
+    return (uint32_t)(16 + framesz);
+  }
+  if (s < 0) {
+    return (uint32_t)(16 + framesz - (s + 2));
+  }
+  return (uint32_t)(16 + padding + 4 * s);
+}
+
+void
+macho_emitfn(Fn* fn, MachoCtx* ctx) {
+  char name[NString];
+  Blk* b;
+  Ins* i;
+  int rd, rn, rm, wide;
+  int ncallee, framesz, total, padding;
+  uint32_t enc;
+  uint32_t* blkoff;
+  uint32_t nfix, fixcap;
+  BrFix* fixes;
+
+  symname(name, fn->name);
+  symadd(ctx, name, N_SECT | (fn->lnk.export ? N_EXT : 0),
+         1,  // __text
+         (uint64_t)ctx->textsz);
+
+  {
+    int* r;
+    // count all callee-saves (GPR QBE_ARM64_R19-QBE_ARM64_R28 then QBE_ARM64_FP QBE_ARM64_V8-QBE_ARM64_V15)
+    ncallee = 0;
+    for (r = arm64_rclob; *r >= 0; r++) {
+      if (fn->reg & BIT(*r)) {
+        ncallee++;
+      }
+    }
+    if (ncallee & 1) {
+      ncallee++;  // round up to even for alignment
+    }
+    // Apple vararg: no register save area; frame is identical
+    // to non-vararg.  dynalloc is handled via mov sp, x29.
+    if (fn->dynalloc) {
+      die("obj: %s: unimplemented (dynalloc=1)", fn->name);
+    }
+  }
+  {
+    int slotbytes = ((fn->slot + 3) & -4) * 4;
+    padding = slotbytes - fn->slot * 4;
+    framesz = ncallee * 8 + slotbytes;
+  }
+  total = framesz + 16;  // + x29/x30 pair
+
+  blkoff = emalloc(fn->nblk * sizeof blkoff[0]);
+  nfix = 0;
+  fixcap = 8;
+  fixes = emalloc(fixcap * sizeof fixes[0]);
+
+  // prologue
+  {
+    int* r;
+    int k;
+    emit_u32(ctx, 0xD503245Fu);  // hint #34 (BTI jc)
+    if (total <= 512) {
+      // small frame: single pre-indexed STP
+      int imm7 = -(total / 8);
+      emit_u32(ctx, 0xA9800000u | ((uint32_t)(imm7 & 0x7F) << 15) | (30u << 10) | (31u << 5) | 29u);
+    } else {
+      // large frame: separate sub + fixed-16 STP.
+      // framesz must fit in a 12-bit immediate.
+      SQ_ASSERT(framesz <= 4095);
+      // sub sp, sp, #framesz
+      emit_u32(ctx, 0xD1000000u | ((uint32_t)framesz << 10) | (31u << 5) | 31u);
+      emit_u32(ctx, 0xA9BF7BFDu);  // stp x29,x30,[sp,-16]!
+    }
+    emit_u32(ctx, 0x910003FDu);  // mov x29, sp
+    // save callee-saves (GPRs then QBE_ARM64_FP): str rN, [x29, #off]
+    k = 0;
+    for (r = arm64_rclob; *r >= 0; r++) {
+      if (fn->reg & BIT(*r)) {
+        k++;
+        uint32_t off = (uint32_t)(16 + framesz - 8 * k);
+        uint32_t imm12 = off / 8;
+        if (*r >= QBE_ARM64_V0) {
+          // STR Dn, [X29, #off]
+          emit_u32(ctx, 0xFD000000u | (imm12 << 10) | (29u << 5) | (uint32_t)(*r - QBE_ARM64_V0));
+        } else {
+          // STR Xn, [X29, #off]
+          emit_u32(ctx, 0xF9000000u | (imm12 << 10) | (29u << 5) | (uint32_t)(*r - QBE_ARM64_R0));
+        }
+      }
+    }
+  }
+
+  for (b = fn->start; b; b = b->link) {
+    blkoff[b->id] = ctx->textsz;
+    for (i = b->ins; i < &b->ins[b->nins]; i++) {
+      // CSET: integer and float flag ops
+      if ((i->op >= Oflag && i->op < Oflag + NCmpI) ||
+          (i->op >= Oflag + NCmpI && i->op <= Oflag1)) {
+        int c = i->op - Oflag;  // 0..NCmp-1
+        SQ_ASSERT(isreg(i->to));
+        rd = i->to.val - QBE_ARM64_R0;
+        // CSET Wd,cond = CSINC Wd,WZR,WZR,invert(cond)
+        emit_u32(ctx, 0x1A9F07E0u | ((uint32_t)(arm64cond[c] ^ 1) << 12) | (uint32_t)rd);
+        continue;
+      }
+      switch (i->op) {
+        case Onop:
+          break;
+        case Oadd:
+        case Osub:
+          SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]));
+          if (rtype(i->arg[1]) == RCon) {
+            // ADD/SUB Xd/Wd, Xn/Wn, #imm12
+            // (emitted by isel TLS offset lowering)
+            Con* cc = &fn->con[i->arg[1].val];
+            int64_t imm;
+            SQ_ASSERT(cc->type == CBits);
+            imm = cc->bits.i;
+            rd = i->to.val - QBE_ARM64_R0;
+            rn = i->arg[0].val - QBE_ARM64_R0;
+            wide = (i->cls == Kl);
+            SQ_ASSERT(imm >= 0 && imm < 4096);
+            if (i->op == Oadd) {
+              enc = wide ? 0x91000000u : 0x11000000u;
+            } else {
+              enc = wide ? 0xD1000000u : 0x51000000u;
+            }
+            emit_u32(ctx, enc | ((uint32_t)imm << 10) | ((uint32_t)rn << 5) | (uint32_t)rd);
+            break;
+          }
+          SQ_ASSERT(isreg(i->arg[1]));
+          if (i->cls == Ks || i->cls == Kd) {
+            // FADD/FSUB Sd/Dd, Sn/Dn, Sm/Dm
+            rd = i->to.val - QBE_ARM64_V0;
+            rn = i->arg[0].val - QBE_ARM64_V0;
+            rm = i->arg[1].val - QBE_ARM64_V0;
+            if (i->op == Oadd) {
+              enc = (i->cls == Kd) ? 0x1E602800u : 0x1E202800u;
+            } else {
+              enc = (i->cls == Kd) ? 0x1E603800u : 0x1E203800u;
+            }
+            emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5) | (uint32_t)rd);
+            break;
+          }
+          rd = i->to.val - QBE_ARM64_R0;
+          rn = i->arg[0].val - QBE_ARM64_R0;
+          rm = i->arg[1].val - QBE_ARM64_R0;
+          wide = (i->cls == Kl);
+          if (i->op == Oadd) {
+            enc = wide ? 0x8B000000u : 0x0B000000u;
+          } else {
+            enc = wide ? 0xCB000000u : 0x4B000000u;
+          }
+          if (wide && (rd == 31 || rn == 31)) {
+            // QBE_ARM64_SP involved: use extended-register form (bit21=1,
+            // option=UXTX=011) so that register 31 encodes as QBE_ARM64_SP, not XZR
+            enc |= 0x00200000u | (3u << 13);
+          }
+          emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5) | (uint32_t)rd);
+          break;
+        case Omul:
+          SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]) && isreg(i->arg[1]));
+          if (i->cls == Ks || i->cls == Kd) {
+            // FMUL Sd/Dd, Sn/Dn, Sm/Dm
+            rd = i->to.val - QBE_ARM64_V0;
+            rn = i->arg[0].val - QBE_ARM64_V0;
+            rm = i->arg[1].val - QBE_ARM64_V0;
+            enc = (i->cls == Kd) ? 0x1E600800u : 0x1E200800u;
+            emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5) | (uint32_t)rd);
+            break;
+          }
+          rd = i->to.val - QBE_ARM64_R0;
+          rn = i->arg[0].val - QBE_ARM64_R0;
+          rm = i->arg[1].val - QBE_ARM64_R0;
+          wide = (i->cls == Kl);
+          // MUL = MADD with Ra=XZR (31)
+          enc = wide ? 0x9B007C00u : 0x1B007C00u;
+          emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5) | (uint32_t)rd);
+          break;
+        case Oswap: {
+          // Three-move swap via QBE_ARM64_IP1 (X17) scratch. Integer only; float swap
+          // (fmov) not yet implemented.
+          int sc = QBE_ARM64_IP1 - QBE_ARM64_R0;  // = 17 = X17
+          SQ_ASSERT(i->cls == Kw || i->cls == Kl);
+          SQ_ASSERT(isreg(i->arg[0]) && isreg(i->arg[1]));
+          rn = i->arg[0].val - QBE_ARM64_R0;
+          rm = i->arg[1].val - QBE_ARM64_R0;
+          wide = (i->cls == Kl);
+          enc = wide ? 0xAA0003E0u : 0x2A0003E0u;
+          emit_u32(ctx, enc | ((uint32_t)rn << 16) | (uint32_t)sc);  // mov QBE_ARM64_IP1, rn
+          emit_u32(ctx, enc | ((uint32_t)rm << 16) | (uint32_t)rn);  // mov rn, rm
+          emit_u32(ctx, enc | ((uint32_t)sc << 16) | (uint32_t)rm);  // mov rm, QBE_ARM64_IP1
+          break;
+        }
+        case Ocopy:
+          if (req(i->to, i->arg[0])) {
+            break;  // no-op
+          }
+          SQ_ASSERT(isreg(i->to));
+          if (i->cls == Ks || i->cls == Kd) {
+            // FMOV Sd/Dd, Sn/Dn
+            SQ_ASSERT(isreg(i->arg[0]));
+            rd = i->to.val - QBE_ARM64_V0;
+            rm = i->arg[0].val - QBE_ARM64_V0;
+            enc = (i->cls == Kd) ? 0x1E604000u : 0x1E204000u;
+            emit_u32(ctx, enc | ((uint32_t)rm << 5) | (uint32_t)rd);
+            break;
+          }
+          rd = i->to.val - QBE_ARM64_R0;
+          wide = (i->cls == Kl);
+          if (rtype(i->arg[0]) == RCon) {
+            emit_movcon(ctx, rd, i->cls, &fn->con[i->arg[0].val]);
+            break;
+          }
+          SQ_ASSERT(isreg(i->arg[0]));
+          rm = i->arg[0].val - QBE_ARM64_R0;
+          // MOV Wd,Wm = ORR Wd,WZR,Wm
+          enc = wide ? 0xAA0003E0u : 0x2A0003E0u;
+          emit_u32(ctx, enc | ((uint32_t)rm << 16) | (uint32_t)rd);
+          break;
+        case Oacmp:
+        case Oacmn:
+          SQ_ASSERT(isreg(i->arg[0]));
+          rn = i->arg[0].val - QBE_ARM64_R0;
+          wide = (i->cls == Kl);
+          if (rtype(i->arg[1]) == RCon) {
+            // CMP/CMN immediate
+            Con* c = &fn->con[i->arg[1].val];
+            int64_t imm = c->bits.i;
+            SQ_ASSERT(imm >= 0 && imm < 4096);
+            if (i->op == Oacmp) {
+              enc = wide ? 0xF100001Fu : 0x7100001Fu;
+            } else {
+              enc = wide ? 0xB100001Fu : 0x3100001Fu;
+            }
+            emit_u32(ctx, enc | ((uint32_t)imm << 10) | ((uint32_t)rn << 5));
+          } else {
+            // CMP/CMN register
+            SQ_ASSERT(isreg(i->arg[1]));
+            rm = i->arg[1].val - QBE_ARM64_R0;
+            if (i->op == Oacmp) {
+              enc = wide ? 0xEB00001Fu : 0x6B00001Fu;
+            } else {
+              enc = wide ? 0xAB00001Fu : 0x2B00001Fu;
+            }
+            emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5));
+          }
+          break;
+        case Ostoreb:
+        case Ostoreh:
+        case Ostorew:
+        case Ostorel: {
+          int scale;
+          Ref addr;
+          SQ_ASSERT(isreg(i->arg[0]));
+          addr = i->arg[1];
+          // float store: Ostorew Ks / Ostorel Kd
+          if (i->arg[0].val >= QBE_ARM64_V0) {
+            rd = i->arg[0].val - QBE_ARM64_V0;
+            enc = (i->op == Ostorel) ? 0xFD000000u : 0xBD000000u;
+            scale = (i->op == Ostorel) ? 8 : 4;
+            if (isreg(addr)) {
+              rn = addr.val - QBE_ARM64_R0;
+              emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+            } else {
+              uint32_t off;
+              SQ_ASSERT(rtype(addr) == RSlot);
+              off = slot_off(rsval(addr), padding, framesz);
+              emit_u32(ctx, enc | ((off / (uint32_t)scale) << 10) | (29u << 5) | (uint32_t)rd);
+            }
+            break;
+          }
+          rd = i->arg[0].val - QBE_ARM64_R0;  // value (rt)
+          switch (i->op) {
+            case Ostoreb:
+              enc = 0x39000000u;
+              scale = 1;
+              break;
+            case Ostoreh:
+              enc = 0x79000000u;
+              scale = 2;
+              break;
+            case Ostorew:
+              enc = 0xB9000000u;
+              scale = 4;
+              break;
+            default:
+              enc = 0xF9000000u;
+              scale = 8;
+              break;
+          }
+          if (isreg(addr)) {
+            rn = addr.val - QBE_ARM64_R0;
+            emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+          } else {
+            uint32_t off;
+            SQ_ASSERT(rtype(addr) == RSlot);
+            off = slot_off(rsval(addr), padding, framesz);
+            emit_u32(ctx, enc | ((off / (uint32_t)scale) << 10) | (29u << 5) | (uint32_t)rd);
+          }
+          break;
+        }
+        case Oloaduw:
+        case Oloadsw: {
+          // loaduw -> LDR Wt,[Xn]; loadsw/Kl -> LDRSW Xt,[Xn]
+          Ref addr;
+          SQ_ASSERT(isreg(i->to));
+          rd = i->to.val - QBE_ARM64_R0;
+          addr = i->arg[0];
+          enc = (i->op == Oloadsw && i->cls == Kl) ? 0xB9800000u   // LDRSW Xt
+                                                   : 0xB9400000u;  // LDR   Wt
+          if (isreg(addr)) {
+            rn = addr.val - QBE_ARM64_R0;
+            emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+          } else {
+            uint32_t off;
+            SQ_ASSERT(rtype(addr) == RSlot);
+            off = slot_off(rsval(addr), padding, framesz);
+            emit_u32(ctx, enc | ((off / 4u) << 10) | (29u << 5) | (uint32_t)rd);
+          }
+          break;
+        }
+        case Oloadsb:
+        case Oloadub:
+        case Oloadsh:
+        case Oloaduh:
+        case Oload: {
+          int scale;
+          Ref addr;
+          SQ_ASSERT(isreg(i->to));
+          rd = i->to.val - QBE_ARM64_R0;
+          addr = i->arg[0];
+          wide = (i->cls == Kl);
+          switch (i->op) {
+            case Oloadsb:
+              enc = wide ? 0x39800000u : 0x39C00000u;
+              scale = 1;
+              break;
+            case Oloadub:
+              enc = 0x39400000u;
+              scale = 1;
+              break;
+            case Oloadsh:
+              enc = wide ? 0x79800000u : 0x79C00000u;
+              scale = 2;
+              break;
+            case Oloaduh:
+              enc = 0x79400000u;
+              scale = 2;
+              break;
+            default:  // Oload
+              if (i->cls == Ks) {
+                rd = i->to.val - QBE_ARM64_V0;
+                enc = 0xBD400000u;
+                scale = 4;
+              } else if (i->cls == Kd) {
+                rd = i->to.val - QBE_ARM64_V0;
+                enc = 0xFD400000u;
+                scale = 8;
+              } else {
+                enc = wide ? 0xF9400000u : 0xB9400000u;
+                scale = wide ? 8 : 4;
+              }
+              break;
+          }
+          if (isreg(addr)) {
+            rn = addr.val - QBE_ARM64_R0;
+            emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+          } else {
+            uint32_t off;
+            SQ_ASSERT(rtype(addr) == RSlot);
+            off = slot_off(rsval(addr), padding, framesz);
+            emit_u32(ctx, enc | ((off / (uint32_t)scale) << 10) | (29u << 5) | (uint32_t)rd);
+          }
+          break;
+        }
+        case Oextsb:
+        case Oextub:
+        case Oextsh:
+        case Oextuh:
+        case Oextsw:
+        case Oextuw:
+          SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]));
+          rd = i->to.val - QBE_ARM64_R0;
+          rn = i->arg[0].val - QBE_ARM64_R0;
+          wide = (i->cls == Kl);
+          switch (i->op) {
+            case Oextsb:
+              // SXTB: Kl->Xt, Kw->Wt
+              enc = wide ? 0x93401C00u : 0x13001C00u;
+              emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+              break;
+            case Oextub:
+              // UXTB Wt,Wn - always 32-bit
+              emit_u32(ctx, 0x53001C00u | ((uint32_t)rn << 5) | (uint32_t)rd);
+              break;
+            case Oextsh:
+              // SXTH: Kl->Xt, Kw->Wt
+              enc = wide ? 0x93403C00u : 0x13003C00u;
+              emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+              break;
+            case Oextuh:
+              // UXTH Wt,Wn - always 32-bit
+              emit_u32(ctx, 0x53003C00u | ((uint32_t)rn << 5) | (uint32_t)rd);
+              break;
+            case Oextsw:
+              // SXTW Xt,Wn - always Kl
+              emit_u32(ctx, 0x93407C00u | ((uint32_t)rn << 5) | (uint32_t)rd);
+              break;
+            default:  // Oextuw
+              // MOV Wd,Wm = ORR Wd,WZR,Wm (zero-extend)
+              emit_u32(ctx, 0x2A0003E0u | ((uint32_t)rn << 16) | (uint32_t)rd);
+              break;
+          }
+          break;
+        case Odiv:
+        case Oudiv:
+          SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]) && isreg(i->arg[1]));
+          if (i->cls == Ks || i->cls == Kd) {
+            // FDIV Sd/Dd, Sn/Dn, Sm/Dm
+            rd = i->to.val - QBE_ARM64_V0;
+            rn = i->arg[0].val - QBE_ARM64_V0;
+            rm = i->arg[1].val - QBE_ARM64_V0;
+            enc = (i->cls == Kd) ? 0x1E601800u : 0x1E201800u;
+            emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5) | (uint32_t)rd);
+            break;
+          }
+          rd = i->to.val - QBE_ARM64_R0;
+          rn = i->arg[0].val - QBE_ARM64_R0;
+          rm = i->arg[1].val - QBE_ARM64_R0;
+          wide = (i->cls == Kl);
+          enc = (i->op == Odiv) ? (wide ? 0x9AC00C00u : 0x1AC00C00u)   // SDIV
+                                : (wide ? 0x9AC00800u : 0x1AC00800u);  // UDIV
+          emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5) | (uint32_t)rd);
+          break;
+        case Orem:
+        case Ourem: {
+          int scratch = QBE_ARM64_IP1 - QBE_ARM64_R0;  // x17 - intra-procedure scratch
+          SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]) && isreg(i->arg[1]));
+          rd = i->to.val - QBE_ARM64_R0;
+          rn = i->arg[0].val - QBE_ARM64_R0;  // dividend
+          rm = i->arg[1].val - QBE_ARM64_R0;  // divisor
+          wide = (i->cls == Kl);
+          // step 1: scratch = dividend / divisor
+          enc = (i->op == Orem) ? (wide ? 0x9AC00C00u : 0x1AC00C00u)   // SDIV
+                                : (wide ? 0x9AC00800u : 0x1AC00800u);  // UDIV
+          emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5) | (uint32_t)scratch);
+          // step 2: rd = rn - scratch*rm (MSUB rd, scratch, rm, rn)
+          enc = wide ? 0x9B008000u : 0x1B008000u;
+          emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 10) |
+                            ((uint32_t)scratch << 5) | (uint32_t)rd);
+          break;
+        }
+        case Oand:
+        case Oor:
+        case Oxor:
+          SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]) && isreg(i->arg[1]));
+          rd = i->to.val - QBE_ARM64_R0;
+          rn = i->arg[0].val - QBE_ARM64_R0;
+          rm = i->arg[1].val - QBE_ARM64_R0;
+          wide = (i->cls == Kl);
+          if (i->op == Oand) {
+            enc = wide ? 0x8A000000u : 0x0A000000u;
+          } else if (i->op == Oor) {
+            enc = wide ? 0xAA000000u : 0x2A000000u;
+          } else {
+            enc = wide ? 0xCA000000u : 0x4A000000u;
+          }
+          emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5) | (uint32_t)rd);
+          break;
+        case Oneg:
+          SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]));
+          if (i->cls == Ks || i->cls == Kd) {
+            // FNEG Sd/Dd, Sn/Dn
+            rd = i->to.val - QBE_ARM64_V0;
+            rm = i->arg[0].val - QBE_ARM64_V0;
+            enc = (i->cls == Kd) ? 0x1E614000u : 0x1E214000u;
+            emit_u32(ctx, enc | ((uint32_t)rm << 5) | (uint32_t)rd);
+            break;
+          }
+          rd = i->to.val - QBE_ARM64_R0;
+          rm = i->arg[0].val - QBE_ARM64_R0;
+          wide = (i->cls == Kl);
+          enc = wide ? 0xCB0003E0u : 0x4B0003E0u;
+          emit_u32(ctx, enc | ((uint32_t)rm << 16) | (uint32_t)rd);
+          break;
+        case Osar:
+        case Oshr:
+        case Oshl:
+          SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]) && isreg(i->arg[1]));
+          rd = i->to.val - QBE_ARM64_R0;
+          rn = i->arg[0].val - QBE_ARM64_R0;
+          rm = i->arg[1].val - QBE_ARM64_R0;
+          wide = (i->cls == Kl);
+          if (i->op == Osar) {
+            enc = wide ? 0x9AC02800u : 0x1AC02800u;
+          } else if (i->op == Oshr) {
+            enc = wide ? 0x9AC02400u : 0x1AC02400u;
+          } else {
+            enc = wide ? 0x9AC02000u : 0x1AC02000u;
+          }
+          emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5) | (uint32_t)rd);
+          break;
+        case Ocall: {
+          if (rtype(i->arg[0]) == RTmp) {
+            // BLR Xn - indirect call
+            SQ_ASSERT(isreg(i->arg[0]));
+            rn = i->arg[0].val - QBE_ARM64_R0;
+            emit_u32(ctx, 0xD63F0000u | ((uint32_t)rn << 5));
+          } else {
+            // BL sym - direct call
+            Con* c;
+            char cname[NString];
+            uint32_t symidx;
+            SQ_ASSERT(rtype(i->arg[0]) == RCon);
+            c = &fn->con[i->arg[0].val];
+            SQ_ASSERT(c->type == CAddr && !c->bits.i);
+            symname(cname, str(c->sym.id));
+            symidx = callee_symidx(ctx, cname);
+            if ((ctx->syms[symidx].type & 0x0Eu) == N_SECT) {
+              // backward ref: direct offset
+              int32_t off = ((int32_t)ctx->syms[symidx].value - (int32_t)ctx->textsz) / 4;
+              emit_u32(ctx, 0x94000000u | ((uint32_t)off & 0x3FFFFFFu));
+            } else {
+              // forward/external: placeholder; resolved in macho_write
+              if (ctx->nblfixup == ctx->blfixupap) {
+                uint32_t oldcap = ctx->blfixupap;
+                ctx->blfixupap = ctx->blfixupap ? ctx->blfixupap * 2 : 8;
+                ctx->blfixup = qbe_realloc(ctx->blfixup, oldcap * sizeof *ctx->blfixup,
+                                           ctx->blfixupap * sizeof *ctx->blfixup);
+                if (!ctx->blfixup) {
+                  die("obj: qbe_realloc");
+                }
+              }
+              ctx->blfixup[ctx->nblfixup].off = ctx->textsz;
+              ctx->blfixup[ctx->nblfixup].symidx = symidx;
+              ctx->nblfixup++;
+              emit_u32(ctx, 0x94000000u);
+            }
+          }
+          break;
+        }
+        case Oaddr: {
+          uint32_t off;
+          SQ_ASSERT(isreg(i->to));
+          SQ_ASSERT(rtype(i->arg[0]) == RSlot);
+          rd = i->to.val - QBE_ARM64_R0;
+          off = slot_off(rsval(i->arg[0]), padding, framesz);
+          SQ_ASSERT(off <= 4095);
+          // ADD Xd, X29, #off
+          emit_u32(ctx, 0x91000000u | (off << 10) | (29u << 5) | (uint32_t)rd);
+          break;
+        }
+        case Oafcmp:
+          // FCMPE Sn, Sm / FCMPE Dn, Dm
+          SQ_ASSERT(isreg(i->arg[0]) && isreg(i->arg[1]));
+          rn = i->arg[0].val - QBE_ARM64_V0;
+          rm = i->arg[1].val - QBE_ARM64_V0;
+          enc = (i->cls == Kd) ? 0x1E602010u : 0x1E202010u;
+          emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5));
+          break;
+        case Ocast:
+          // FMOV between QBE_ARM64_FP and GPR (bit-cast)
+          SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]));
+          switch (i->cls) {
+            case Kw:  // fmov Wd, Sn: GPR=to, QBE_ARM64_FP=arg[0]
+              rd = i->to.val - QBE_ARM64_R0;
+              rn = i->arg[0].val - QBE_ARM64_V0;
+              emit_u32(ctx, 0x1E260000u | ((uint32_t)rn << 5) | (uint32_t)rd);
+              break;
+            case Kl:  // fmov Xd, Dn
+              rd = i->to.val - QBE_ARM64_R0;
+              rn = i->arg[0].val - QBE_ARM64_V0;
+              emit_u32(ctx, 0x9E660000u | ((uint32_t)rn << 5) | (uint32_t)rd);
+              break;
+            case Ks:  // fmov Sd, Wn: QBE_ARM64_FP=to, GPR=arg[0]
+              rd = i->to.val - QBE_ARM64_V0;
+              rn = i->arg[0].val - QBE_ARM64_R0;
+              emit_u32(ctx, 0x1E270000u | ((uint32_t)rn << 5) | (uint32_t)rd);
+              break;
+            default:  // Kd: fmov Dd, Xn
+              rd = i->to.val - QBE_ARM64_V0;
+              rn = i->arg[0].val - QBE_ARM64_R0;
+              emit_u32(ctx, 0x9E670000u | ((uint32_t)rn << 5) | (uint32_t)rd);
+              break;
+          }
+          break;
+        case Ostosi:
+        case Ostoui:
+        case Odtosi:
+        case Odtoui: {
+          // FCVTZS/FCVTZU: QBE_ARM64_FP->GPR integer conversion
+          int sfp = (i->op == Odtosi || i->op == Odtoui);
+          int uns = (i->op == Ostoui || i->op == Odtoui);
+          int wx = (i->cls == Kl);
+          rd = i->to.val - QBE_ARM64_R0;
+          rn = i->arg[0].val - QBE_ARM64_V0;
+          if (sfp) {
+            enc = uns ? (wx ? 0x9E790000u : 0x1E790000u) : (wx ? 0x9E780000u : 0x1E780000u);
+          } else {
+            enc = uns ? (wx ? 0x9E390000u : 0x1E390000u) : (wx ? 0x9E380000u : 0x1E380000u);
+          }
+          emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+          break;
+        }
+        case Oswtof:
+        case Ouwtof:
+        case Osltof:
+        case Oultof: {
+          // SCVTF/UCVTF: GPR->QBE_ARM64_FP conversion
+          int xl = (i->op == Osltof || i->op == Oultof);
+          int uns = (i->op == Ouwtof || i->op == Oultof);
+          int dbl = (i->cls == Kd);
+          rd = i->to.val - QBE_ARM64_V0;
+          rn = i->arg[0].val - QBE_ARM64_R0;
+          if (xl) {
+            enc = uns ? (dbl ? 0x9E630000u : 0x9E230000u) : (dbl ? 0x9E620000u : 0x9E220000u);
+          } else {
+            enc = uns ? (dbl ? 0x1E630000u : 0x1E230000u) : (dbl ? 0x1E620000u : 0x1E220000u);
+          }
+          emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+          break;
+        }
+        case Oexts:
+          // FCVT Dd, Sn - widen single to double
+          SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]));
+          rd = i->to.val - QBE_ARM64_V0;
+          rn = i->arg[0].val - QBE_ARM64_V0;
+          emit_u32(ctx, 0x1E22C000u | ((uint32_t)rn << 5) | (uint32_t)rd);
+          break;
+        case Otruncd:
+          // FCVT Sd, Dn - narrow double to single
+          SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]));
+          rd = i->to.val - QBE_ARM64_V0;
+          rn = i->arg[0].val - QBE_ARM64_V0;
+          emit_u32(ctx, 0x1E624000u | ((uint32_t)rn << 5) | (uint32_t)rd);
+          break;
+        case Ostores:
+        case Ostored: {
+          // STR Sn/Dn, [Xm] or [X29, #slot]
+          // arg[0]=float value, arg[1]=address
+          int fscale = (i->op == Ostored) ? 8 : 4;
+          Ref faddr = i->arg[1];
+          SQ_ASSERT(isreg(i->arg[0]));
+          rd = i->arg[0].val - QBE_ARM64_V0;
+          enc = (i->op == Ostored) ? 0xFD000000u : 0xBD000000u;
+          if (isreg(faddr)) {
+            rn = faddr.val - QBE_ARM64_R0;
+            emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+          } else {
+            uint32_t off;
+            SQ_ASSERT(rtype(faddr) == RSlot);
+            off = slot_off(rsval(faddr), padding, framesz);
+            emit_u32(ctx, enc | ((off / (uint32_t)fscale) << 10) | (29u << 5) | (uint32_t)rd);
+          }
+          break;
+        }
+        default:
+          die("obj: %s: unhandled op %s", fn->name, optab[i->op].name);
+      }
+    }
+    // jump
+    switch (b->jmp.type) {
+      case Jret0: {
+        int* r;
+        int k;
+        // restore callee-saves (same order as prologue)
+        k = 0;
+        for (r = arm64_rclob; *r >= 0; r++) {
+          if (fn->reg & BIT(*r)) {
+            k++;
+            uint32_t off = (uint32_t)(16 + framesz - 8 * k);
+            uint32_t imm12 = off / 8;
+            if (*r >= QBE_ARM64_V0) {
+              // LDR Dn, [X29, #off]
+              emit_u32(ctx, 0xFD400000u | (imm12 << 10) | (29u << 5) | (uint32_t)(*r - QBE_ARM64_V0));
+            } else {
+              // LDR Xn, [X29, #off]
+              emit_u32(ctx, 0xF9400000u | (imm12 << 10) | (29u << 5) | (uint32_t)(*r - QBE_ARM64_R0));
+            }
+          }
+        }
+        if (total <= 512) {
+          // small frame: single post-indexed LDP
+          emit_u32(ctx,
+                   0xA8C00000u | ((uint32_t)(total / 8) << 15) | (30u << 10) | (31u << 5) | 29u);
+        } else {
+          // large frame: fixed-16 LDP + add sp
+          emit_u32(ctx, 0xA8C17BFDu);  // ldp x29,x30,[sp],16
+          // add sp, sp, #framesz
+          emit_u32(ctx, 0x91000000u | ((uint32_t)framesz << 10) | (31u << 5) | 31u);
+        }
+        emit_u32(ctx, 0xD65F03C0u);  // ret
+        break;
+      }
+      case Jhlt:
+        emit_u32(ctx, 0xD4207D00u);  // brk #1000
+        break;
+      case Jjmp:
+        if (b->s1 != b->link) {
+          uint32_t boff = ctx->textsz;
+          emit_u32(ctx, 0x14000000u);  // B (placeholder)
+          if (nfix == fixcap) {
+            grow_fixes(&fixes, &fixcap);
+          }
+          fixes[nfix++] = (BrFix){boff, b->s1, -1};
+        }
+        break;
+      default: {
+        int c = b->jmp.type - Jjf;
+        Blk* brtgt;
+        if (c < 0 || c >= NCmp) {
+          die("obj: %s: unhandled jump %d", fn->name, b->jmp.type);
+        }
+        if (b->link == b->s2) {
+          brtgt = b->s1;  // s2 falls through; branch to s1 if c
+        } else {
+          c = cmpneg(c);  // s1 falls through; branch to s2 if !c
+          brtgt = b->s2;
+          // cmpneg of some ordered float conditions gives the NaN-excluding
+          // form; remap to NaN-inclusive conditions so NaN causes the branch
+          // (matching the text assembler's behaviour after fcmpe)
+          // clang-format off
+          switch (c) {
+            case NCmpI + Cfge: c = Ciuge; break;  // ge->cs
+            case NCmpI + Cfgt: c = Ciugt; break;  // gt->hi
+            case NCmpI + Cfle: c = Cisle; break;  // le->ls
+            case NCmpI + Cflt: c = Cislt; break;  // lt->mi
+            default: break;
+          }
+          // clang-format on
+        }
+        {
+          uint32_t boff = ctx->textsz;
+          emit_u32(ctx, 0x54000000u | (uint32_t)arm64cond[c]);
+          if (nfix == fixcap) {
+            grow_fixes(&fixes, &fixcap);
+          }
+          fixes[nfix++] = (BrFix){boff, brtgt, arm64cond[c]};
+        }
+        // if neither successor falls through, also branch to s1
+        if (b->link != b->s1 && b->link != b->s2) {
+          uint32_t boff = ctx->textsz;
+          emit_u32(ctx, 0x14000000u);
+          if (nfix == fixcap) {
+            grow_fixes(&fixes, &fixcap);
+          }
+          fixes[nfix++] = (BrFix){boff, b->s1, -1};
+        }
+        break;
+      }
+    }
+  }
+
+  // apply branch fixups
+  for (uint32_t f = 0; f < nfix; f++) {
+    uint32_t toff = blkoff[fixes[f].tgt->id];
+    int32_t delta = ((int32_t)toff - (int32_t)fixes[f].off) / 4;
+    uint32_t* p = (uint32_t*)&ctx->text[fixes[f].off];
+    if (fixes[f].cond >= 0) {
+      *p |= (uint32_t)(delta & 0x7FFFFu) << 5;  // B.cond imm19
+    } else {
+      *p |= (uint32_t)(delta & 0x3FFFFFFu);  // B imm26
+    }
+  }
+  qbe_free(blkoff);
+  qbe_free(fixes);
+}
+
+void
+macho_emitdat(Dat* d, MachoCtx* ctx) {
+  static const int64_t masks[] = {
+      [DB] = 0xFFL,
+      [DH] = 0xFFFFL,
+      [DW] = 0xFFFFFFFFL,
+      [DL] = -1L,
+  };
+  static const uint8_t zeros[8] = {0};
+  uint64_t v;
+  uint32_t refidx;
+  char mname[NString];
+  const char* p;
+  int n;
+
+  switch (d->type) {
+    case DStart:
+      strncpy(ctx->datname, d->name, NString - 1);
+      ctx->datname[NString - 1] = '\0';
+      ctx->datlnk = d->lnk;
+      ctx->dleadzero = 0;
+      // apply alignment padding before this data object
+      if (d->lnk->align) {
+        uint32_t aln = (uint32_t)(unsigned char)d->lnk->align;
+        while (ctx->datasz % aln != 0) {
+          buf_append(&ctx->data, &ctx->datasz, &ctx->datacap, zeros, 1);
+        }
+      }
+      ctx->datstart = ctx->datasz;
+      break;
+
+    case DZ:
+      if (ctx->dleadzero >= 0) {
+        ctx->dleadzero += d->u.num;
+      } else {
+        uint64_t rem = (uint64_t)d->u.num;
+        while (rem > 0) {
+          uint32_t chunk = (rem > 8) ? 8 : (uint32_t)rem;
+          buf_append(&ctx->data, &ctx->datasz, &ctx->datacap, zeros, chunk);
+          rem -= chunk;
+        }
+      }
+      break;
+
+    case DEnd:
+      if (ctx->datlnk->common) {
+        die("obj: common data not supported");
+      }
+      if (ctx->dleadzero >= 0) {
+        // all-zero data -> BSS
+        char name[NString];
+        symname(name, ctx->datname);
+        symadd(ctx, name, N_SECT | (ctx->datlnk->export ? N_EXT : 0), SECT_BSS,
+               (uint64_t)ctx->bsssz);
+        ctx->bsssz += (uint32_t)ctx->dleadzero;
+      } else {
+        // real data
+        char name[NString];
+        symname(name, ctx->datname);
+        symadd(ctx, name, N_SECT | (ctx->datlnk->export ? N_EXT : 0), SECT_DATA,
+               (uint64_t)ctx->datstart);
+      }
+      break;
+
+    default:  // DB, DH, DW, DL
+      // flush any accumulated leading zeros
+      if (ctx->dleadzero >= 0) {
+        uint64_t rem = (uint64_t)ctx->dleadzero;
+        while (rem > 0) {
+          uint32_t chunk = (rem > 8) ? 8 : (uint32_t)rem;
+          buf_append(&ctx->data, &ctx->datasz, &ctx->datacap, zeros, chunk);
+          rem -= chunk;
+        }
+        ctx->dleadzero = -1;
+      }
+      if (d->isstr) {
+        if (d->type != DB) {
+          die("obj: strings only supported for 'b'");
+        }
+        // unescape and emit raw bytes
+        p = d->u.str;
+        SQ_ASSERT(p[0] == '"');
+        p++;
+        while (*p && *p != '"') {
+          uint8_t c;
+          if (*p == '\\') {
+            p++;
+            // clang-format off
+            switch (*p) {
+              case 'n': c = '\n'; break;
+              case 't': c = '\t'; break;
+              case 'r': c = '\r'; break;
+              case '\\': c = '\\'; break;
+              case '"': c = '"'; break;
+              case '0': c = '\0'; break;
+              default: c = (uint8_t)*p; break;
+            }
+            // clang-format on
+          } else {
+            c = (uint8_t)*p;
+          }
+          buf_append(&ctx->data, &ctx->datasz, &ctx->datacap, &c, 1);
+          p++;
+        }
+      } else if (d->isref) {
+        if (d->type != DL) {
+          die("obj: pointer ref only supported in .quad");
+        }
+        // find or create undef symbol for the reference
+        symname(mname, d->u.ref.name);
+        refidx = ctx->nsyms;  // sentinel: not found
+        for (uint32_t i = 0; i < ctx->nsyms; i++) {
+          if (strcmp(ctx->strtab + ctx->syms[i].strx, mname) == 0) {
+            refidx = i;
+            break;
+          }
+        }
+        if (refidx == ctx->nsyms) {
+          refidx = symadd(ctx, mname, N_UNDF | N_EXT, 0, 0);
+        }
+        // ADDEND reloc if offset is nonzero
+        if (d->u.ref.off != 0) {
+          uint32_t addend = (uint32_t)(d->u.ref.off & 0xFFFFFFu);
+          relocadd(ctx, (int32_t)ctx->datasz, addend, ARM64_RELOC_ADDEND, 0, 2);
+        }
+        // UNSIGNED reloc for the 8-byte pointer slot
+        relocadd(ctx, (int32_t)ctx->datasz, refidx, ARM64_RELOC_UNSIGNED, 1, 3);
+        // 8 zero bytes; linker patches at link time
+        buf_append(&ctx->data, &ctx->datasz, &ctx->datacap, zeros, 8);
+      } else {
+        // plain numeric value, little-endian
+        n = (d->type == DB) ? 1 : (d->type == DH) ? 2 : (d->type == DW) ? 4 : 8;
+        v = (uint64_t)(d->u.num & masks[d->type]);
+        buf_append(&ctx->data, &ctx->datasz, &ctx->datacap, &v, (uint32_t)n);
+      }
+      break;
+  }
+}
+
+// Returns 0=local, 1=extdef, 2=undef
+static int symcat(uint8_t type) {
+  int isext = (type & N_EXT) != 0;
+  int issect = (type & 0x0Eu) == N_SECT;
+  if (issect && !isext) {
+    return 0;
+  }
+  if (issect && isext) {
+    return 1;
+  }
+  return 2;
+}
+
+static int reloc_cmp(const void* a, const void* b) {
+  const MReloc *ra = a, *rb = b;
+  // primary: descending by address
+  if (ra->addr != rb->addr) {
+    return (rb->addr > ra->addr) ? 1 : -1;
+  }
+  // tie-break: ADDEND (type=10) before UNSIGNED (type=0)
+  int ta = ((ra->info >> 28) == ARM64_RELOC_ADDEND) ? 0 : 1;
+  int tb = ((rb->info >> 28) == ARM64_RELOC_ADDEND) ? 0 : 1;
+  return ta - tb;
+}
+
+void
+macho_write(MachoCtx* ctx, FILE* f) {
+  uint32_t i;
+  uint32_t nsects, datasect, bsssect;
+  uint32_t textsz, datasz, bsssz, nsyms, ndreloc, ntreloc;
+  uint32_t data_addr, bss_addr;  // section VM addresses (aligned)
+  uint32_t seg_size, cmds_size;
+  uint32_t dataoff, text_foff, data_foff, dreloc_foff, treloc_foff;
+  uint32_t symtab_foff, strtab_foff;
+  uint32_t cnt[3], ci[3];
+  uint32_t ilocal, iextdef, iundef;
+  uint32_t nlocal, nextdef, nundef;
+  uint32_t* remap = 0;
+  MSym* sorted = 0;
+  uint32_t cur;
+  struct mach_header_64 hdr;
+  struct segment_command_64 seg;
+  struct section_64 sec;
+  struct symtab_command symc;
+  struct dysymtab_command dysym;
+  struct nlist_64 nl;
+  struct relocation_info ri;
+  static const uint8_t zeros[8] = {0};
+
+  // Step 0: resolve forward BL fixups
+  for (i = 0; i < ctx->nblfixup; i++) {
+    uint32_t bsymidx = ctx->blfixup[i].symidx;
+    uint32_t boff = ctx->blfixup[i].off;
+    const char* bname = ctx->strtab + ctx->syms[bsymidx].strx;
+    uint32_t j, found = 0;
+    for (j = 0; j < ctx->nsyms; j++) {
+      if ((ctx->syms[j].type & 0x0Eu) == N_SECT &&
+          strcmp(ctx->strtab + ctx->syms[j].strx, bname) == 0) {
+        // Same-unit: patch instruction
+        int32_t disp = ((int32_t)ctx->syms[j].value - (int32_t)boff) / 4;
+        uint32_t* pinstr = (uint32_t*)(ctx->text + boff);
+        *pinstr = 0x94000000u | ((uint32_t)disp & 0x3FFFFFFu);
+        found = 1;
+        break;
+      }
+    }
+    if (!found) {
+      // External: add BRANCH26 reloc
+      trelocadd(ctx, (int32_t)boff, bsymidx, ARM64_RELOC_BRANCH26, 2, 1);
+    }
+  }
+
+  textsz = ctx->textsz;
+  datasz = ctx->datasz;
+  bsssz = ctx->bsssz;
+  nsyms = ctx->nsyms;
+  ndreloc = ctx->ndreloc;
+  ntreloc = ctx->ntreloc;
+
+  // Step 1: determine section numbering
+  nsects = 1;  // __text is always section 1
+  datasect = 0;
+  bsssect = 0;
+  if (datasz > 0) {
+    datasect = ++nsects;
+  }
+  if (bsssz > 0) {
+    bsssect = ++nsects;
+  }
+
+  // Section VM addresses must be aligned to their section alignment (2^3 = 8).
+  // If textsz is not a multiple of 8, pointers inside the data section would
+  // have an unaligned VM address and ld would reject the object file with
+  // "pointer not aligned".
+  data_addr = align_up(textsz, 8);
+  bss_addr  = align_up(data_addr + datasz, 8);
+
+  // Step 2: fix up symbol values and sect sentinel fields
+  for (i = 0; i < nsyms; i++) {
+    if (ctx->syms[i].sect == SECT_DATA) {
+      ctx->syms[i].value += data_addr;
+      ctx->syms[i].sect = (uint8_t)datasect;
+    } else if (ctx->syms[i].sect == SECT_BSS) {
+      ctx->syms[i].value += bss_addr;
+      ctx->syms[i].sect = (uint8_t)bsssect;
+    }
+  }
+
+  // Step 3: sort symbols -> locals, extdefs, undefs
+  if (nsyms > 0) {
+    cnt[0] = cnt[1] = cnt[2] = 0;
+    for (i = 0; i < nsyms; i++) {
+      cnt[symcat(ctx->syms[i].type)]++;
+    }
+
+    ci[0] = 0;
+    ci[1] = cnt[0];
+    ci[2] = cnt[0] + cnt[1];
+
+    sorted = emalloc(nsyms * sizeof(MSym));
+    remap = emalloc(nsyms * sizeof(uint32_t));
+    {
+      uint32_t pos[3];
+      pos[0] = ci[0];
+      pos[1] = ci[1];
+      pos[2] = ci[2];
+      for (i = 0; i < nsyms; i++) {
+        int cat = symcat(ctx->syms[i].type);
+        uint32_t ni = pos[cat]++;
+        sorted[ni] = ctx->syms[i];
+        remap[i] = ni;
+      }
+    }
+    memcpy(ctx->syms, sorted, nsyms * sizeof(MSym));
+    qbe_free(sorted);
+
+    ilocal = ci[0];
+    nlocal = cnt[0];
+    iextdef = ci[1];
+    nextdef = cnt[1];
+    iundef = ci[2];
+    nundef = cnt[2];
+
+    // Step 4: patch reloc symnum fields using remap
+    for (i = 0; i < ndreloc; i++) {
+      uint32_t type = ctx->dreloc[i].info >> 28;
+      if (type != ARM64_RELOC_ADDEND) {
+        uint32_t oldidx = ctx->dreloc[i].info & 0xFFFFFFu;
+        ctx->dreloc[i].info = (ctx->dreloc[i].info & 0xFF000000u) | remap[oldidx];
+      }
+    }
+    for (i = 0; i < ntreloc; i++) {
+      uint32_t oldidx = ctx->treloc[i].info & 0xFFFFFFu;
+      ctx->treloc[i].info = (ctx->treloc[i].info & 0xFF000000u) | remap[oldidx];
+    }
+    qbe_free(remap);
+  } else {
+    ilocal = iextdef = iundef = 0;
+    nlocal = nextdef = nundef = 0;
+  }
+
+  // Step 5: sort relocs descending by address
+  if (ndreloc > 1) {
+    qsort(ctx->dreloc, ndreloc, sizeof(MReloc), reloc_cmp);
+  }
+  if (ntreloc > 1) {
+    qsort(ctx->treloc, ntreloc, sizeof(MReloc), reloc_cmp);
+  }
+
+  // Step 6: compute file layout
+  seg_size = 72 + nsects * 80;
+  cmds_size = seg_size + 24 + 80 + 24;
+  dataoff = 32 + cmds_size;
+  text_foff = dataoff;
+  data_foff = align_up(text_foff + textsz, 8);
+  dreloc_foff = align_up(data_foff + datasz, 4);
+  treloc_foff = align_up(dreloc_foff + ndreloc * 8, 4);
+  symtab_foff = align_up(treloc_foff + ntreloc * 8, 8);
+  strtab_foff = symtab_foff + nsyms * 16;
+
+  // Step 7: write mach_header_64
+  memset(&hdr, 0, sizeof hdr);
+  hdr.magic = MH_MAGIC_64;
+  hdr.cputype = CPU_TYPE_ARM64;
+  hdr.cpusubtype = 0;
+  hdr.filetype = MH_OBJECT;
+  hdr.ncmds = 4;
+  hdr.sizeofcmds = cmds_size;
+  hdr.flags = MH_SUBSECTIONS_VIA_SYMBOLS;
+  hdr.reserved = 0;
+  fwrite(&hdr, sizeof hdr, 1, f);
+  cur = 32;
+
+  // Step 8: write LC_SEGMENT_64
+  memset(&seg, 0, sizeof seg);
+  seg.cmd = LC_SEGMENT_64;
+  seg.cmdsize = seg_size;
+  // segname = "" (all zeros)
+  seg.vmaddr = 0;
+  seg.vmsize = (uint64_t)(bss_addr + bsssz);
+  seg.fileoff = (uint64_t)dataoff;
+  seg.filesize = (datasz > 0) ? (uint64_t)(data_foff - text_foff + datasz) : (uint64_t)textsz;
+  seg.maxprot = 7;
+  seg.initprot = 7;
+  seg.nsects = nsects;
+  seg.flags = 0;
+  fwrite(&seg, sizeof seg, 1, f);
+  cur += 72;
+
+  // Step 9: write section_64 headers
+  // __TEXT,__text
+  memset(&sec, 0, sizeof sec);
+  memcpy(sec.sectname, "__text", 6);
+  memcpy(sec.segname, "__TEXT", 6);
+  sec.addr = 0;
+  sec.size = (uint64_t)textsz;
+  sec.offset = text_foff;
+  sec.align = 2;  // 2^2 = 4 bytes
+  sec.reloff = (ntreloc > 0) ? treloc_foff : 0;
+  sec.nreloc = ntreloc;
+  sec.flags = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS | S_REGULAR;
+  fwrite(&sec, sizeof sec, 1, f);
+  cur += 80;
+
+  if (datasect) {
+    memset(&sec, 0, sizeof sec);
+    memcpy(sec.sectname, "__data", 6);
+    memcpy(sec.segname, "__DATA", 6);
+    sec.addr = (uint64_t)data_addr;
+    sec.size = (uint64_t)datasz;
+    sec.offset = data_foff;
+    sec.align = 3;  // 2^3 = 8 bytes
+    sec.reloff = (ndreloc > 0) ? dreloc_foff : 0;
+    sec.nreloc = ndreloc;
+    sec.flags = S_REGULAR;
+    fwrite(&sec, sizeof sec, 1, f);
+    cur += 80;
+  }
+
+  if (bsssect) {
+    memset(&sec, 0, sizeof sec);
+    memcpy(sec.sectname, "__bss", 5);
+    memcpy(sec.segname, "__DATA", 6);
+    sec.addr = (uint64_t)bss_addr;
+    sec.size = (uint64_t)bsssz;
+    sec.offset = 0;  // S_ZEROFILL: no file data
+    sec.align = 3;
+    sec.reloff = 0;
+    sec.nreloc = 0;
+    sec.flags = S_ZEROFILL;
+    fwrite(&sec, sizeof sec, 1, f);
+    cur += 80;
+  }
+
+  // Step 10: write LC_SYMTAB
+  memset(&symc, 0, sizeof symc);
+  symc.cmd = LC_SYMTAB;
+  symc.cmdsize = 24;
+  symc.symoff = symtab_foff;
+  symc.nsyms = nsyms;
+  symc.stroff = strtab_foff;
+  symc.strsize = ctx->strtabsz;
+  fwrite(&symc, sizeof symc, 1, f);
+  cur += 24;
+
+  // Step 11: write LC_DYSYMTAB
+  memset(&dysym, 0, sizeof dysym);
+  dysym.cmd = LC_DYSYMTAB;
+  dysym.cmdsize = 80;
+  dysym.ilocalsym = ilocal;
+  dysym.nlocalsym = nlocal;
+  dysym.iextdefsym = iextdef;
+  dysym.nextdefsym = nextdef;
+  dysym.iundefsym = iundef;
+  dysym.nundefsym = nundef;
+  fwrite(&dysym, sizeof dysym, 1, f);
+  cur += 80;
+
+  // Step 11b: write LC_BUILD_VERSION
+  {
+    struct build_version_command bvc;
+    memset(&bvc, 0, sizeof bvc);
+    bvc.cmd = LC_BUILD_VERSION;
+    bvc.cmdsize = 24;
+    bvc.platform = PLATFORM_MACOS;
+    bvc.minos = (11u << 16);  // macOS 11.0
+    bvc.sdk = 0;
+    bvc.ntools = 0;
+    fwrite(&bvc, sizeof bvc, 1, f);
+    cur += 24;
+  }
+
+  SQ_ASSERT(cur == dataoff);
+
+  // Step 12: write section data
+  if (textsz > 0) {
+    fwrite(ctx->text, 1, textsz, f);
+    cur += textsz;
+  }
+  // padding between text and data
+  while (cur < data_foff) {
+    fwrite(zeros, 1, 1, f);
+    cur++;
+  }
+  if (datasz > 0) {
+    fwrite(ctx->data, 1, datasz, f);
+    cur += datasz;
+  }
+
+  // Step 13: write data relocation records
+  while (cur < dreloc_foff) {
+    fwrite(zeros, 1, 1, f);
+    cur++;
+  }
+  for (i = 0; i < ndreloc; i++) {
+    ri.r_address = ctx->dreloc[i].addr;
+    ri.r_info = ctx->dreloc[i].info;
+    fwrite(&ri, sizeof ri, 1, f);
+    cur += 8;
+  }
+
+  // Step 13b: write text relocation records
+  while (cur < treloc_foff) {
+    fwrite(zeros, 1, 1, f);
+    cur++;
+  }
+  for (i = 0; i < ntreloc; i++) {
+    ri.r_address = ctx->treloc[i].addr;
+    ri.r_info = ctx->treloc[i].info;
+    fwrite(&ri, sizeof ri, 1, f);
+    cur += 8;
+  }
+
+  // padding before symtab
+  while (cur < symtab_foff) {
+    fwrite(zeros, 1, 1, f);
+    cur++;
+  }
+
+  // Step 14: write symbol table
+  for (i = 0; i < nsyms; i++) {
+    nl.n_strx = ctx->syms[i].strx;
+    nl.n_type = ctx->syms[i].type;
+    nl.n_sect = ctx->syms[i].sect;
+    nl.n_desc = ctx->syms[i].desc;
+    nl.n_value = ctx->syms[i].value;
+    fwrite(&nl, sizeof nl, 1, f);
+  }
+
+  // Step 15: write string table
+  fwrite(ctx->strtab, 1, ctx->strtabsz, f);
+}
+#undef G
+/*** END FILE: arm64/emitmacho.c ***/
 /*** START FILE: arm64/isel.c ***/
 /* skipping all.h */
 
@@ -16642,6 +18363,11 @@ void sq_init(SqConfiguration* config) {
     }
   }
 
+  if (config->format == SQ_FORMAT_OBJ_MACHO && GC(T).apple) {
+    global_context.main__objmode = 1;
+    global_context.main__macho_ctx = macho_new();
+  }
+
   global_context.main__outf = config->output;
 
   memset(GC(debug), 0, sizeof(GC(debug)));
@@ -16664,7 +18390,12 @@ bool sq_shutdown(void) {
 
   SQ_ASSERT(SQC(initialized) != SQIS_UNINITIALIZED);
   if (SQC(initialized) == SQIS_INITIALIZED_EMIT_FIN) {
-    GC(T).emitfin(global_context.main__outf);
+    if (global_context.main__objmode) {
+      macho_write(global_context.main__macho_ctx, global_context.main__outf);
+      macho_free(global_context.main__macho_ctx);
+    } else {
+      GC(T).emitfin(global_context.main__outf);
+    }
   }
 
   _clear_initialized_state();
@@ -17377,6 +19108,7 @@ SqSymbol sq_data_end(void) {
   SQC(pfs.curd).isstr = 0;
   SQC(pfs.curd).type = DEnd;
   qbe_main_data(&SQC(pfs.curd));
+  if (GC(in_error)) { return (SqSymbol){0}; }
 
   SqSymbol ret = {intern(SQC(pfs.curd).name)};
   SQC(pfs.curd) = (Dat){0};
