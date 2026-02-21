@@ -492,6 +492,12 @@ enum {
 	NBit    = CHAR_BIT * sizeof(bits),
 };
 
+struct Asmbits {
+	bits n;
+	int size;
+	Asmbits *link;
+};
+
 struct Target {
 	char name[16];
 	char apple;
@@ -1588,6 +1594,7 @@ static MachoCtx* macho_new(void);
 static void macho_free(MachoCtx*);
 static void macho_emitdat(Dat*, MachoCtx*);
 static void macho_emitfn(Fn*, MachoCtx*);
+static void macho_emitfin_obj(MachoCtx*);
 static void macho_write(MachoCtx*, FILE*);
 #undef G
 /*** END FILE: arm64/emitmacho.h ***/
@@ -3012,12 +3019,6 @@ emitdat(Dat *d, FILE *f)
 		break;
 	}
 }
-
-struct Asmbits {
-	bits n;
-	int size;
-	Asmbits *link;
-};
 
 int
 stashbits(bits n, int size)
@@ -14069,6 +14070,11 @@ arm64_emitfn(Fn *fn, FILE *out)
 // Sentinel sect values: resolved to real section numbers in macho_write
 #define SECT_DATA 0xFEu
 #define SECT_BSS 0xFDu
+#define SECT_LIT4 0xFCu
+#define SECT_LIT8 0xFBu
+// S_4BYTE_LITERALS / S_8BYTE_LITERALS section type flags
+#define S_4BYTE_LITERALS 0x3u
+#define S_8BYTE_LITERALS 0x4u
 
 // Mach-O structs (no system headers, exact field layout)
 
@@ -14149,6 +14155,10 @@ typedef struct {
 struct MachoCtx {
   uint8_t* text;
   uint32_t textsz, textcap;
+  uint8_t* lit4;  // __TEXT,__literal4 (4-byte QBE_ARM64_FP constants)
+  uint32_t lit4sz, lit4cap;
+  uint8_t* lit8;  // __TEXT,__literal8 (8-byte QBE_ARM64_FP constants)
+  uint32_t lit8sz, lit8cap;
   uint8_t* data;
   uint32_t datasz, datacap;
   uint32_t bsssz;
@@ -14277,6 +14287,23 @@ static void trelocadd(MachoCtx* ctx,
   ctx->treloc[ctx->ntreloc++] = r;
 }
 
+// ARM64_RELOC_ADDEND for text section: r_extern=0, r_symbolnum=addend value.
+static void trelocadd_addend(MachoCtx* ctx, int32_t addr, uint32_t addend) {
+  MReloc r;
+  r.addr = addr;
+  r.info = (addend & 0xFFFFFFu) | (0u << 24) | (2u << 25) | (0u << 27)
+           | ((uint32_t)ARM64_RELOC_ADDEND << 28);
+  if (ctx->ntreloc == ctx->trelocap) {
+    uint32_t oldcap = ctx->trelocap;
+    ctx->trelocap = ctx->trelocap ? ctx->trelocap * 2 : 8;
+    ctx->treloc = qbe_realloc(ctx->treloc, oldcap * sizeof(MReloc), ctx->trelocap * sizeof(MReloc));
+    if (!ctx->treloc) {
+      die("obj: out of memory");
+    }
+  }
+  ctx->treloc[ctx->ntreloc++] = r;
+}
+
 static uint32_t callee_symidx(MachoCtx* ctx, const char* name) {
   uint32_t i;
   for (i = 0; i < ctx->nsyms; i++) {
@@ -14351,6 +14378,8 @@ macho_new(void) {
 void
 macho_free(MachoCtx* ctx) {
   qbe_free(ctx->text);
+  qbe_free(ctx->lit4);
+  qbe_free(ctx->lit8);
   qbe_free(ctx->data);
   qbe_free(ctx->dreloc);
   qbe_free(ctx->treloc);
@@ -14371,24 +14400,35 @@ static void emit_movcon(MachoCtx* ctx, int rd, int cls, Con* c) {
     uint32_t symidx;
     symname(sname, str(c->sym.id));
     symidx = callee_symidx(ctx, sname);
-    if (c->bits.i != 0) {
-      die("obj: CAddr with non-zero offset in Ocopy");
-    }
-    if (c->sym.type == SThr) {
-      // Thread-local: ADRP Xd, sym@tlvppage
-      //             + LDR  Xd, [Xd, sym@tlvppageoff]
-      trelocadd(ctx, (int32_t)ctx->textsz, symidx, ARM64_RELOC_TLVP_LOAD_PAGE21, 2, 1);
-      emit_u32(ctx, 0x90000000u | (uint32_t)rd);
-      trelocadd(ctx, (int32_t)ctx->textsz, symidx, ARM64_RELOC_TLVP_LOAD_PAGEOFF12, 2, 0);
-      // LDR Xd, [Xd, #0] - loads descriptor ptr
-      emit_u32(ctx, 0xF9400000u | ((uint32_t)rd << 5) | (uint32_t)rd);
-    } else {
-      // Global: ADRP Xd, sym@page
-      //       + ADD  Xd, Xd, sym@pageoff
-      trelocadd(ctx, (int32_t)ctx->textsz, symidx, ARM64_RELOC_PAGE21, 2, 1);
-      emit_u32(ctx, 0x90000000u | (uint32_t)rd);
-      trelocadd(ctx, (int32_t)ctx->textsz, symidx, ARM64_RELOC_PAGEOFF12, 2, 0);
-      emit_u32(ctx, 0x91000000u | ((uint32_t)rd << 5) | (uint32_t)rd);
+    {
+      // An addend (e.g. sym+8) is expressed as an ARM64_RELOC_ADDEND
+      // reloc at the same address as the PAGE21/PAGEOFF12 reloc.
+      // The sort in macho_write ensures ADDEND appears first.
+      uint32_t addend = (uint32_t)(c->bits.i & 0xFFFFFFu);
+      if (c->sym.type == SThr) {
+        // Thread-local: ADRP Xd, sym@tlvppage
+        //             + LDR  Xd, [Xd, sym@tlvppageoff]
+        if (addend)
+          trelocadd_addend(ctx, (int32_t)ctx->textsz, addend);
+        trelocadd(ctx, (int32_t)ctx->textsz, symidx, ARM64_RELOC_TLVP_LOAD_PAGE21, 2, 1);
+        emit_u32(ctx, 0x90000000u | (uint32_t)rd);
+        if (addend)
+          trelocadd_addend(ctx, (int32_t)ctx->textsz, addend);
+        trelocadd(ctx, (int32_t)ctx->textsz, symidx, ARM64_RELOC_TLVP_LOAD_PAGEOFF12, 2, 0);
+        // LDR Xd, [Xd, #0] - loads descriptor ptr
+        emit_u32(ctx, 0xF9400000u | ((uint32_t)rd << 5) | (uint32_t)rd);
+      } else {
+        // Global: ADRP Xd, sym@page
+        //       + ADD  Xd, Xd, sym@pageoff
+        if (addend)
+          trelocadd_addend(ctx, (int32_t)ctx->textsz, addend);
+        trelocadd(ctx, (int32_t)ctx->textsz, symidx, ARM64_RELOC_PAGE21, 2, 1);
+        emit_u32(ctx, 0x90000000u | (uint32_t)rd);
+        if (addend)
+          trelocadd_addend(ctx, (int32_t)ctx->textsz, addend);
+        trelocadd(ctx, (int32_t)ctx->textsz, symidx, ARM64_RELOC_PAGEOFF12, 2, 0);
+        emit_u32(ctx, 0x91000000u | ((uint32_t)rd << 5) | (uint32_t)rd);
+      }
     }
     return;
   }
@@ -14490,10 +14530,7 @@ macho_emitfn(Fn* fn, MachoCtx* ctx) {
       ncallee++;  // round up to even for alignment
     }
     // Apple vararg: no register save area; frame is identical
-    // to non-vararg.  dynalloc is handled via mov sp, x29.
-    if (fn->dynalloc) {
-      die("obj: %s: unimplemented (dynalloc=1)", fn->name);
-    }
+    // to non-vararg.  dynalloc is handled via mov sp, x29 in the epilogue.
   }
   {
     int slotbytes = ((fn->slot + 3) & -4) * 4;
@@ -15108,6 +15145,18 @@ macho_emitfn(Fn* fn, MachoCtx* ctx) {
           }
           break;
         }
+        case Osalloc:
+          // sub sp, sp, Xn (extended-register form: QBE_ARM64_SP involved)
+          SQ_ASSERT(isreg(i->arg[0]));
+          rm = i->arg[0].val - QBE_ARM64_R0;
+          emit_u32(ctx, 0xCB206000u | ((uint32_t)rm << 16) | (31u << 5) | 31u);
+          if (!req(i->to, NULL_R)) {
+            // mov Xd, sp = ADD Xd, QBE_ARM64_SP, #0
+            SQ_ASSERT(isreg(i->to));
+            rd = i->to.val - QBE_ARM64_R0;
+            emit_u32(ctx, 0x91000000u | (31u << 5) | (uint32_t)rd);
+          }
+          break;
         default:
           die("obj: %s: unhandled op %s", fn->name, optab[i->op].name);
       }
@@ -15132,6 +15181,10 @@ macho_emitfn(Fn* fn, MachoCtx* ctx) {
               emit_u32(ctx, 0xF9400000u | (imm12 << 10) | (29u << 5) | (uint32_t)(*r - QBE_ARM64_R0));
             }
           }
+        }
+        if (fn->dynalloc) {
+          // reset sp to frame pointer before restoring frame
+          emit_u32(ctx, 0x910003BFu);  // mov sp, x29 = ADD QBE_ARM64_SP, X29, #0
         }
         if (total <= 512) {
           // small frame: single post-indexed LDP
@@ -15384,14 +15437,73 @@ static int reloc_cmp(const void* a, const void* b) {
   return ta - tb;
 }
 
+static void
+qbe_arm64_emitmacho_fp_const_cb(int idx, bits n, int size, void* ud) {
+  MachoCtx* ctx = ud;
+  static const uint8_t zeros[8] = {0};
+  char sname[NString];
+  uint32_t j, sym_off;
+  uint8_t sect_sentinel;
+  uint8_t** buf;
+  uint32_t* sz;
+  uint32_t* cap;
+  uint64_t v;
+
+  // route 4-byte constants to __literal4, 8-byte to __literal8
+  if (size == 4) {
+    buf = &ctx->lit4; sz = &ctx->lit4sz; cap = &ctx->lit4cap;
+    sect_sentinel = SECT_LIT4;
+  } else {
+    buf = &ctx->lit8; sz = &ctx->lit8sz; cap = &ctx->lit8cap;
+    sect_sentinel = SECT_LIT8;
+  }
+
+  // align within the literal section to 'size' bytes
+  while (*sz % (uint32_t)size != 0)
+    buf_append(buf, sz, cap, zeros, 1);
+  sym_off = *sz;
+
+  // emit the constant bytes (little-endian, native)
+  v = (uint64_t)n;
+  buf_append(buf, sz, cap, &v, (uint32_t)size);
+
+  // symbol name matches isel.c: "{asloc}fp{idx}"
+  snprintf(sname, NString, "%sfp%d", GC(T).asloc, idx);
+
+  // if already referenced (added as N_UNDF by callee_symidx), update to defined
+  for (j = 0; j < ctx->nsyms; j++) {
+    if (strcmp(ctx->strtab + ctx->syms[j].strx, sname) == 0) {
+      ctx->syms[j].type = N_SECT;
+      ctx->syms[j].sect = sect_sentinel;
+      ctx->syms[j].value = (uint64_t)sym_off;
+      return;
+    }
+  }
+  // not yet referenced - add as local defined symbol
+  symadd(ctx, sname, N_SECT, sect_sentinel, (uint64_t)sym_off);
+}
+
+void
+macho_emitfin_obj(MachoCtx* ctx) {
+  Asmbits* b;
+  int idx;
+  for (b = GC(emit__stash), idx = 0; b; b = b->link, idx++)
+    qbe_arm64_emitmacho_fp_const_cb(idx, b->n, b->size, ctx);
+  while ((b = GC(emit__stash))) {
+    GC(emit__stash) = b->link;
+    qbe_free(b);
+  }
+}
+
 void
 macho_write(MachoCtx* ctx, FILE* f) {
   uint32_t i;
-  uint32_t nsects, datasect, bsssect;
-  uint32_t textsz, datasz, bsssz, nsyms, ndreloc, ntreloc;
-  uint32_t data_addr, bss_addr;  // section VM addresses (aligned)
+  uint32_t nsects, lit4sect, lit8sect, datasect, bsssect;
+  uint32_t textsz, lit4sz, lit8sz, datasz, bsssz, nsyms, ndreloc, ntreloc;
+  uint32_t lit4_addr, lit8_addr, data_addr, bss_addr;  // section VM addresses
   uint32_t seg_size, cmds_size;
-  uint32_t dataoff, text_foff, data_foff, dreloc_foff, treloc_foff;
+  uint32_t dataoff, text_foff, lit4_foff, lit8_foff, data_foff;
+  uint32_t dreloc_foff, treloc_foff;
   uint32_t symtab_foff, strtab_foff;
   uint32_t cnt[3], ci[3];
   uint32_t ilocal, iextdef, iundef;
@@ -15432,6 +15544,8 @@ macho_write(MachoCtx* ctx, FILE* f) {
   }
 
   textsz = ctx->textsz;
+  lit4sz = ctx->lit4sz;
+  lit8sz = ctx->lit8sz;
   datasz = ctx->datasz;
   bsssz = ctx->bsssz;
   nsyms = ctx->nsyms;
@@ -15439,26 +15553,30 @@ macho_write(MachoCtx* ctx, FILE* f) {
   ntreloc = ctx->ntreloc;
 
   // Step 1: determine section numbering
+  // Order: __text, __literal4 (opt), __literal8 (opt), __data (opt), __bss (opt)
   nsects = 1;  // __text is always section 1
-  datasect = 0;
-  bsssect = 0;
-  if (datasz > 0) {
-    datasect = ++nsects;
-  }
-  if (bsssz > 0) {
-    bsssect = ++nsects;
-  }
+  lit4sect = lit8sect = datasect = bsssect = 0;
+  if (lit4sz > 0) lit4sect = ++nsects;
+  if (lit8sz > 0) lit8sect = ++nsects;
+  if (datasz > 0) datasect = ++nsects;
+  if (bsssz  > 0) bsssect  = ++nsects;
 
-  // Section VM addresses must be aligned to their section alignment (2^3 = 8).
-  // If textsz is not a multiple of 8, pointers inside the data section would
-  // have an unaligned VM address and ld would reject the object file with
-  // "pointer not aligned".
-  data_addr = align_up(textsz, 8);
+  // VM addresses: __literal4/8 are in __TEXT and follow __text directly.
+  // __data must be aligned to 8 (linker rejects "pointer not aligned" otherwise).
+  lit4_addr = align_up(textsz, 4);
+  lit8_addr = align_up(lit4_addr + lit4sz, 8);
+  data_addr = align_up(lit8_addr + lit8sz, 8);
   bss_addr  = align_up(data_addr + datasz, 8);
 
   // Step 2: fix up symbol values and sect sentinel fields
   for (i = 0; i < nsyms; i++) {
-    if (ctx->syms[i].sect == SECT_DATA) {
+    if (ctx->syms[i].sect == SECT_LIT4) {
+      ctx->syms[i].value += lit4_addr;
+      ctx->syms[i].sect = (uint8_t)lit4sect;
+    } else if (ctx->syms[i].sect == SECT_LIT8) {
+      ctx->syms[i].value += lit8_addr;
+      ctx->syms[i].sect = (uint8_t)lit8sect;
+    } else if (ctx->syms[i].sect == SECT_DATA) {
       ctx->syms[i].value += data_addr;
       ctx->syms[i].sect = (uint8_t)datasect;
     } else if (ctx->syms[i].sect == SECT_BSS) {
@@ -15511,8 +15629,11 @@ macho_write(MachoCtx* ctx, FILE* f) {
       }
     }
     for (i = 0; i < ntreloc; i++) {
-      uint32_t oldidx = ctx->treloc[i].info & 0xFFFFFFu;
-      ctx->treloc[i].info = (ctx->treloc[i].info & 0xFF000000u) | remap[oldidx];
+      uint32_t type = ctx->treloc[i].info >> 28;
+      if (type != ARM64_RELOC_ADDEND) {
+        uint32_t oldidx = ctx->treloc[i].info & 0xFFFFFFu;
+        ctx->treloc[i].info = (ctx->treloc[i].info & 0xFF000000u) | remap[oldidx];
+      }
     }
     qbe_free(remap);
   } else {
@@ -15533,7 +15654,9 @@ macho_write(MachoCtx* ctx, FILE* f) {
   cmds_size = seg_size + 24 + 80 + 24;
   dataoff = 32 + cmds_size;
   text_foff = dataoff;
-  data_foff = align_up(text_foff + textsz, 8);
+  lit4_foff = align_up(text_foff + textsz, 4);
+  lit8_foff = align_up(lit4_foff + lit4sz, 8);
+  data_foff = align_up(lit8_foff + lit8sz, 8);
   dreloc_foff = align_up(data_foff + datasz, 4);
   treloc_foff = align_up(dreloc_foff + ndreloc * 8, 4);
   symtab_foff = align_up(treloc_foff + ntreloc * 8, 8);
@@ -15560,7 +15683,14 @@ macho_write(MachoCtx* ctx, FILE* f) {
   seg.vmaddr = 0;
   seg.vmsize = (uint64_t)(bss_addr + bsssz);
   seg.fileoff = (uint64_t)dataoff;
-  seg.filesize = (datasz > 0) ? (uint64_t)(data_foff - text_foff + datasz) : (uint64_t)textsz;
+  {
+    // filesize covers all file-backed sections (no zerofill)
+    uint32_t fend = text_foff + textsz;
+    if (lit4sz > 0) fend = lit4_foff + lit4sz;
+    if (lit8sz > 0) fend = lit8_foff + lit8sz;
+    if (datasz > 0) fend = data_foff + datasz;
+    seg.filesize = (uint64_t)(fend - text_foff);
+  }
   seg.maxprot = 7;
   seg.initprot = 7;
   seg.nsects = nsects;
@@ -15582,6 +15712,36 @@ macho_write(MachoCtx* ctx, FILE* f) {
   sec.flags = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS | S_REGULAR;
   fwrite(&sec, sizeof sec, 1, f);
   cur += 80;
+
+  if (lit4sect) {
+    memset(&sec, 0, sizeof sec);
+    memcpy(sec.sectname, "__literal4", 10);
+    memcpy(sec.segname, "__TEXT", 6);
+    sec.addr = (uint64_t)lit4_addr;
+    sec.size = (uint64_t)lit4sz;
+    sec.offset = lit4_foff;
+    sec.align = 2;  // 2^2 = 4 bytes
+    sec.reloff = 0;
+    sec.nreloc = 0;
+    sec.flags = S_4BYTE_LITERALS;
+    fwrite(&sec, sizeof sec, 1, f);
+    cur += 80;
+  }
+
+  if (lit8sect) {
+    memset(&sec, 0, sizeof sec);
+    memcpy(sec.sectname, "__literal8", 10);
+    memcpy(sec.segname, "__TEXT", 6);
+    sec.addr = (uint64_t)lit8_addr;
+    sec.size = (uint64_t)lit8sz;
+    sec.offset = lit8_foff;
+    sec.align = 3;  // 2^3 = 8 bytes
+    sec.reloff = 0;
+    sec.nreloc = 0;
+    sec.flags = S_8BYTE_LITERALS;
+    fwrite(&sec, sizeof sec, 1, f);
+    cur += 80;
+  }
 
   if (datasect) {
     memset(&sec, 0, sizeof sec);
@@ -15658,11 +15818,17 @@ macho_write(MachoCtx* ctx, FILE* f) {
     fwrite(ctx->text, 1, textsz, f);
     cur += textsz;
   }
-  // padding between text and data
-  while (cur < data_foff) {
-    fwrite(zeros, 1, 1, f);
-    cur++;
+  while (cur < lit4_foff) { fwrite(zeros, 1, 1, f); cur++; }
+  if (lit4sz > 0) {
+    fwrite(ctx->lit4, 1, lit4sz, f);
+    cur += lit4sz;
   }
+  while (cur < lit8_foff) { fwrite(zeros, 1, 1, f); cur++; }
+  if (lit8sz > 0) {
+    fwrite(ctx->lit8, 1, lit8sz, f);
+    cur += lit8sz;
+  }
+  while (cur < data_foff) { fwrite(zeros, 1, 1, f); cur++; }
   if (datasz > 0) {
     fwrite(ctx->data, 1, datasz, f);
     cur += datasz;
@@ -18391,6 +18557,7 @@ bool sq_shutdown(void) {
   SQ_ASSERT(SQC(initialized) != SQIS_UNINITIALIZED);
   if (SQC(initialized) == SQIS_INITIALIZED_EMIT_FIN) {
     if (global_context.main__objmode) {
+      macho_emitfin_obj(global_context.main__macho_ctx);
       macho_write(global_context.main__macho_ctx, global_context.main__outf);
       macho_free(global_context.main__macho_ctx);
     } else {
