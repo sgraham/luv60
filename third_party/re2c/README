@@ -9,6 +9,6 @@ Mac:
 cmake --preset macos-clang-release-ootree-skeleton-fast
 cmake --build --preset macos-clang-release-ootree-skeleton-fast
 
-Linux Aarch64:
+Linux (x86_64 host for 'l' or aarch64 host for 'la'):
 cmake --preset linux-gcc-release-ootree-skeleton-fast
 cmake --build --preset linux-gcc-release-ootree-skeleton-fast

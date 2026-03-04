@@ -2,6 +2,7 @@ import base64
 import glob
 import json
 import os
+import platform
 import sys
 
 ROOT_DIR = os.path.normpath(
@@ -93,6 +94,24 @@ CONFIGS = {
         },
     },
     "m": {
+        "d": {
+            "COMPILE":
+            f"{CLANG} -MMD -MF $out.d -O0 -g {DEBUG_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            "LINK": CLANG + " -g $in -o $out",
+            "ML": CLANG + " $in -o $out",
+        },
+        "r": {
+            "COMPILE":
+            f"{CLANG} -MMD -MF $out.d -flto -O3 -g {RELEASE_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
+            "LINK": CLANG + " -g $in -o $out",
+            "ML": CLANG + " $in -o $out",
+        },
+        "__": {
+            "exe_ext": "",
+            "obj_ext": ".o",
+        },
+    },
+    "l": {
         "d": {
             "COMPILE":
             f"{CLANG} -MMD -MF $out.d -O0 -g {DEBUG_DEFINES} -Wall -Werror $extra -Wno-unused-parameter -I$src -I. -c $in -o $out",
@@ -223,8 +242,8 @@ def get_tests():
     return tests
 
 
-def generate(platform, config, settings, cmdlines, tests):
-    root_dir = os.path.join("out", platform + config)
+def generate(plat, config, settings, cmdlines, tests):
+    root_dir = os.path.join("out", plat + config)
     if not os.path.isdir(root_dir):
         os.makedirs(root_dir)
 
@@ -240,8 +259,8 @@ def generate(platform, config, settings, cmdlines, tests):
         f.write("rule cc\n")
         f.write("  command = " + cmdlines["COMPILE"] + "\n")
         f.write("  description = CC $out\n")
-        f.write("  deps = " + ("msvc" if platform == "w" else "gcc") + "\n")
-        if platform != "w":
+        f.write("  deps = " + ("msvc" if plat == "w" else "gcc") + "\n")
+        if plat != "w":
             f.write("  depfile = $out.d")
         f.write("\n")
         f.write("rule link\n")
@@ -263,7 +282,7 @@ def generate(platform, config, settings, cmdlines, tests):
         f.write("rule re2c\n")
         f.write(
             "  command = ../../third_party/re2c/%s/re2c%s -W -b -i --no-generation-date -o $out $in\n"
-            % (platform, exe_ext))
+            % (plat, exe_ext))
         f.write("  description = RE2C $out\n")
         f.write("\n")
         f.write("rule testrun\n")
@@ -392,14 +411,15 @@ def main():
 
     os.chdir(ROOT_DIR)  # Necessary when regenerating manifest from ninja
     tests = get_tests()
-    for platform, pdata in CONFIGS.items():
-        if ((sys.platform == "win32" and platform == "w")
-                or (sys.platform == "linux" and platform == "la")
-                or (sys.platform == "darwin" and platform == "m")):
+    for plat, pdata in CONFIGS.items():
+        if ((sys.platform == "win32" and plat == "w")
+                or (sys.platform == "linux" and platform.machine() == 'x86_64' and plat == "l")
+                or (sys.platform == "linux" and platform.machine() == 'aarch64' and plat == "la")
+                or (sys.platform == "darwin" and plat == "m")):
             for config, cmdlines in pdata.items():
                 if config == "__":
                     continue
-                generate(platform, config, pdata["__"], cmdlines, tests)
+                generate(plat, config, pdata["__"], cmdlines, tests)
 
 
 if __name__ == "__main__":
