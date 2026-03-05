@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 
 #if COMPILER_MSVC
 #  define FORCE_INLINE __forceinline

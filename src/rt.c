@@ -2,8 +2,8 @@
 
 #include "rt_util_win.c"
 #include "arena.c"
+#include "base_posix.c"
 #include "base_win.c"
-#include "base_mac.c"
 #include "dict.h"
 
 typedef struct Str {
@@ -314,13 +314,13 @@ Str u32$__str__(uint32_t* self) {
 
 Str i64$__str__(int64_t* self) {
   char buf[80];
-  snprintf(buf, sizeof(buf), "%lld", *self);
+  snprintf(buf, sizeof(buf), "%" PRId64, *self);
   return str_copy_cstr(buf);
 }
 
 Str u64$__str__(uint64_t* self) {
   char buf[80];
-  snprintf(buf, sizeof(buf), "%llu", *self);
+  snprintf(buf, sizeof(buf), "%" PRIu64, *self);
   return str_copy_cstr(buf);
 }
 
@@ -437,9 +437,10 @@ bool range$__contains__(Range* range, int64_t value) {
 Str range$__str__(Range* range) {
   char buf[256];
   if (range->step == 1) {
-    snprintf(buf, sizeof(buf), "range(%lld, %lld)", range->start, range->stop);
+    snprintf(buf, sizeof(buf), "range(%" PRId64 ", %" PRId64 ")", range->start, range->stop);
   } else {
-    snprintf(buf, sizeof(buf), "range(%lld, %lld, %lld)", range->start, range->stop, range->step);
+    snprintf(buf, sizeof(buf), "range(%" PRId64 ", %" PRId64 ", %" PRId64 ")", range->start,
+             range->stop, range->step);
   }
   return str_copy_cstr(buf);
 }

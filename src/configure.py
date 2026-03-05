@@ -11,7 +11,7 @@ ROOT_DIR = os.path.normpath(
 COMMON_FILELIST = [
     "../third_party/sqbe/sqbe.c",
     "arena.c",
-    "base_mac.c",
+    "base_posix.c",
     "base_win.c",
     "lex.c",
     "module.c",
@@ -312,6 +312,8 @@ def generate(plat, config, settings, cmdlines, tests):
             elif sys.platform != "darwin" and "_mac." in src:
                 continue
             elif sys.platform != "linux" and "_linux." in src:
+                continue
+            elif sys.platform != "linux" and sys.platform != "mac" and "_posix." in src:
                 continue
             obj = getobj(src)
             common_objs.append(obj)

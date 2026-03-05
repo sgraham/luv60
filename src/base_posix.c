@@ -1,6 +1,6 @@
 #include "shared.h"
 
-#if OS_MAC
+#if OS_MAC || OS_LINUX
 
 #include <sys/mman.h>
 #include <time.h>
@@ -22,7 +22,16 @@ void base_timer_init(void) {
 }
 
 uint64_t base_timer_now(void) {
+#if OS_MAC
   return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000;
+#elif OS_LINUX
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  uint64_t result = t.tv_sec * 1000000 + (t.tv_nsec / 1000);
+  return result;
+#else
+#error port
+#endif
 }
 
 void* base_mem_reserve(uint64_t size) {
