@@ -5900,7 +5900,13 @@ static void parse_impl(Arena* temp_arena, Module module) {
 
   SqConfiguration config = SQ_CONFIGURATION_DEFAULT;
   if (glob.obj_output) {
+#if OS_WINDOWS
+    config.format = SQ_FORMAT_OBJ_PECOFF;
+#elif OS_MAC
     config.format = SQ_FORMAT_OBJ_MACHO;
+#else
+    error("internal error: obj output unsupported on this platform");
+#endif
   }
   const char* output_copy = cstr_copy(temp_arena, module_output_path(module));
   config.output = fopen(output_copy, "wb");

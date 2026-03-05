@@ -150,10 +150,12 @@ int main(int argc, char** argv) {
   path_split(main_arena, input, &source_dir, &filename);
   path_trim_extension_if_exists(filename, ".luv");
 
-#if OS_MAC && ARCH_ARM64
-  bool obj_output = true;
-#else
   bool obj_output = false;
+#if OS_MAC && ARCH_ARM64
+  obj_output = true;
+#endif
+#if OS_WINDOWS && ARCH_X64
+  obj_output = true;
 #endif
 
   module_init(main_arena, parse_temp_arena, source_dir, output_dir, verbose, syntax_only,

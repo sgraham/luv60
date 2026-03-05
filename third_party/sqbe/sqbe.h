@@ -41,8 +41,10 @@ typedef enum SqTarget {
 } SqTarget;
 
 typedef enum SqFormat {
-  SQ_FORMAT_TEXT_S,     // Default textual .s to be assembled by system as
-  SQ_FORMAT_OBJ_MACHO,  // macOS Mach-O .o
+  SQ_FORMAT_TEXT_S,      // Default textual .s to be assembled by system as
+  SQ_FORMAT_OBJ_MACHO,   // macOS Mach-O .o
+  SQ_FORMAT_OBJ_PECOFF,  // Win32 PE/COFF .obj
+  SQ_FORMAT_JIT,         // Direct JIT
 } SqFormat;
 
 typedef int (*SqOutputFn)(const char* fmt, va_list ap);
@@ -148,6 +150,10 @@ void sq_type_add_field(SqType field);
 void sq_type_add_field_with_count(SqType field, uint32_t count);
 SqType sq_type_struct_end(void);
 
+// Create an opaque ("dark") type: type :name = align N { size }.
+// These are passed by pointer in the ABI, matching QBE's isdark semantics.
+SqType sq_type_opaque(const char* name, int align, uint64_t size);
+
 void sq_itemctx_activate(SqItemCtx ctx);
 
 // The returned SqItemCtx is already sq_itemctx_activate()d. If generating
@@ -188,6 +194,7 @@ SqRef sq_ref_for_symbol(SqSymbol sym);
 SqRef sq_ref_declare(void);
 
 SqRef sq_ref_extern(const char* name);
+SqRef sq_ref_extern_tls(const char* name);
 
 #define sq_func_param(type) sq_func_param_named(type, NULL)
 SqRef sq_func_param_named(SqType type, const char* name);
@@ -205,7 +212,9 @@ void sq_i_ret(SqRef val);
 void sq_i_jmp(SqBlock block);
 void sq_i_jnz(SqRef cond, SqBlock if_true, SqBlock if_false);
 
-// TODO: only 2-branch phi supported currently
+SqRef sq_i_phia(SqType size_class, int narg, SqBlock* blocks, SqRef* vals);
+void sq_i_phia_into(SqRef into, SqType size_class, int narg, SqBlock* blocks, SqRef* vals);
+
 SqRef sq_i_phi(SqType size_class, SqBlock block0, SqRef val0, SqBlock block1, SqRef val1);
 
 void sq_i_blit(SqRef from, SqRef to, int num_bytes);
@@ -477,6 +486,7 @@ typedef struct Dat Dat;
 typedef struct Lnk Lnk;
 typedef struct Target Target;
 typedef struct MachoCtx MachoCtx;
+typedef struct JitCtx JitCtx;
 
 typedef struct Asmbits Asmbits;
 typedef struct Edge Edge;
@@ -1202,6 +1212,10 @@ typedef struct GlobalContext {
 	int main__dbg;
 	int main__objmode;
 	MachoCtx *main__macho_ctx;
+	int main__jitmode;
+	JitCtx *main__jit_ctx;
+	int main__pecoffmode;
+	struct PECOFFCtx *main__pecoff_ctx;
 
 	/* parse.c */
 	int parse__lexinit_done;
@@ -1548,6 +1562,18 @@ static void amd64_sysv_emitfn(Fn *, FILE *);
 static void amd64_winabi_emitfn(Fn *, FILE *);
 #undef G
 /*** END FILE: amd64/all.h ***/
+/*** START FILE: amd64/emitpecoff.h ***/
+struct PECOFFCtx;
+typedef struct PECOFFCtx PECOFFCtx;
+
+PECOFFCtx* pecoff_new(void);
+static void pecoff_free(PECOFFCtx*);
+static void pecoff_emitdat(Dat*, PECOFFCtx*);
+static void pecoff_emitfn(Fn*, PECOFFCtx*);
+static void pecoff_emitfin_obj(PECOFFCtx*);
+static void pecoff_write(PECOFFCtx*, FILE*);
+#undef G
+/*** END FILE: amd64/emitpecoff.h ***/
 /*** START FILE: arm64/all.h ***/
 /* skipping ../all.h */
 
@@ -1589,6 +1615,30 @@ static void arm64_isel(Fn *);
 static void arm64_emitfn(Fn *, FILE *);
 #undef G
 /*** END FILE: arm64/all.h ***/
+/*** START FILE: arm64/apple_shared.h ***/
+// Branch fixup: records a branch instruction offset to patch after all blocks.
+typedef struct {
+  uint32_t off;
+  Blk* tgt;
+  int cond;  // -1 = unconditional B; >= 0 = arm64 condition code
+} BrFix;
+
+static uint32_t arm64_slot_off(int s, int padding, int framesz);
+
+static uint8_t arm64cond[NCmp];
+#undef G
+/*** END FILE: arm64/apple_shared.h ***/
+/*** START FILE: arm64/emitjit.h ***/
+static JitCtx* jit_new(void);
+static void    jit_free(JitCtx*);
+static void    jit_emitfn(Fn*, JitCtx*);
+static void    jit_emitdat(Dat*, JitCtx*);
+static void    jit_emitfin_fp(JitCtx*);
+static void    jit_finalize(JitCtx*);
+static void*   jit_lookup(JitCtx*, const char*);
+static void    jit_populate_ptrs(JitCtx*);
+#undef G
+/*** END FILE: arm64/emitjit.h ***/
 /*** START FILE: arm64/emitmacho.h ***/
 static MachoCtx* macho_new(void);
 static void macho_free(MachoCtx*);
@@ -5143,8 +5193,11 @@ loadopt(Fn *fn)
 /*** START FILE: main.c ***/
 /* skipping all.h */
 /* skipping arm64/emitmacho.h */
+/* skipping arm64/emitjit.h */
+/* skipping amd64/emitpecoff.h */
 /* skipping config.h */
 #include <ctype.h>
+/* skipping dlfcn.h */
 /* skipping getopt.h */
 
 #define G(x) global_context.main__##x
@@ -5168,6 +5221,11 @@ qbe_main_data(Dat *d)
 	if (G(objmode)) {
 		macho_emitdat(d, G(macho_ctx));
 		ret_on_err();
+	} else if (G(pecoffmode)) {
+		pecoff_emitdat(d, G(pecoff_ctx));
+		ret_on_err();
+	} else if (G(jitmode)) {
+		jit_emitdat(d, G(jit_ctx));
 	} else {
 		emitdat(d, G(outf));
 		ret_on_err();
@@ -5250,6 +5308,10 @@ qbe_main_func(Fn *fn)
 	}
 	if (G(objmode)) {
 		macho_emitfn(fn, G(macho_ctx));
+	} else if (G(pecoffmode)) {
+		pecoff_emitfn(fn, G(pecoff_ctx));
+	} else if (G(jitmode)) {
+		jit_emitfn(fn, G(jit_ctx));
 	} else if (!G(dbg)) {
 		GC(T).emitfn(fn, G(outf));
 		fprintf(G(outf), "/* end function %s */\n\n", fn->name);
@@ -12459,6 +12521,2512 @@ void amd64_winabi_abi(Fn* func) {
 }
 #undef G
 /*** END FILE: amd64/winabi.c ***/
+/*** START FILE: amd64/emitpecoff.c ***/
+/* amd64/emitpecoff.c -- direct PE/COFF .obj emitter for AMD64/Windows */
+/* skipping emitpecoff.h */
+/* skipping all.h */
+
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* -----------------------------------------------------------------------
+ * PE/COFF constants (no system headers)
+ * --------------------------------------------------------------------- */
+#define PE_IMAGE_FILE_MACHINE_AMD64 0x8664u
+
+#define PE_IMAGE_SCN_CNT_CODE 0x00000020u
+#define PE_IMAGE_SCN_CNT_INITIALIZED_DATA 0x00000040u
+#define PE_IMAGE_SCN_CNT_UNINITIALIZED_DATA 0x00000080u
+#define PE_IMAGE_SCN_MEM_EXECUTE 0x20000000u
+#define PE_IMAGE_SCN_MEM_READ 0x40000000u
+#define PE_IMAGE_SCN_MEM_WRITE 0x80000000u
+#define PE_IMAGE_SCN_ALIGN_8BYTES 0x00400000u
+#define PE_IMAGE_SCN_ALIGN_16BYTES 0x00500000u
+
+#define PE_IMAGE_REL_AMD64_ADDR64 0x0001u
+#define PE_IMAGE_REL_AMD64_ADDR32NB 0x0003u
+#define PE_IMAGE_REL_AMD64_REL32 0x0004u
+#define PE_IMAGE_REL_AMD64_REL32_1 0x0005u
+#define PE_IMAGE_REL_AMD64_REL32_2 0x0006u
+#define PE_IMAGE_REL_AMD64_REL32_3 0x0007u
+#define PE_IMAGE_REL_AMD64_REL32_4 0x0008u
+#define PE_IMAGE_REL_AMD64_REL32_5 0x0009u
+#define PE_IMAGE_REL_AMD64_SECTION 0x000Au
+#define PE_IMAGE_REL_AMD64_SECREL 0x000Bu
+
+#define PE_IMAGE_SYM_UNDEFINED 0
+#define PE_IMAGE_SYM_CLASS_EXTERNAL 2
+#define PE_IMAGE_SYM_CLASS_STATIC 3
+#define PE_IMAGE_SYM_TYPE_FUNCTION 0x20u
+
+/* Sentinel values stored in PESym.section during emission;
+ * resolved to real 1-based section numbers in pecoff_write. */
+#define PESECT_TEXT 0x7FFE
+#define PESECT_DATA 0x7FFD
+#define PESECT_BSS 0x7FFC
+#define PESECT_RDATA 0x7FFB
+
+/* -----------------------------------------------------------------------
+ * Internal reloc/sym types
+ * --------------------------------------------------------------------- */
+typedef struct {
+  uint32_t vaddr; /* offset within section */
+  uint32_t symidx;
+  uint16_t type;
+} PEReloc;
+
+typedef struct {
+  uint32_t strx; /* offset into ctx->strtab */
+  uint32_t value;
+  int16_t section; /* sentinel or real 1-based number; 0=external */
+  uint16_t type;
+  uint8_t storage; /* PE_IMAGE_SYM_CLASS_* */
+} PESym;
+
+struct PECOFFCtx {
+  uint8_t* text;
+  uint32_t textsz, textcap;
+  uint8_t* data;
+  uint32_t datasz, datacap;
+  uint32_t bsssz;
+  uint8_t* rdata;
+  uint32_t rdatasz, rdatacap;
+  PEReloc* treloc;
+  uint32_t ntreloc, trelocap;
+  PEReloc* dreloc;
+  uint32_t ndreloc, drelocap;
+  PEReloc* rreloc;
+  uint32_t nrreloc, rrelocap;
+  PESym* syms;
+  uint32_t nsyms, symcap;
+  char* strtab;
+  uint32_t strtabsz, strtabcap;
+  /* per-data-item state */
+  char datname[NString];
+  Lnk* datlnk;
+  int64_t dleadzero; /* >=0: accumulating leading zeros; -1: started */
+  uint32_t datstart; /* ctx->datasz at DStart */
+  /* measurement pass: count bytes without writing or adding relocs/syms */
+  int dry_run;
+};
+
+/* -----------------------------------------------------------------------
+ * Helpers -- defined now, heavily used starting in steps 3/4
+ * --------------------------------------------------------------------- */
+static void* pe_realloc(void* oldp, uint32_t old_size, size_t new_size) {
+  void* newp = emalloc(new_size);
+  if (oldp) {
+    memcpy(newp, oldp, old_size);
+    qbe_free(oldp);
+  }
+  return newp;
+}
+
+static void pe_buf_append(uint8_t** buf, uint32_t* sz, uint32_t* cap, const void* src, uint32_t n) {
+  if (*sz + n > *cap) {
+    uint32_t newcap = *cap ? *cap * 2 : 64;
+    uint32_t oldcap = *cap;
+    while (newcap < *sz + n) {
+      newcap *= 2;
+    }
+    *buf = pe_realloc(*buf, oldcap, newcap);
+    *cap = newcap;
+  }
+  memcpy(*buf + *sz, src, n);
+  *sz += n;
+}
+
+static uint32_t pe_strintern(PECOFFCtx* ctx, const char* s) {
+  uint32_t off = ctx->strtabsz;
+  uint32_t n = (uint32_t)strlen(s) + 1;
+  pe_buf_append((uint8_t**)&ctx->strtab, &ctx->strtabsz, &ctx->strtabcap, s, n);
+  return off;
+}
+
+/* -----------------------------------------------------------------------
+ * Binary write helpers (host is LE x86-64; target is also LE)
+ * --------------------------------------------------------------------- */
+static void w8(FILE* f, uint8_t v) {
+  fwrite(&v, 1, 1, f);
+}
+static void w16(FILE* f, uint16_t v) {
+  fwrite(&v, 2, 1, f);
+}
+static void w32(FILE* f, uint32_t v) {
+  fwrite(&v, 4, 1, f);
+}
+static void wbytes(FILE* f, const void* p, uint32_t n) {
+  fwrite(p, 1, n, f);
+}
+static void wzeros(FILE* f, uint32_t n) {
+  static const uint8_t z[64] = {0};
+  while (n >= 64) {
+    fwrite(z, 1, 64, f);
+    n -= 64;
+  }
+  if (n) {
+    fwrite(z, 1, n, f);
+  }
+}
+
+/* -----------------------------------------------------------------------
+ * Text section emission helpers
+ * --------------------------------------------------------------------- */
+
+/* append 1 byte to .text */
+static void emit1(PECOFFCtx* ctx, uint8_t b) {
+  if (ctx->dry_run) {
+    ctx->textsz++;
+    return;
+  }
+  pe_buf_append(&ctx->text, &ctx->textsz, &ctx->textcap, &b, 1);
+}
+
+/* append 4 bytes (LE) to .text */
+static void emit4le(PECOFFCtx* ctx, uint32_t v) {
+  if (ctx->dry_run) {
+    ctx->textsz += 4;
+    return;
+  }
+  uint8_t b[4];
+  b[0] = (uint8_t)(v);
+  b[1] = (uint8_t)(v >> 8);
+  b[2] = (uint8_t)(v >> 16);
+  b[3] = (uint8_t)(v >> 24);
+  pe_buf_append(&ctx->text, &ctx->textsz, &ctx->textcap, b, 4);
+}
+
+/*
+ * Map QBE register enum to x86-64 hardware register encoding (0–15).
+ * QBE enum order (starting at RXX+1 = QBE_AMD64_RAX):
+ *   QBE_AMD64_RAX QBE_AMD64_RCX QBE_AMD64_RDX QBE_AMD64_RSI QBE_AMD64_RDI QBE_AMD64_R8 QBE_AMD64_R9 QBE_AMD64_R10 QBE_AMD64_R11  QBE_AMD64_RBX QBE_AMD64_R12 QBE_AMD64_R13 QBE_AMD64_R14 QBE_AMD64_R15  QBE_AMD64_RBP QBE_AMD64_RSP
+ * Hardware encoding:
+ *    0   1   2   6   7   8  9  10  11    3  12  13  14  15    5   4
+ * QBE_AMD64_XMM0..QBE_AMD64_XMM15 -> hardware 0..15
+ */
+static const int hwreg_tab[] = {
+    /* QBE_AMD64_RAX QBE_AMD64_RCX QBE_AMD64_RDX QBE_AMD64_RSI QBE_AMD64_RDI  QBE_AMD64_R8  QBE_AMD64_R9 QBE_AMD64_R10 QBE_AMD64_R11 */
+    0,
+    1,
+    2,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    /* QBE_AMD64_RBX QBE_AMD64_R12 QBE_AMD64_R13 QBE_AMD64_R14 QBE_AMD64_R15 QBE_AMD64_RBP QBE_AMD64_RSP */
+    3,
+    12,
+    13,
+    14,
+    15,
+    5,
+    4,
+};
+
+static int hwreg(int qreg) {
+  if (qreg >= QBE_AMD64_XMM0) {
+    return qreg - QBE_AMD64_XMM0;
+  }
+  SQ_ASSERT(qreg >= QBE_AMD64_RAX && qreg <= QBE_AMD64_RSP);
+  return hwreg_tab[qreg - QBE_AMD64_RAX];
+}
+
+/* Emit REX prefix when any field is nonzero */
+static void emit_rex(PECOFFCtx* ctx, int w, int r, int x, int b) {
+  if (w | r | x | b) {
+    emit1(ctx, (uint8_t)(0x40 | (w << 3) | (r << 2) | (x << 1) | b));
+  }
+}
+
+static void emit_push64(PECOFFCtx* ctx, int qreg) {
+  int hw = hwreg(qreg);
+  if (hw >= 8) {
+    emit1(ctx, 0x41); /* REX.B */
+  }
+  emit1(ctx, (uint8_t)(0x50 + (hw & 7)));
+}
+
+static void emit_pop64(PECOFFCtx* ctx, int qreg) {
+  int hw = hwreg(qreg);
+  if (hw >= 8) {
+    emit1(ctx, 0x41); /* REX.B */
+  }
+  emit1(ctx, (uint8_t)(0x58 + (hw & 7)));
+}
+
+/* movq qreg, disp8(%rsp): spill arg reg to home space before push rbp */
+static void emit_home_spill(PECOFFCtx* ctx, int qreg, uint8_t disp8) {
+  int hw = hwreg(qreg);
+  /* REX.W (+ REX.R if hw>=8), 89, ModRM(01, hw&7, 4), SIB(0,4,4), disp8 */
+  emit1(ctx, hw >= 8 ? 0x4C : 0x48);
+  emit1(ctx, 0x89);
+  emit1(ctx, (uint8_t)(0x40 | ((hw & 7) << 3) | 4));
+  emit1(ctx, 0x24); /* SIB: no index, base=QBE_AMD64_RSP */
+  emit1(ctx, disp8);
+}
+
+/* endbr64: F3 0F 1E FA */
+static void emit_endbr64(PECOFFCtx* ctx) {
+  emit1(ctx, 0xF3);
+  emit1(ctx, 0x0F);
+  emit1(ctx, 0x1E);
+  emit1(ctx, 0xFA);
+}
+
+/* mov rbp, rsp: 48 89 E5  (MOV r/m64, r64  with dst=QBE_AMD64_RBP=5, src=QBE_AMD64_RSP=4) */
+static void emit_mov_rbp_rsp(PECOFFCtx* ctx) {
+  emit1(ctx, 0x48);
+  emit1(ctx, 0x89);
+  emit1(ctx, 0xE5);
+}
+
+/* sub rsp, imm (up to 32-bit) */
+static void emit_sub_rsp_imm(PECOFFCtx* ctx, uint64_t imm) {
+  if (imm <= 127) {
+    emit1(ctx, 0x48);
+    emit1(ctx, 0x83);
+    emit1(ctx, 0xEC);
+    emit1(ctx, (uint8_t)imm);
+  } else {
+    emit1(ctx, 0x48);
+    emit1(ctx, 0x81);
+    emit1(ctx, 0xEC);
+    emit4le(ctx, (uint32_t)imm);
+  }
+}
+
+/* add rsp, imm (up to 32-bit) */
+static void emit_add_rsp_imm(PECOFFCtx* ctx, uint64_t imm) {
+  if (imm <= 127) {
+    emit1(ctx, 0x48);
+    emit1(ctx, 0x83);
+    emit1(ctx, 0xC4);
+    emit1(ctx, (uint8_t)imm);
+  } else {
+    emit1(ctx, 0x48);
+    emit1(ctx, 0x81);
+    emit1(ctx, 0xC4);
+    emit4le(ctx, (uint32_t)imm);
+  }
+}
+
+/* mov rbp, rsp for dynalloc restore: 48 89 EC (MOV r/m64,r64 dst=QBE_AMD64_RSP rm=QBE_AMD64_RBP) */
+static void emit_mov_rsp_rbp(PECOFFCtx* ctx) {
+  emit1(ctx, 0x48);
+  emit1(ctx, 0x89);
+  emit1(ctx, 0xEC);
+}
+
+/* Integer register-to-register move (cls = Kw or Kl) */
+static void emit_mov_rr(PECOFFCtx* ctx, int dst_hw, int src_hw, int is64) {
+  emit_rex(ctx, is64, dst_hw >> 3, 0, src_hw >> 3);
+  emit1(ctx, 0x8B); /* MOV r, r/m */
+  emit1(ctx, (uint8_t)(0xC0 | ((dst_hw & 7) << 3) | (src_hw & 7)));
+}
+
+/* x86-64 Jcc opcodes (second byte of 0F 8x form), indexed by (jmp.type - Jjf).
+ * Integer comparisons map directly to flags set by CMP/TEST; float comparisons
+ * after UCOMISD/UCOMISS set CF, ZF, PF -- we handle the simple single-Jcc cases. */
+static const uint8_t jcc_opc[NCmp] = {
+    /* Integer (c = 0..9 = CmpI values) */
+    [Cieq] = 0x84,  /* JZ  (equal) */
+    [Cine] = 0x85,  /* JNZ */
+    [Cisge] = 0x8D, /* JGE */
+    [Cisgt] = 0x8F, /* JG  */
+    [Cisle] = 0x8E, /* JLE */
+    [Cislt] = 0x8C, /* JL  */
+    [Ciuge] = 0x83, /* JAE */
+    [Ciugt] = 0x87, /* JA  */
+    [Ciule] = 0x86, /* JBE */
+    [Ciult] = 0x82, /* JB  */
+    /* Float (c = NCmpI + CmpF value) */
+    [NCmpI + Cfeq] = 0x84, /* JZ  (fe ordered-equal) */
+    [NCmpI + Cfge] = 0x83, /* JAE */
+    [NCmpI + Cfgt] = 0x87, /* JA  */
+    [NCmpI + Cfle] = 0x86, /* JBE */
+    [NCmpI + Cflt] = 0x82, /* JB  */
+    [NCmpI + Cfne] = 0x85, /* JNZ */
+    [NCmpI + Cfo] = 0x8B,  /* JNP (ordered = no-parity) */
+    [NCmpI + Cfuo] = 0x8A, /* JP  (unordered = parity) */
+};
+
+/* Windows x64 callee-save registers (matches amd64_winabi_rclob in winabi.c) */
+static int pe_rclob[] = {QBE_AMD64_RBX, QBE_AMD64_R12, QBE_AMD64_R13, QBE_AMD64_R14, QBE_AMD64_R15, QBE_AMD64_RSI, QBE_AMD64_RDI, -1};
+#define NCLR_PE 7 /* matches QBE_AMD64_NCLR_WIN */
+
+/* Compute frame pointer register and frame size (mirrors winabi_framesz) */
+static void pe_framesz(Fn* fn, int* fp_out, uint64_t* fsz_out) {
+  uint64_t i, o, f;
+  int fp;
+
+  fp = (!fn->leaf || fn->vararg || fn->dynalloc) ? QBE_AMD64_RBP : QBE_AMD64_RSP;
+
+  o = 0;
+  if (!fn->leaf) {
+    for (i = 0; i < NCLR_PE; i++) {
+      o ^= (fn->reg >> pe_rclob[i]) & 1;
+    }
+    o &= 1;
+  }
+  f = fn->slot;
+  f = (f + 3) & -4;
+  if (f > 0 && fp == QBE_AMD64_RSP && fn->salign == 4) {
+    f += 2;
+  }
+  *fp_out = fp;
+  *fsz_out = 4 * f + 8 * o;
+}
+
+/* Windows 64-bit: no underscore prefix; strip quotes for raw names */
+static void pe_symname(char out[NString], const char* n) {
+  if (n[0] == '"') {
+    size_t len = strlen(n);
+    int inner = len >= 2 ? (int)(len - 2) : 0;
+    snprintf(out, NString, "%.*s", inner, n + 1);
+  } else {
+    snprintf(out, NString, "%s", n);
+  }
+}
+
+static uint32_t pe_symadd(PECOFFCtx* ctx,
+                          const char* name,
+                          int16_t section,
+                          uint32_t value,
+                          uint16_t type,
+                          uint8_t storage) {
+  PESym sym;
+  sym.strx = pe_strintern(ctx, name);
+  sym.value = value;
+  sym.section = section;
+  sym.type = type;
+  sym.storage = storage;
+  if (ctx->nsyms == ctx->symcap) {
+    uint32_t oldcap = ctx->symcap;
+    ctx->symcap = ctx->symcap ? ctx->symcap * 2 : 8;
+    ctx->syms = pe_realloc(ctx->syms, oldcap * sizeof(PESym), ctx->symcap * sizeof(PESym));
+  }
+  ctx->syms[ctx->nsyms] = sym;
+  return ctx->nsyms++;
+}
+
+/* Define or update a symbol: if already present (forward reference added by
+ * pe_findorsym), update section/value/storage in place; otherwise add new. */
+static uint32_t symdefine(PECOFFCtx* ctx,
+                          const char* name,
+                          int16_t section,
+                          uint32_t value,
+                          uint16_t type,
+                          uint8_t storage) {
+  uint32_t i;
+  for (i = 0; i < ctx->nsyms; i++) {
+    if (strcmp(ctx->strtab + ctx->syms[i].strx, name) == 0) {
+      ctx->syms[i].section = section;
+      ctx->syms[i].value = value;
+      ctx->syms[i].type = type;
+      ctx->syms[i].storage = storage;
+      return i;
+    }
+  }
+  return pe_symadd(ctx, name, section, value, type, storage);
+}
+
+/* -----------------------------------------------------------------------
+ * Text relocation helper
+ * --------------------------------------------------------------------- */
+static void pe_trelocadd(PECOFFCtx* ctx, uint32_t vaddr, uint32_t symidx, uint16_t type) {
+  if (ctx->dry_run) {
+    return;
+  }
+  PEReloc rel;
+  rel.vaddr = vaddr;
+  rel.symidx = symidx;
+  rel.type = type;
+  if (ctx->ntreloc == ctx->trelocap) {
+    uint32_t oldcap = ctx->trelocap;
+    ctx->trelocap = ctx->trelocap ? ctx->trelocap * 2 : 8;
+    ctx->treloc =
+        pe_realloc(ctx->treloc, oldcap * sizeof(PEReloc), ctx->trelocap * sizeof(PEReloc));
+  }
+  ctx->treloc[ctx->ntreloc++] = rel;
+}
+
+/* -----------------------------------------------------------------------
+ * Per-function emission state (mirrors E in emit.c)
+ * --------------------------------------------------------------------- */
+typedef struct {
+  PECOFFCtx* ctx;
+  Fn* fn;
+  int fp;       /* frame pointer register: QBE_AMD64_RBP or QBE_AMD64_RSP */
+  uint64_t fsz; /* frame size in bytes */
+  int nclob;    /* number of callee-save registers pushed */
+} PE;
+
+/* Compute byte offset of stack slot from frame pointer (mirrors slot() in emit.c) */
+static int pe_slot(Ref r, PE* pe) {
+  int s = rsval(r);
+  SQ_ASSERT(s <= pe->fn->slot);
+  if (s < 0) {
+    return pe->fp == QBE_AMD64_RSP ? 4 * -s - 8 + (int)pe->fsz + pe->nclob * 8 : 4 * -s;
+  }
+  if (pe->fp == QBE_AMD64_RSP) {
+    return 4 * s + pe->nclob * 8;
+  }
+  return -4 * (pe->fn->slot - s);
+}
+
+/* Forward declaration -- defined in data-section helpers below */
+static uint32_t pe_findorsym(PECOFFCtx*, const char*);
+
+/* -----------------------------------------------------------------------
+ * Memory operand encoding
+ * --------------------------------------------------------------------- */
+
+/* Describes how to encode a memory operand in ModRM/SIB/disp form.
+ * base_hw == -1 means RIP-relative (use rip_* fields). */
+typedef struct {
+  int base_hw; /* hw reg for base (-1 = RIP-relative) */
+  int idx_hw;  /* hw reg for index (-1 = no index)    */
+  int scale;   /* 1, 2, 4, 8 */
+  int32_t disp;
+  uint32_t rip_sym;   /* symbol index for RIP-relative case  */
+  int32_t rip_addend; /* addend for RIP-relative case        */
+} MemEnc;
+
+/* Build a MemEnc from a QBE Ref (RSlot or RMem). */
+static MemEnc mem_enc_of_ref(PE* pe, Ref ref) {
+  MemEnc enc;
+  Fn* fn = pe->fn;
+  Mem* m;
+  Con* off;
+  char sname[NString];
+
+  memset(&enc, 0, sizeof enc);
+  enc.base_hw = -1;
+  enc.idx_hw = -1;
+  enc.scale = 1;
+
+  if (rtype(ref) == RSlot) {
+    enc.base_hw = hwreg(pe->fp);
+    enc.disp = pe_slot(ref, pe);
+    return enc;
+  }
+
+  /* Global symbol used directly as a memory operand: sym(%rip) */
+  if (rtype(ref) == RCon) {
+    Con* con = &fn->con[ref.val];
+    if (con->type != CAddr) {
+      die("pecoff: integer constant used as memory address");
+    }
+    pe_symname(sname, str(con->sym.id));
+    enc.base_hw = -1;
+    enc.rip_sym = pe_findorsym(pe->ctx, sname);
+    enc.rip_addend = (int32_t)con->bits.i;
+    return enc;
+  }
+
+  /* Register used directly as base pointer: [reg] */
+  if (rtype(ref) == RTmp) {
+    enc.base_hw = hwreg(ref.val);
+    enc.disp = 0;
+    return enc;
+  }
+
+  SQ_ASSERT(rtype(ref) == RMem);
+  m = &fn->mem[ref.val];
+  off = &m->offset;
+
+  /* base is a stack slot -- rewrite as fp-relative */
+  if (rtype(m->base) == RSlot) {
+    int32_t extra = (off->type == CBits) ? (int32_t)off->bits.i : 0;
+    enc.base_hw = hwreg(pe->fp);
+    enc.disp = pe_slot(m->base, pe) + extra;
+    if (!req(m->index, NULL_R)) {
+      enc.idx_hw = hwreg(m->index.val);
+      enc.scale = m->scale;
+    }
+    return enc;
+  }
+
+  /* RIP-relative global symbol */
+  if (off->type == CAddr && req(m->base, NULL_R) && req(m->index, NULL_R)) {
+    pe_symname(sname, str(off->sym.id));
+    enc.base_hw = -1; /* signals RIP-relative */
+    enc.rip_sym = pe_findorsym(pe->ctx, sname);
+    enc.rip_addend = (int32_t)off->bits.i;
+    return enc;
+  }
+
+  /* General [base + index*scale + disp] */
+  SQ_ASSERT(!req(m->base, NULL_R) && rtype(m->base) == RTmp);
+  enc.base_hw = hwreg(m->base.val);
+  enc.disp = (off->type == CBits) ? (int32_t)off->bits.i : 0;
+  if (!req(m->index, NULL_R)) {
+    enc.idx_hw = hwreg(m->index.val);
+    enc.scale = m->scale;
+  }
+  return enc;
+}
+
+/* Emit ModRM + optional SIB + displacement for a memory operand.
+ * reg_hw: the register encoded in the reg field of ModRM. */
+static void emit_mem_enc(PECOFFCtx* ctx, int reg_hw, const MemEnc* enc) {
+  int reg3, base3, needs_sib, force_disp, mod, ss, idx3;
+
+  reg3 = reg_hw & 7;
+
+  /* RIP-relative: ModRM mod=0, rm=5, then PE_IMAGE_REL_AMD64_REL32 + addend */
+  if (enc->base_hw < 0) {
+    emit1(ctx, (uint8_t)((0 << 6) | (reg3 << 3) | 5));
+    pe_trelocadd(ctx, ctx->textsz, enc->rip_sym, PE_IMAGE_REL_AMD64_REL32);
+    emit4le(ctx, (uint32_t)enc->rip_addend);
+    return;
+  }
+
+  base3 = enc->base_hw & 7;
+  needs_sib = (enc->idx_hw >= 0) || (base3 == 4); /* index present or QBE_AMD64_RSP/QBE_AMD64_R12 base */
+  /* QBE_AMD64_RBP/QBE_AMD64_R13 as base (base3==5): mod=0 means disp32-only, so need mod!=0 to use base.
+   * With SIB: base field 5 + mod=0 also means no-base. */
+  force_disp = (base3 == 5);
+
+  if (enc->disp == 0 && !force_disp) {
+    mod = 0;
+  } else if (enc->disp >= -128 && enc->disp <= 127) {
+    mod = 1;
+  } else {
+    mod = 2;
+  }
+
+  if (needs_sib) {
+    emit1(ctx, (uint8_t)((mod << 6) | (reg3 << 3) | 4)); /* rm=4: SIB present */
+    ss = enc->scale == 1 ? 0 : enc->scale == 2 ? 1 : enc->scale == 4 ? 2 : 3;
+    idx3 = (enc->idx_hw >= 0) ? (enc->idx_hw & 7) : 4; /* 4 = no index */
+    emit1(ctx, (uint8_t)((ss << 6) | (idx3 << 3) | base3));
+  } else {
+    emit1(ctx, (uint8_t)((mod << 6) | (reg3 << 3) | base3));
+  }
+
+  if (mod == 1) {
+    emit1(ctx, (uint8_t)(int8_t)enc->disp);
+  } else if (mod == 2) {
+    emit4le(ctx, (uint32_t)enc->disp);
+  }
+}
+
+/* Helpers for extracting REX extension bits from a MemEnc. */
+#define ENC_REX_B(enc) ((enc).base_hw >= 0 ? (enc).base_hw >> 3 : 0)
+#define ENC_REX_X(enc) ((enc).idx_hw >= 0 ? (enc).idx_hw >> 3 : 0)
+
+/* -----------------------------------------------------------------------
+ * SSE instruction emit helpers (step 6)
+ * --------------------------------------------------------------------- */
+
+/* SSE reg-reg:  [pfx] [REX] 0F opc ModRM(11, dst_hw, src_hw) */
+static void emit_sse_rr(PECOFFCtx* ctx, uint8_t pfx, uint8_t opc, int dst_hw, int src_hw) {
+  if (pfx) {
+    emit1(ctx, pfx);
+  }
+  emit_rex(ctx, 0, dst_hw >> 3, 0, src_hw >> 3);
+  emit1(ctx, 0x0F);
+  emit1(ctx, opc);
+  emit1(ctx, (uint8_t)(0xC0 | ((dst_hw & 7) << 3) | (src_hw & 7)));
+}
+
+/* SSE reg-mem:  [pfx] [REX] 0F opc mem_enc  (dst_hw in reg field) */
+static void emit_sse_rm(PECOFFCtx* ctx, uint8_t pfx, uint8_t opc, int dst_hw, const MemEnc* enc) {
+  if (pfx) {
+    emit1(ctx, pfx);
+  }
+  emit_rex(ctx, 0, dst_hw >> 3, ENC_REX_X(*enc), ENC_REX_B(*enc));
+  emit1(ctx, 0x0F);
+  emit1(ctx, opc);
+  emit_mem_enc(ctx, dst_hw, enc);
+}
+
+/* SSE op where src can be XMM register or memory (slot/RMem/RCon) */
+static void emit_sse_op(PECOFFCtx* ctx, uint8_t pfx, uint8_t opc, int dst_hw, Ref src, PE* pe) {
+  MemEnc enc;
+  if (rtype(src) == RTmp && (int)src.val >= QBE_AMD64_XMM0) {
+    emit_sse_rr(ctx, pfx, opc, dst_hw, hwreg(src.val));
+  } else {
+    enc = mem_enc_of_ref(pe, src);
+    emit_sse_rm(ctx, pfx, opc, dst_hw, &enc);
+  }
+}
+
+/* -----------------------------------------------------------------------
+ * Step 5.2 helper: emit integer ALU op (reg OP reg/imm)
+ *
+ * dst_hw  : ModRM "reg" field (primary register -- in rm field for imm form)
+ * src     : second operand: RTmp (register) or RCon CBits (immediate)
+ * reg_op  : opcode for the r64, r/m64 form  (e.g. 0x03 ADD, 0x2B SUB, 0x3B CMP)
+ * imm_op  : opcode for the r/m64, imm32 form (0x81 for most; 0xF7 for TEST)
+ * imm_ext : ModRM /N extension for the imm form (0=ADD, 5=SUB, 7=CMP, 0=TEST)
+ * imm8ok  : 1 if the imm8 shorthand (0x83 /N) is valid; 0 for TEST (F7 only)
+ * acc_op  : accumulator short-form opcode (e.g. 0x05 ADD, 0x2D SUB, 0x3D CMP);
+ *           0 = no short form. Formula: (imm_ext<<3)|5 for standard ALU ops.
+ *           Saves 1 byte vs imm_op+ModRM when dst is rAX/eAX (dst_hw==0).
+ * --------------------------------------------------------------------- */
+static void emit_alu_ri(PECOFFCtx* ctx,
+                        int cls,
+                        int dst_hw,
+                        Ref src,
+                        uint8_t reg_op,
+                        uint8_t imm_op,
+                        uint8_t imm_ext,
+                        int imm8ok,
+                        uint8_t acc_op,
+                        Fn* fn,
+                        PE* pe) {
+  int w = (cls == Kl);
+  int src_hw;
+  int64_t imm;
+  MemEnc enc;
+
+  if (rtype(src) == RCon) {
+    SQ_ASSERT(fn->con[src.val].type == CBits);
+    imm = fn->con[src.val].bits.i;
+    emit_rex(ctx, w, 0, 0, dst_hw >> 3); /* REX.B covers rm=dst_hw */
+    if (imm8ok && imm >= -128 && imm <= 127) {
+      emit1(ctx, 0x83);
+      emit1(ctx, (uint8_t)(0xC0 | (imm_ext << 3) | (dst_hw & 7)));
+      emit1(ctx, (uint8_t)(int8_t)imm);
+    } else if (acc_op && dst_hw == 0) {
+      /* accumulator short form: implicit rAX/eAX, no ModRM (saves 1 byte) */
+      emit1(ctx, acc_op);
+      emit4le(ctx, (uint32_t)(int32_t)imm);
+    } else {
+      emit1(ctx, imm_op);
+      emit1(ctx, (uint8_t)(0xC0 | (imm_ext << 3) | (dst_hw & 7)));
+      emit4le(ctx, (uint32_t)(int32_t)imm);
+    }
+  } else if (rtype(src) == RTmp) {
+    src_hw = hwreg(src.val);
+    emit_rex(ctx, w, dst_hw >> 3, 0, src_hw >> 3);
+    emit1(ctx, reg_op);
+    emit1(ctx, (uint8_t)(0xC0 | ((dst_hw & 7) << 3) | (src_hw & 7)));
+  } else {
+    /* memory operand (RSlot, RMem): use reg_op with memory encoding */
+    enc = mem_enc_of_ref(pe, src);
+    emit_rex(ctx, w, dst_hw >> 3, ENC_REX_X(enc), ENC_REX_B(enc));
+    emit1(ctx, reg_op);
+    emit_mem_enc(ctx, dst_hw, &enc);
+  }
+}
+
+/* -----------------------------------------------------------------------
+ * Instruction encoding (step 5.1: MOV family; step 5.2: ALU/CMP)
+ * --------------------------------------------------------------------- */
+static void pe_emitins(Ins i, PE* pe) {
+  PECOFFCtx* ctx = pe->ctx;
+  Fn* fn = pe->fn;
+  int dst_hw, src_hw, is64;
+  MemEnc enc;
+
+  switch (i.op) {
+    case Onop:
+    case Odbgloc:
+      break;
+
+    /* ----------------------------------------------------------------
+     * Ocopy -- the workhorse: reg<->reg, reg<->slot, const->reg, addr->reg
+     * -------------------------------------------------------------- */
+    case Ocopy: {
+      Con* con;
+      int64_t val;
+      int t0, tdst;
+
+      if (req(i.to, NULL_R) || req(i.arg[0], NULL_R)) {
+        break;
+      }
+      if (req(i.to, i.arg[0])) {
+        break;
+      }
+
+      t0 = rtype(i.arg[0]);
+      tdst = rtype(i.to);
+
+      SQ_ASSERT(tdst != RMem); /* isel guarantee */
+
+      if (tdst == RTmp && (int)i.to.val < QBE_AMD64_XMM0) {
+        dst_hw = hwreg(i.to.val);
+
+        if (t0 == RTmp) {
+          /* reg -> reg */
+          if ((int)i.arg[0].val >= QBE_AMD64_XMM0) {
+            /* XMM -> GPR: MOVQ  66 REX.W 0F 7E /r
+             * reg = xmm (arg[0]), rm = gpr (to) */
+            int xmm_hw = hwreg(i.arg[0].val);
+            emit1(ctx, 0x66);
+            emit_rex(ctx, 1, xmm_hw >> 3, 0, dst_hw >> 3);
+            emit1(ctx, 0x0F);
+            emit1(ctx, 0x7E);
+            emit1(ctx, (uint8_t)(0xC0 | ((xmm_hw & 7) << 3) | (dst_hw & 7)));
+          } else {
+            is64 = (i.cls == Kl);
+            src_hw = hwreg(i.arg[0].val);
+            emit_mov_rr(ctx, dst_hw, src_hw, is64);
+          }
+
+        } else if (t0 == RCon) {
+          con = &fn->con[i.arg[0].val];
+          if (con->type == CBits) {
+            val = con->bits.i;
+            if (i.cls == Kl && val < 0 && (int64_t)(int32_t)val == val) {
+              /* negative fits sign-extended imm32: REX.W C7 /0 imm32
+               * matches GAS "mov $val, %reg" (not movabs) */
+              emit_rex(ctx, 1, 0, 0, dst_hw >> 3);
+              emit1(ctx, 0xC7);
+              emit1(ctx, (uint8_t)(0xC0 | (dst_hw & 7)));
+              emit4le(ctx, (uint32_t)(int32_t)val);
+            } else if (i.cls == Kl && (uint64_t)val > UINT32_MAX) {
+              /* movabsq $imm64, reg64 (10 bytes) */
+              emit_rex(ctx, 1, 0, 0, dst_hw >> 3);
+              emit1(ctx, (uint8_t)(0xB8 + (dst_hw & 7)));
+              emit4le(ctx, (uint32_t)(uint64_t)val);
+              emit4le(ctx, (uint32_t)((uint64_t)val >> 32));
+            } else {
+              /* movl $imm32, reg32 (zero-extends to 64-bit) */
+              if (dst_hw >= 8) {
+                emit1(ctx, 0x41); /* REX.B */
+              }
+              emit1(ctx, (uint8_t)(0xB8 + (dst_hw & 7)));
+              emit4le(ctx, (uint32_t)(int32_t)val);
+            }
+          } else if (con->type == CAddr) {
+            /* leaq sym(%rip), dst */
+            char sname[NString];
+            uint32_t symidx;
+            pe_symname(sname, str(con->sym.id));
+            symidx = pe_findorsym(ctx, sname);
+            emit_rex(ctx, 1, dst_hw >> 3, 0, 0);
+            emit1(ctx, 0x8D); /* LEA */
+            emit1(ctx, (uint8_t)((0 << 6) | ((dst_hw & 7) << 3) | 5));
+            pe_trelocadd(ctx, ctx->textsz, symidx, PE_IMAGE_REL_AMD64_REL32);
+            emit4le(ctx, (uint32_t)(int32_t)con->bits.i);
+          } else {
+            die("pecoff: unimplemented const type in copy");
+          }
+
+        } else if (t0 == RSlot || t0 == RMem) {
+          /* load from memory -> reg */
+          is64 = (i.cls == Kl);
+          enc = mem_enc_of_ref(pe, i.arg[0]);
+          emit_rex(ctx, is64, dst_hw >> 3, ENC_REX_X(enc), ENC_REX_B(enc));
+          emit1(ctx, 0x8B);
+          emit_mem_enc(ctx, dst_hw, &enc);
+        } else {
+          die("pecoff: unimplemented copy source type %d", t0);
+        }
+
+      } else if (tdst == RTmp && (int)i.to.val >= QBE_AMD64_XMM0) {
+        /* XMM destination */
+        uint8_t pfx = KWIDE(i.cls) ? 0xF2u : 0xF3u;
+        int xmm_hw = hwreg(i.to.val);
+
+        if (t0 == RTmp) {
+          if ((int)i.arg[0].val >= QBE_AMD64_XMM0) {
+            /* XMM -> XMM: MOVSS/MOVSD */
+            emit_sse_rr(ctx, pfx, 0x10, xmm_hw, hwreg(i.arg[0].val));
+          } else {
+            /* GPR -> XMM: MOVQ  66 REX.W 0F 6E /r */
+            int gpr_hw = hwreg(i.arg[0].val);
+            emit1(ctx, 0x66);
+            emit_rex(ctx, 1, xmm_hw >> 3, 0, gpr_hw >> 3);
+            emit1(ctx, 0x0F);
+            emit1(ctx, 0x6E);
+            emit1(ctx, (uint8_t)(0xC0 | ((xmm_hw & 7) << 3) | (gpr_hw & 7)));
+          }
+        } else {
+          /* slot/RMem/RCon(CAddr) -> XMM: MOVSS/MOVSD load */
+          enc = mem_enc_of_ref(pe, i.arg[0]);
+          emit_sse_rm(ctx, pfx, 0x10, xmm_hw, &enc);
+        }
+
+      } else if (tdst == RSlot) {
+        if (t0 == RTmp) {
+          if ((int)i.arg[0].val >= QBE_AMD64_XMM0) {
+            /* XMM -> slot: MOVSS/MOVSD store */
+            uint8_t pfx = KWIDE(i.cls) ? 0xF2u : 0xF3u;
+            int xmm_hw = hwreg(i.arg[0].val);
+            enc = mem_enc_of_ref(pe, i.to);
+            emit_sse_rm(ctx, pfx, 0x11, xmm_hw, &enc);
+          } else {
+            /* integer store */
+            is64 = (i.cls == Kl);
+            src_hw = hwreg(i.arg[0].val);
+            enc = mem_enc_of_ref(pe, i.to);
+            emit_rex(ctx, is64, src_hw >> 3, ENC_REX_X(enc), ENC_REX_B(enc));
+            emit1(ctx, 0x89);
+            emit_mem_enc(ctx, src_hw, &enc);
+          }
+        } else if (t0 == RCon) {
+          /* const -> slot: MOV r/m, imm32 (opcode C7 /0) */
+          con = &fn->con[i.arg[0].val];
+          if (con->type != CBits) {
+            die("pecoff: non-CBits const to slot");
+          }
+          val = con->bits.i;
+          is64 = (i.cls == Kl);
+          if (is64 && (val < INT32_MIN || val > INT32_MAX)) {
+            die("pecoff: 64-bit const-to-slot not supported");
+          }
+          enc = mem_enc_of_ref(pe, i.to);
+          emit_rex(ctx, is64, 0, ENC_REX_X(enc), ENC_REX_B(enc));
+          emit1(ctx, 0xC7);           /* MOV r/m, imm32 */
+          emit_mem_enc(ctx, 0, &enc); /* /0 */
+          emit4le(ctx, (uint32_t)(int32_t)val);
+        } else if (t0 == RSlot || t0 == RMem) {
+          /* slot->slot via QBE_AMD64_XMM15 scratch (mirrors text emitter).
+           * Use MOVSS (Kw/integer) or MOVSD (Kl/wide integer). */
+          uint8_t ssepfx = KWIDE(i.cls) ? 0xF2u : 0xF3u;
+          MemEnc srce = mem_enc_of_ref(pe, i.arg[0]);
+          MemEnc dste = mem_enc_of_ref(pe, i.to);
+          /* load src -> QBE_AMD64_XMM15: ssepfx REX(R=1) 0F 10 /r */
+          emit1(ctx, ssepfx);
+          emit1(ctx, (uint8_t)(0x40 | (1 << 2) | (ENC_REX_X(srce) << 1) | ENC_REX_B(srce)));
+          emit1(ctx, 0x0F);
+          emit1(ctx, 0x10);
+          emit_mem_enc(ctx, 15, &srce); /* 15 = xmm15 hw */
+          /* store QBE_AMD64_XMM15 -> dst: ssepfx REX(R=1) 0F 11 /r */
+          emit1(ctx, ssepfx);
+          emit1(ctx, (uint8_t)(0x40 | (1 << 2) | (ENC_REX_X(dste) << 1) | ENC_REX_B(dste)));
+          emit1(ctx, 0x0F);
+          emit1(ctx, 0x11);
+          emit_mem_enc(ctx, 15, &dste);
+        } else {
+          die("pecoff: unimplemented copy source to slot");
+        }
+      } else {
+        die("pecoff: unimplemented copy destination type %d", tdst);
+      }
+      break;
+    }
+
+    /* ----------------------------------------------------------------
+     * FP stores: Ostores (float) and Ostored (double)
+     * arg[0] = source XMM register, arg[1] = destination (memory)
+     * -------------------------------------------------------------- */
+    case Ostores:
+    case Ostored: {
+      uint8_t pfx = (i.op == Ostored) ? 0xF2u : 0xF3u;
+      int xmm_hw = hwreg(i.arg[0].val);
+      enc = mem_enc_of_ref(pe, i.arg[1]);
+      emit_sse_rm(ctx, pfx, 0x11, xmm_hw, &enc);
+      break;
+    }
+
+    /* ----------------------------------------------------------------
+     * Explicit stores: Ostorel/w/h/b
+     * arg[0] = source (RTmp or RCon), arg[1] = destination (memory)
+     * -------------------------------------------------------------- */
+    case Ostorel:
+    case Ostorew:
+    case Ostoreh:
+    case Ostoreb:
+      enc = mem_enc_of_ref(pe, i.arg[1]);
+      if (rtype(i.arg[0]) == RCon) {
+        /* Immediate store: MOV r/m, imm */
+        Con* con = &fn->con[i.arg[0].val];
+        int64_t val = (con->type == CBits) ? con->bits.i : 0;
+        if (con->type == CAddr) {
+          die("pecoff: addr-const store not supported");
+        }
+        if (i.op == Ostoreh) {
+          emit1(ctx, 0x66);
+        }
+        emit_rex(ctx, i.op == Ostorel, 0, ENC_REX_X(enc), ENC_REX_B(enc));
+        emit1(ctx, i.op == Ostoreb ? 0xC6u : 0xC7u); /* /0 */
+        emit_mem_enc(ctx, 0, &enc);
+        switch (i.op) {
+          case Ostorel:
+            emit4le(ctx, (uint32_t)(int32_t)val);
+            break;
+          case Ostorew:
+            emit4le(ctx, (uint32_t)(int32_t)val);
+            break;
+          case Ostoreh:
+            emit1(ctx, (uint8_t)(int8_t)(val >> 0));
+            emit1(ctx, (uint8_t)(int8_t)(val >> 8));
+            break;
+          case Ostoreb:
+            emit1(ctx, (uint8_t)val);
+            break;
+          default:
+            break;
+        }
+      } else {
+        src_hw = hwreg(i.arg[0].val);
+        if (i.op == Ostoreh) {
+          emit1(ctx, 0x66);
+        }
+        /* For byte store: always emit REX if src_hw >= 4 */
+        if (i.op == Ostoreb && src_hw >= 4) {
+          emit1(ctx,
+                (uint8_t)(0x40 | ((src_hw >> 3) << 2) | (ENC_REX_X(enc) << 1) | ENC_REX_B(enc)));
+        } else {
+          emit_rex(ctx, i.op == Ostorel, src_hw >> 3, ENC_REX_X(enc), ENC_REX_B(enc));
+        }
+        emit1(ctx, i.op == Ostoreb ? 0x88u : 0x89u);
+        emit_mem_enc(ctx, src_hw, &enc);
+      }
+      break;
+
+    /* ----------------------------------------------------------------
+     * Explicit loads: Oload and sign/zero-extend variants
+     * arg[0] = source (memory), to = destination (RTmp)
+     * -------------------------------------------------------------- */
+    case Oload:
+      dst_hw = hwreg(i.to.val);
+      enc = mem_enc_of_ref(pe, i.arg[0]);
+      if (KBASE(i.cls) != 0) {
+        /* FP load: MOVSS (Ks) or MOVSD (Kd) */
+        uint8_t pfx = KWIDE(i.cls) ? 0xF2u : 0xF3u;
+        emit_sse_rm(ctx, pfx, 0x10, dst_hw, &enc);
+      } else {
+        is64 = (i.cls == Kl);
+        emit_rex(ctx, is64, dst_hw >> 3, ENC_REX_X(enc), ENC_REX_B(enc));
+        emit1(ctx, 0x8B);
+        emit_mem_enc(ctx, dst_hw, &enc);
+      }
+      break;
+
+    case Oloadsw: /* movslq or movl */
+      dst_hw = hwreg(i.to.val);
+      enc = mem_enc_of_ref(pe, i.arg[0]);
+      if (i.cls == Kl) {
+        /* MOVSXD r64, r/m32: REX.W + 63 /r */
+        emit_rex(ctx, 1, dst_hw >> 3, ENC_REX_X(enc), ENC_REX_B(enc));
+        emit1(ctx, 0x63);
+      } else {
+        /* movl (zero-extends to 64-bit): same as Oload Kw */
+        emit_rex(ctx, 0, dst_hw >> 3, ENC_REX_X(enc), ENC_REX_B(enc));
+        emit1(ctx, 0x8B);
+      }
+      emit_mem_enc(ctx, dst_hw, &enc);
+      break;
+
+    case Oloaduw: /* movl (always zero-extends) */
+      dst_hw = hwreg(i.to.val);
+      enc = mem_enc_of_ref(pe, i.arg[0]);
+      emit_rex(ctx, 0, dst_hw >> 3, ENC_REX_X(enc), ENC_REX_B(enc));
+      emit1(ctx, 0x8B);
+      emit_mem_enc(ctx, dst_hw, &enc);
+      break;
+
+    case Oloadsh: /* MOVSX r, r/m16: 0F BF */
+      dst_hw = hwreg(i.to.val);
+      enc = mem_enc_of_ref(pe, i.arg[0]);
+      emit_rex(ctx, i.cls == Kl, dst_hw >> 3, ENC_REX_X(enc), ENC_REX_B(enc));
+      emit1(ctx, 0x0F);
+      emit1(ctx, 0xBF);
+      emit_mem_enc(ctx, dst_hw, &enc);
+      break;
+
+    case Oloaduh: /* MOVZX r, r/m16: 0F B7 */
+      dst_hw = hwreg(i.to.val);
+      enc = mem_enc_of_ref(pe, i.arg[0]);
+      emit_rex(ctx, 0, dst_hw >> 3, ENC_REX_X(enc), ENC_REX_B(enc));
+      emit1(ctx, 0x0F);
+      emit1(ctx, 0xB7);
+      emit_mem_enc(ctx, dst_hw, &enc);
+      break;
+
+    case Oloadsb: /* MOVSX r, r/m8: 0F BE */
+      dst_hw = hwreg(i.to.val);
+      enc = mem_enc_of_ref(pe, i.arg[0]);
+      emit_rex(ctx, i.cls == Kl, dst_hw >> 3, ENC_REX_X(enc), ENC_REX_B(enc));
+      emit1(ctx, 0x0F);
+      emit1(ctx, 0xBE);
+      emit_mem_enc(ctx, dst_hw, &enc);
+      break;
+
+    case Oloadub: /* MOVZX r, r/m8: 0F B6 */
+      dst_hw = hwreg(i.to.val);
+      enc = mem_enc_of_ref(pe, i.arg[0]);
+      emit_rex(ctx, 0, dst_hw >> 3, ENC_REX_X(enc), ENC_REX_B(enc));
+      emit1(ctx, 0x0F);
+      emit1(ctx, 0xB6);
+      emit_mem_enc(ctx, dst_hw, &enc);
+      break;
+
+    /* ----------------------------------------------------------------
+     * Register sign/zero extension (register-to-register forms)
+     * -------------------------------------------------------------- */
+    case Oextsw: /* MOVSXD r64, r/m32: REX.W + 63 /r (reg, mod=11) */
+      dst_hw = hwreg(i.to.val);
+      src_hw = hwreg(i.arg[0].val);
+      emit_rex(ctx, 1, dst_hw >> 3, 0, src_hw >> 3);
+      emit1(ctx, 0x63);
+      emit1(ctx, (uint8_t)(0xC0 | ((dst_hw & 7) << 3) | (src_hw & 7)));
+      break;
+
+    case Oextuw: /* movl r32, r32 -- zero-extends: 8B /r, no REX.W */
+      dst_hw = hwreg(i.to.val);
+      src_hw = hwreg(i.arg[0].val);
+      emit_rex(ctx, 0, dst_hw >> 3, 0, src_hw >> 3);
+      emit1(ctx, 0x8B);
+      emit1(ctx, (uint8_t)(0xC0 | ((dst_hw & 7) << 3) | (src_hw & 7)));
+      break;
+
+    case Oextsh: /* MOVSX r, r/m16: 0F BF /r */
+      dst_hw = hwreg(i.to.val);
+      src_hw = hwreg(i.arg[0].val);
+      emit_rex(ctx, i.cls == Kl, dst_hw >> 3, 0, src_hw >> 3);
+      emit1(ctx, 0x0F);
+      emit1(ctx, 0xBF);
+      emit1(ctx, (uint8_t)(0xC0 | ((dst_hw & 7) << 3) | (src_hw & 7)));
+      break;
+
+    case Oextuh: /* MOVZX r, r/m16: 0F B7 /r */
+      dst_hw = hwreg(i.to.val);
+      src_hw = hwreg(i.arg[0].val);
+      emit_rex(ctx, 0, dst_hw >> 3, 0, src_hw >> 3);
+      emit1(ctx, 0x0F);
+      emit1(ctx, 0xB7);
+      emit1(ctx, (uint8_t)(0xC0 | ((dst_hw & 7) << 3) | (src_hw & 7)));
+      break;
+
+    case Oextsb: /* MOVSX r, r/m8: 0F BE /r */
+      dst_hw = hwreg(i.to.val);
+      src_hw = hwreg(i.arg[0].val);
+      /* byte source: REX needed if src_hw 4-7 to avoid AH/BH/CH/DH */
+      if (src_hw >= 4) {
+        emit1(ctx, (uint8_t)(0x40 | ((dst_hw >> 3) << 2) | (src_hw >> 3)));
+      } else {
+        emit_rex(ctx, i.cls == Kl, dst_hw >> 3, 0, src_hw >> 3);
+      }
+      emit1(ctx, 0x0F);
+      emit1(ctx, 0xBE);
+      emit1(ctx, (uint8_t)(0xC0 | ((dst_hw & 7) << 3) | (src_hw & 7)));
+      break;
+
+    case Oextub: /* MOVZX r, r/m8: 0F B6 /r */
+      dst_hw = hwreg(i.to.val);
+      src_hw = hwreg(i.arg[0].val);
+      if (src_hw >= 4) {
+        emit1(ctx, (uint8_t)(0x40 | ((dst_hw >> 3) << 2) | (src_hw >> 3)));
+      } else {
+        emit_rex(ctx, 0, dst_hw >> 3, 0, src_hw >> 3);
+      }
+      emit1(ctx, 0x0F);
+      emit1(ctx, 0xB6);
+      emit1(ctx, (uint8_t)(0xC0 | ((dst_hw & 7) << 3) | (src_hw & 7)));
+      break;
+
+    /* ----------------------------------------------------------------
+     * LEA -- address of memory operand (local or global)
+     * -------------------------------------------------------------- */
+    case Oaddr:
+      dst_hw = hwreg(i.to.val);
+      enc = mem_enc_of_ref(pe, i.arg[0]);
+      /* Always 64-bit result; RIP-relative handled inside emit_mem_enc */
+      emit_rex(ctx, 1, dst_hw >> 3, ENC_REX_X(enc), ENC_REX_B(enc));
+      emit1(ctx, 0x8D);
+      emit_mem_enc(ctx, dst_hw, &enc);
+      break;
+
+    /* ----------------------------------------------------------------
+     * Osign -- sign-extend QBE_AMD64_RAX/EAX into QBE_AMD64_RDX:QBE_AMD64_RAX / EDX:EAX
+     * cqto (Kl): 48 99    cltd (Kw): 99
+     * -------------------------------------------------------------- */
+    case Osign:
+      if (i.cls == Kl) {
+        emit1(ctx, 0x48); /* REX.W */
+      }
+      emit1(ctx, 0x99); /* CWD/CDQ/CQO */
+      break;
+
+    /* ----------------------------------------------------------------
+     * Omul -- integer multiply (mirrors emit.c Omul logic)
+     * 3-address (imm × reg -> reg): IMUL r, r/m, imm   6B/69 /r
+     * 2-address (reg × reg):       IMUL r, r/m         0F AF /r
+     * -------------------------------------------------------------- */
+    case Omul: {
+      Ref a0, a1;
+      int w, to_h, s_h;
+      int64_t imm;
+      if (KBASE(i.cls) != 0) {
+        /* FP multiply: MULSS (F3 0F 59) or MULSD (F2 0F 59), commutative */
+        uint8_t pfx = KWIDE(i.cls) ? 0xF2u : 0xF3u;
+        a0 = i.arg[0];
+        a1 = i.arg[1];
+        if (req(i.to, a1)) {
+          Ref t = a0;
+          a0 = a1;
+          a1 = t;
+        }
+        if (!req(i.to, a0)) {
+          Ins cp;
+          cp.op = Ocopy;
+          cp.cls = i.cls;
+          cp.to = i.to;
+          cp.arg[0] = a0;
+          cp.arg[1] = NULL_R;
+          pe_emitins(cp, pe);
+        }
+        emit_sse_op(ctx, pfx, 0x59, hwreg(i.to.val), a1, pe);
+        break;
+      }
+      w = (i.cls == Kl);
+      a0 = i.arg[0];
+      a1 = i.arg[1];
+      /* Normalise: prefer imm in arg[0] */
+      if (rtype(a1) == RCon) {
+        Ref t = a0;
+        a0 = a1;
+        a1 = t;
+      }
+      if (rtype(a0) == RCon && rtype(a1) == RTmp) {
+        /* 3-address: to = a1_reg * a0_imm */
+        SQ_ASSERT(fn->con[a0.val].type == CBits);
+        imm = fn->con[a0.val].bits.i;
+        to_h = hwreg(i.to.val);
+        s_h = hwreg(a1.val);
+        emit_rex(ctx, w, to_h >> 3, 0, s_h >> 3);
+        if (imm >= -128 && imm <= 127) {
+          emit1(ctx, 0x6B);
+          emit1(ctx, (uint8_t)(0xC0 | ((to_h & 7) << 3) | (s_h & 7)));
+          emit1(ctx, (uint8_t)(int8_t)imm);
+        } else {
+          emit1(ctx, 0x69);
+          emit1(ctx, (uint8_t)(0xC0 | ((to_h & 7) << 3) | (s_h & 7)));
+          emit4le(ctx, (uint32_t)(int32_t)imm);
+        }
+      } else {
+        /* 2-address commutative: to = arg[0] * arg[1] */
+        if (req(i.to, a1)) {
+          Ref t = a0;
+          a0 = a1;
+          a1 = t;
+        }
+        if (!req(i.to, a0)) {
+          Ins cp;
+          cp.op = Ocopy;
+          cp.cls = i.cls;
+          cp.to = i.to;
+          cp.arg[0] = a0;
+          cp.arg[1] = NULL_R;
+          pe_emitins(cp, pe);
+        }
+        to_h = hwreg(i.to.val);
+        s_h = hwreg(a1.val);
+        emit_rex(ctx, w, to_h >> 3, 0, s_h >> 3);
+        emit1(ctx, 0x0F);
+        emit1(ctx, 0xAF);
+        emit1(ctx, (uint8_t)(0xC0 | ((to_h & 7) << 3) | (s_h & 7)));
+      }
+      break;
+    }
+
+    /* ----------------------------------------------------------------
+     * Odiv -- FP divide only (integer divide is Oxdiv/Oxidiv after isel)
+     * DIVSS: F3 0F 5E /r   DIVSD: F2 0F 5E /r
+     * When to == arg[1], save arg[1] in QBE_AMD64_XMM15, copy arg[0] to to, divide.
+     * -------------------------------------------------------------- */
+    case Odiv: {
+      uint8_t pfx = KWIDE(i.cls) ? 0xF2u : 0xF3u;
+      if (req(i.to, i.arg[1])) {
+        int to_hw = hwreg(i.to.val);
+        emit_sse_rr(ctx, pfx, 0x10, 15, to_hw); /* xmm15 = to */
+        if (!req(i.to, i.arg[0])) {
+          Ins cp;
+          cp.op = Ocopy;
+          cp.cls = i.cls;
+          cp.to = i.to;
+          cp.arg[0] = i.arg[0];
+          cp.arg[1] = NULL_R;
+          pe_emitins(cp, pe);
+        }
+        emit_sse_rr(ctx, pfx, 0x5E, to_hw, 15); /* to /= xmm15 */
+      } else {
+        if (!req(i.to, i.arg[0])) {
+          Ins cp;
+          cp.op = Ocopy;
+          cp.cls = i.cls;
+          cp.to = i.to;
+          cp.arg[0] = i.arg[0];
+          cp.arg[1] = NULL_R;
+          pe_emitins(cp, pe);
+        }
+        emit_sse_op(ctx, pfx, 0x5E, hwreg(i.to.val), i.arg[1], pe);
+      }
+      break;
+    }
+
+    /* ----------------------------------------------------------------
+     * Oxdiv / Oxidiv -- unsigned/signed divide: divisor in arg[0]
+     * Implicit dividend QBE_AMD64_RDX:QBE_AMD64_RAX; result QBE_AMD64_RAX (quotient), QBE_AMD64_RDX (rem).
+     * DIV r/m: F7 /6    IDIV r/m: F7 /7
+     * -------------------------------------------------------------- */
+    case Oxdiv:
+    case Oxidiv: {
+      int ext = (i.op == Oxidiv) ? 7 : 6;
+      int r = hwreg(i.arg[0].val);
+      emit_rex(ctx, i.cls == Kl, 0, 0, r >> 3);
+      emit1(ctx, 0xF7);
+      emit1(ctx, (uint8_t)(0xC0 | (ext << 3) | (r & 7)));
+      break;
+    }
+
+    /* ----------------------------------------------------------------
+     * Ocall -- direct call (E8 rel32) or indirect call (FF /2)
+     * arg[0]: RCon CAddr (direct) or RTmp (indirect via register)
+     * arg[1]: CALL(...) register-usage mask -- ignored here (abi handled)
+     * -------------------------------------------------------------- */
+    case Ocall: {
+      Con* con;
+      char sname[NString];
+      uint32_t symidx;
+      int r;
+      switch (rtype(i.arg[0])) {
+        case RCon:
+          con = &fn->con[i.arg[0].val];
+          SQ_ASSERT(con->type == CAddr);
+          pe_symname(sname, str(con->sym.id));
+          symidx = pe_findorsym(ctx, sname);
+          emit1(ctx, 0xE8); /* CALL rel32 */
+          pe_trelocadd(ctx, ctx->textsz, symidx, PE_IMAGE_REL_AMD64_REL32);
+          emit4le(ctx, (uint32_t)(int32_t)con->bits.i); /* addend */
+          break;
+        case RTmp:
+          r = hwreg(i.arg[0].val);
+          if (r >= 8) {
+            emit1(ctx, (uint8_t)(0x41 | 0)); /* REX.B */
+          }
+          emit1(ctx, 0xFF);
+          emit1(ctx, (uint8_t)(0xC0 | (2 << 3) | (r & 7))); /* /2 */
+          break;
+        default:
+          die("pecoff: invalid Ocall target type");
+      }
+      break;
+    }
+
+    /* ----------------------------------------------------------------
+     * Osalloc -- stack allocation for call shadow space / stack args
+     * Emits: subq arg[0], %rsp    (arg[0] may be negative = dealloc)
+     *   and: movq %rsp, to        (if to != NULL_R)
+     * QBE_AMD64_RSP hw index = 4.
+     * -------------------------------------------------------------- */
+    case Osalloc:
+      /* subq arg[0], %rsp -- reuse SUB logic: dst_hw=QBE_AMD64_RSP(4) */
+      emit_alu_ri(ctx, Kl, 4 /*QBE_AMD64_RSP*/, i.arg[0], 0x2B, 0x81, 5, 1, 0, fn, pe);
+      if (!req(i.to, NULL_R)) {
+        /* movq %rsp, to: MOV r64, r/m64 (8B) rm=QBE_AMD64_RSP(4) */
+        dst_hw = hwreg(i.to.val);
+        emit_mov_rr(ctx, dst_hw, 4 /*QBE_AMD64_RSP*/, 1);
+      }
+      break;
+
+    /* ----------------------------------------------------------------
+     * Oadd -- commutative 2-address: to = arg[0] + arg[1]
+     * -------------------------------------------------------------- */
+    case Oadd: {
+      Ref a0, a1;
+      if (KBASE(i.cls) != 0) {
+        /* FP add: ADDSS (F3 0F 58) or ADDSD (F2 0F 58), commutative */
+        uint8_t pfx = KWIDE(i.cls) ? 0xF2u : 0xF3u;
+        a0 = i.arg[0];
+        a1 = i.arg[1];
+        if (req(i.to, a1)) {
+          Ref t = a0;
+          a0 = a1;
+          a1 = t;
+        }
+        if (!req(i.to, a0)) {
+          Ins cp;
+          cp.op = Ocopy;
+          cp.cls = i.cls;
+          cp.to = i.to;
+          cp.arg[0] = a0;
+          cp.arg[1] = NULL_R;
+          pe_emitins(cp, pe);
+        }
+        emit_sse_op(ctx, pfx, 0x58, hwreg(i.to.val), a1, pe);
+        break;
+      }
+      a0 = i.arg[0];
+      a1 = i.arg[1];
+      /* commutativity: if to == arg[1], swap so to matches arg[0] */
+      if (req(i.to, a1)) {
+        Ref t = a0;
+        a0 = a1;
+        a1 = t;
+      }
+      /* 3->2 address: copy arg[0] into to if not already there */
+      if (!req(i.to, a0)) {
+        Ins cp;
+        cp.op = Ocopy;
+        cp.cls = i.cls;
+        cp.to = i.to;
+        cp.arg[0] = a0;
+        cp.arg[1] = NULL_R;
+        pe_emitins(cp, pe);
+      }
+      dst_hw = hwreg(i.to.val);
+      emit_alu_ri(ctx, i.cls, dst_hw, a1, 0x03, 0x81, 0, 1, 0x05, fn, pe);
+      break;
+    }
+
+    /* ----------------------------------------------------------------
+     * Osub -- 2-address: to = arg[0] - arg[1]
+     * When to == arg[1] != arg[0], use negation trick (as emit.c does).
+     * -------------------------------------------------------------- */
+    case Osub: {
+      Ref a0, a1;
+      if (KBASE(i.cls) != 0) {
+        /* FP sub: SUBSS (F3 0F 5C) or SUBSD (F2 0F 5C) */
+        uint8_t pfx = KWIDE(i.cls) ? 0xF2u : 0xF3u;
+        if (req(i.to, i.arg[1]) && !req(i.to, i.arg[0])) {
+          /* to = arg[0] - to: save to in QBE_AMD64_XMM15, load arg[0], subtract */
+          int to_hw = hwreg(i.to.val);
+          emit_sse_rr(ctx, pfx, 0x10, 15, to_hw); /* xmm15 = to */
+          Ins cp;
+          cp.op = Ocopy;
+          cp.cls = i.cls;
+          cp.to = i.to;
+          cp.arg[0] = i.arg[0];
+          cp.arg[1] = NULL_R;
+          pe_emitins(cp, pe);
+          emit_sse_rr(ctx, pfx, 0x5C, to_hw, 15);
+        } else {
+          if (!req(i.to, i.arg[0])) {
+            Ins cp;
+            cp.op = Ocopy;
+            cp.cls = i.cls;
+            cp.to = i.to;
+            cp.arg[0] = i.arg[0];
+            cp.arg[1] = NULL_R;
+            pe_emitins(cp, pe);
+          }
+          emit_sse_op(ctx, pfx, 0x5C, hwreg(i.to.val), i.arg[1], pe);
+        }
+        break;
+      }
+      a0 = i.arg[0];
+      a1 = i.arg[1];
+      if (req(i.to, a1) && !req(i.to, a0)) {
+        /* to = a1; NEG to; to += a0 */
+        dst_hw = hwreg(i.to.val);
+        emit_rex(ctx, i.cls == Kl, 0, 0, dst_hw >> 3);
+        emit1(ctx, 0xF7); /* NEG r/m: /3 */
+        emit1(ctx, (uint8_t)(0xC0 | (3 << 3) | (dst_hw & 7)));
+        emit_alu_ri(ctx, i.cls, dst_hw, a0, 0x03, 0x81, 0, 1, 0x05, fn, pe);
+        break;
+      }
+      if (!req(i.to, a0)) {
+        Ins cp;
+        cp.op = Ocopy;
+        cp.cls = i.cls;
+        cp.to = i.to;
+        cp.arg[0] = a0;
+        cp.arg[1] = NULL_R;
+        pe_emitins(cp, pe);
+      }
+      dst_hw = hwreg(i.to.val);
+      emit_alu_ri(ctx, i.cls, dst_hw, a1, 0x2B, 0x81, 5, 1, 0x2D, fn, pe);
+      break;
+    }
+
+    /* ----------------------------------------------------------------
+     * Oneg -- unary negate: to = -arg[0]   (F7 /3)
+     * -------------------------------------------------------------- */
+    case Oneg:
+      if (KBASE(i.cls) != 0) {
+        /* FP negate: XORPS/XORPD with negmask from .rdata
+         * XORPS (Ks): NP 0F 57 /r   XORPD (Kd): 66 0F 57 /r */
+        static const bits pe_negmask[4] = {[Ks] = 0x80000000ULL, [Kd] = 0x8000000000000000ULL};
+        char sname[NString];
+        uint32_t symidx;
+        MemEnc neg_enc;
+        int idx = stashbits(pe_negmask[i.cls], 16);
+        if (!req(i.to, i.arg[0])) {
+          Ins cp;
+          cp.op = Ocopy;
+          cp.cls = i.cls;
+          cp.to = i.to;
+          cp.arg[0] = i.arg[0];
+          cp.arg[1] = NULL_R;
+          pe_emitins(cp, pe);
+        }
+        dst_hw = hwreg(i.to.val);
+        snprintf(sname, NString, "Lfp%d", idx);
+        symidx = pe_findorsym(ctx, sname);
+        memset(&neg_enc, 0, sizeof neg_enc);
+        neg_enc.base_hw = -1; /* RIP-relative */
+        neg_enc.idx_hw = -1;
+        neg_enc.scale = 1;
+        neg_enc.rip_sym = symidx;
+        neg_enc.rip_addend = 0;
+        /* XORPS (Ks: no prefix) or XORPD (Kd: 0x66 prefix) */
+        emit_sse_rm(ctx, KWIDE(i.cls) ? 0x66u : 0u, 0x57, dst_hw, &neg_enc);
+        break;
+      }
+      if (!req(i.to, i.arg[0])) {
+        Ins cp;
+        cp.op = Ocopy;
+        cp.cls = i.cls;
+        cp.to = i.to;
+        cp.arg[0] = i.arg[0];
+        cp.arg[1] = NULL_R;
+        pe_emitins(cp, pe);
+      }
+      dst_hw = hwreg(i.to.val);
+      emit_rex(ctx, i.cls == Kl, 0, 0, dst_hw >> 3);
+      emit1(ctx, 0xF7);
+      emit1(ctx, (uint8_t)(0xC0 | (3 << 3) | (dst_hw & 7)));
+      break;
+
+    /* ----------------------------------------------------------------
+     * Oxcmp -- compare (sets flags, no result): cmpq arg[0], arg[1]
+     * AT&T:  cmp src, dst  ->  flags for dst - src
+     * Intel: CMP r64, r/m64 (3B /r): reg=arg[1], rm=arg[0] -> arg[1]-arg[0]
+     * -------------------------------------------------------------- */
+    case Oxcmp:
+      if (KBASE(i.cls) != 0) {
+        /* UCOMISS (Ks): NP 0F 2E /r  UCOMISD (Kd): 66 0F 2E /r
+         * AT&T: ucomiss arg[0], arg[1] -> reg=arg[1], rm=arg[0] */
+        uint8_t pfx = KWIDE(i.cls) ? 0x66u : 0u;
+        emit_sse_op(ctx, pfx, 0x2E, hwreg(i.arg[1].val), i.arg[0], pe);
+        break;
+      }
+      emit_alu_ri(ctx, i.cls, hwreg(i.arg[1].val), i.arg[0], 0x3B, 0x81, 7, 1, 0x3D, fn, pe);
+      break;
+
+    /* ----------------------------------------------------------------
+     * Oxtest -- bitwise AND for flags (TEST r/m, r  or  TEST r/m, imm32)
+     * Text emitter: "test%k %0, %1" so GAS writes test %arg[0], %arg[1].
+     * In AT&T test %src, %dst: src=reg field, dst=r/m field.
+     * For reg-reg: reg=arg[0], rm=arg[1] (matches GAS).
+     * For imm: arg[0]=imm, arg[1]=reg; TEST r/m(arg[1]), imm(arg[0]).
+     * -------------------------------------------------------------- */
+    case Oxtest:
+      if (KBASE(i.cls) != 0) {
+        die("pecoff: fp Oxtest not yet supported");
+      }
+      if (rtype(i.arg[0]) == RTmp) {
+        /* reg-reg: arg[0] in reg field, arg[1] in r/m -- matches GAS */
+        emit_alu_ri(ctx, i.cls, hwreg(i.arg[0].val), i.arg[1], 0x85, 0xF7, 0, 0, 0xA9, fn, pe);
+      } else {
+        /* imm in arg[0], reg in arg[1]: TEST r/m(arg[1]), imm */
+        emit_alu_ri(ctx, i.cls, hwreg(i.arg[1].val), i.arg[0], 0x85, 0xF7, 0, 0, 0xA9, fn, pe);
+      }
+      break;
+
+    /* ----------------------------------------------------------------
+     * Oand / Oor / Oxor -- commutative bitwise ops (mirror Oadd)
+     * Opcodes: AND 23/81/4  OR 0B/81/1  XOR 33/81/6
+     * -------------------------------------------------------------- */
+    case Oand:
+    case Oor:
+    case Oxor: {
+      static const uint8_t bop_reg[] = {0x23, 0x0B, 0x33};
+      static const uint8_t bop_ext[] = {4, 1, 6};
+      int op = i.op - Oand;
+      Ref a0, a1;
+      if (KBASE(i.cls) != 0) {
+        die("pecoff: fp bitwise op not supported");
+      }
+      a0 = i.arg[0];
+      a1 = i.arg[1];
+      if (req(i.to, a1)) {
+        Ref t = a0;
+        a0 = a1;
+        a1 = t;
+      }
+      if (!req(i.to, a0)) {
+        Ins cp;
+        cp.op = Ocopy;
+        cp.cls = i.cls;
+        cp.to = i.to;
+        cp.arg[0] = a0;
+        cp.arg[1] = NULL_R;
+        pe_emitins(cp, pe);
+      }
+      dst_hw = hwreg(i.to.val);
+      emit_alu_ri(ctx, i.cls, dst_hw, a1, bop_reg[op], 0x81, bop_ext[op], 1,
+                  (uint8_t)((bop_ext[op] << 3) | 5), fn, pe);
+      break;
+    }
+
+    /* ----------------------------------------------------------------
+     * Osar / Oshr / Oshl -- shift ops  (non-commutative: to = arg[0])
+     * arg[1] = shift count: RCon->C1/imm8  or  RTmp(CL)->D3
+     * SAR: /7   SHR: /5   SHL: /4
+     * -------------------------------------------------------------- */
+    case Osar:
+    case Oshr:
+    case Oshl: {
+      static const uint8_t shext[] = {7, 5, 4};
+      int op = i.op - Osar;
+      int w = (i.cls == Kl);
+      if (!req(i.to, i.arg[0])) {
+        Ins cp;
+        cp.op = Ocopy;
+        cp.cls = i.cls;
+        cp.to = i.to;
+        cp.arg[0] = i.arg[0];
+        cp.arg[1] = NULL_R;
+        pe_emitins(cp, pe);
+      }
+      dst_hw = hwreg(i.to.val);
+      emit_rex(ctx, w, 0, 0, dst_hw >> 3);
+      if (rtype(i.arg[1]) == RCon) {
+        int64_t imm = fn->con[i.arg[1].val].bits.i;
+        if (imm == 1) {
+          /* D1 /x: 2-byte shift-by-1 form, matches GAS */
+          emit1(ctx, 0xD1);
+          emit1(ctx, (uint8_t)(0xC0 | (shext[op] << 3) | (dst_hw & 7)));
+        } else {
+          emit1(ctx, 0xC1);
+          emit1(ctx, (uint8_t)(0xC0 | (shext[op] << 3) | (dst_hw & 7)));
+          emit1(ctx, (uint8_t)(imm & 63));
+        }
+      } else {
+        /* shift count must be in CL */
+        emit1(ctx, 0xD3);
+        emit1(ctx, (uint8_t)(0xC0 | (shext[op] << 3) | (dst_hw & 7)));
+      }
+      break;
+    }
+
+    /* ----------------------------------------------------------------
+     * Oswap -- exchange two integer registers: XCHG r/m, r  (87 /r)
+     * Text emitter: "xchg%k %0, %1" so GAS encodes arg[0] as reg field.
+     * -------------------------------------------------------------- */
+    case Oswap: {
+      int r0, r1, w;
+      if (KBASE(i.cls) != 0) {
+        die("pecoff: fp Oswap not supported");
+      }
+      w = (i.cls == Kl);
+      r0 = hwreg(i.arg[0].val); /* reg field */
+      r1 = hwreg(i.arg[1].val); /* r/m field */
+      emit_rex(ctx, w, r0 >> 3, 0, r1 >> 3);
+      emit1(ctx, 0x87);
+      emit1(ctx, (uint8_t)(0xC0 | ((r0 & 7) << 3) | (r1 & 7)));
+      break;
+    }
+
+    /* ----------------------------------------------------------------
+     * FP conversions
+     * -------------------------------------------------------------- */
+    case Oexts: /* Ks -> Kd: CVTSS2SD  F3 0F 5A /r */
+      emit_sse_op(ctx, 0xF3, 0x5A, hwreg(i.to.val), i.arg[0], pe);
+      break;
+
+    case Otruncd: /* Kd -> Ks: CVTSD2SS  F2 0F 5A /r */
+      emit_sse_op(ctx, 0xF2, 0x5A, hwreg(i.to.val), i.arg[0], pe);
+      break;
+
+    case Ostosi: { /* Ks -> Kw/Kl: CVTTSS2SI  F3 [REX.W] 0F 2C /r */
+      int gpr_hw = hwreg(i.to.val);
+      int xmm_hw = hwreg(i.arg[0].val);
+      emit1(ctx, 0xF3);
+      emit_rex(ctx, i.cls == Kl, gpr_hw >> 3, 0, xmm_hw >> 3);
+      emit1(ctx, 0x0F);
+      emit1(ctx, 0x2C);
+      emit1(ctx, (uint8_t)(0xC0 | ((gpr_hw & 7) << 3) | (xmm_hw & 7)));
+      break;
+    }
+
+    case Odtosi: { /* Kd -> Kw/Kl: CVTTSD2SI  F2 [REX.W] 0F 2C /r */
+      int gpr_hw = hwreg(i.to.val);
+      int xmm_hw = hwreg(i.arg[0].val);
+      emit1(ctx, 0xF2);
+      emit_rex(ctx, i.cls == Kl, gpr_hw >> 3, 0, xmm_hw >> 3);
+      emit1(ctx, 0x0F);
+      emit1(ctx, 0x2C);
+      emit1(ctx, (uint8_t)(0xC0 | ((gpr_hw & 7) << 3) | (xmm_hw & 7)));
+      break;
+    }
+
+    case Oswtof: { /* Kw -> Ks/Kd: CVTSI2SS/SD  F3/F2 0F 2A /r (no REX.W) */
+      uint8_t pfx = KWIDE(i.cls) ? 0xF2u : 0xF3u;
+      int xmm_hw = hwreg(i.to.val);
+      int gpr_hw = hwreg(i.arg[0].val);
+      emit1(ctx, pfx);
+      emit_rex(ctx, 0, xmm_hw >> 3, 0, gpr_hw >> 3);
+      emit1(ctx, 0x0F);
+      emit1(ctx, 0x2A);
+      emit1(ctx, (uint8_t)(0xC0 | ((xmm_hw & 7) << 3) | (gpr_hw & 7)));
+      break;
+    }
+
+    case Osltof: { /* Kl -> Ks/Kd: CVTSI2SS/SD  F3/F2 REX.W 0F 2A /r */
+      uint8_t pfx = KWIDE(i.cls) ? 0xF2u : 0xF3u;
+      int xmm_hw = hwreg(i.to.val);
+      int gpr_hw = hwreg(i.arg[0].val);
+      emit1(ctx, pfx);
+      emit_rex(ctx, 1, xmm_hw >> 3, 0, gpr_hw >> 3);
+      emit1(ctx, 0x0F);
+      emit1(ctx, 0x2A);
+      emit1(ctx, (uint8_t)(0xC0 | ((xmm_hw & 7) << 3) | (gpr_hw & 7)));
+      break;
+    }
+
+    case Ocast:
+      if (KBASE(i.cls) == 0) {
+        /* XMM -> GPR: MOVQ  66 REX.W 0F 7E /r
+         * reg field = xmm (arg[0]), rm field = gpr (to) */
+        int xmm_hw = hwreg(i.arg[0].val);
+        int gpr_hw = hwreg(i.to.val);
+        emit1(ctx, 0x66);
+        emit_rex(ctx, 1, xmm_hw >> 3, 0, gpr_hw >> 3);
+        emit1(ctx, 0x0F);
+        emit1(ctx, 0x7E);
+        emit1(ctx, (uint8_t)(0xC0 | ((xmm_hw & 7) << 3) | (gpr_hw & 7)));
+      } else {
+        /* GPR -> XMM: MOVQ  66 REX.W 0F 6E /r
+         * reg field = xmm (to), rm field = gpr (arg[0]) */
+        int gpr_hw = hwreg(i.arg[0].val);
+        int xmm_hw = hwreg(i.to.val);
+        emit1(ctx, 0x66);
+        emit_rex(ctx, 1, xmm_hw >> 3, 0, gpr_hw >> 3);
+        emit1(ctx, 0x0F);
+        emit1(ctx, 0x6E);
+        emit1(ctx, (uint8_t)(0xC0 | ((xmm_hw & 7) << 3) | (gpr_hw & 7)));
+      }
+      break;
+
+    default:
+      if (i.op >= Oflag && i.op <= Oflag1) {
+        goto case_oflag;
+      }
+      if (isxsel(i.op)) {
+        goto case_oxsel;
+      }
+      die("pecoff: unimplemented instruction %d (%s)", i.op, optab[i.op].name);
+
+    /* ----------------------------------------------------------------
+     * Oflag* -- set integer register from flags (setcc + movzbl)
+     * Condition index: c = i.op - Oflag   (0=ieq..17=fuo)
+     * setXX r/m8:   0F (90+cc) ModRM(11,0,dst)
+     * movzbl r8,r32: 0F B6     ModRM(11,dst,dst)   [zero-extends to 64]
+     * -------------------------------------------------------------- */
+    case_oflag: {
+      int c = i.op - Oflag;
+      uint8_t op2 = (uint8_t)((jcc_opc[c] & 0x0F) | 0x90);
+      dst_hw = hwreg(i.to.val);
+      /* setXX: need REX if dst_hw >= 4 (byte-reg disambiguation or ext) */
+      if (dst_hw >= 4) {
+        emit1(ctx, (uint8_t)(0x40 | (dst_hw >> 3)));
+      }
+      emit1(ctx, 0x0F);
+      emit1(ctx, op2);
+      emit1(ctx, (uint8_t)(0xC0 | (dst_hw & 7)));
+      /* movzbl r8, r32: REX needed if dst_hw >= 4 (same reason as above)
+       * REX.R extends the reg field, REX.B extends the rm field; both are dst_hw */
+      if (dst_hw >= 4) {
+        emit1(ctx, (uint8_t)(0x40 | ((dst_hw >> 3) << 2) | (dst_hw >> 3)));
+      }
+      emit1(ctx, 0x0F);
+      emit1(ctx, 0xB6); /* MOVZX r32, r/m8 */
+      emit1(ctx, (uint8_t)(0xC0 | ((dst_hw & 7) << 3) | (dst_hw & 7)));
+      break;
+    }
+
+    /* ----------------------------------------------------------------
+     * Oxsel* -- conditional move (cmov): integer only (float = step 6)
+     * Condition index: c = i.op - Oxsel
+     * Semantics (mirrors emit.c case_Oxsel):
+     *   if to == arg[1]: cmov_c  arg[0]->to  (move arg[0] if condition true)
+     *   else:            [copy arg[0]->to if needed]; cmov_nc arg[1]->to
+     * CMOVcc r64, r/m64: REX.W + 0F (40+cc) ModRM(11,to,src)
+     * -------------------------------------------------------------- */
+    case_oxsel: {
+      int c, to_h, s0_h, s1_h, w;
+      uint8_t cmovc, cmovnc;
+      if (KBASE(i.cls) != 0) {
+        die("pecoff: fp Oxsel not yet supported");
+      }
+      c = i.op - Oxsel;
+      w = (i.cls == Kl);
+      cmovc = (uint8_t)((jcc_opc[c] & 0x0F) | 0x40);
+      cmovnc = (uint8_t)(((jcc_opc[c] ^ 1) & 0x0F) | 0x40);
+      to_h = hwreg(i.to.val);
+      if (req(i.to, i.arg[1])) {
+        /* cmov_c arg[0] -> to */
+        s0_h = hwreg(i.arg[0].val);
+        emit_rex(ctx, w, to_h >> 3, 0, s0_h >> 3);
+        emit1(ctx, 0x0F);
+        emit1(ctx, cmovc);
+        emit1(ctx, (uint8_t)(0xC0 | ((to_h & 7) << 3) | (s0_h & 7)));
+      } else {
+        if (!req(i.to, i.arg[0])) {
+          Ins cp;
+          cp.op = Ocopy;
+          cp.cls = i.cls;
+          cp.to = i.to;
+          cp.arg[0] = i.arg[0];
+          cp.arg[1] = NULL_R;
+          pe_emitins(cp, pe);
+        }
+        /* cmov_nc arg[1] -> to */
+        s1_h = hwreg(i.arg[1].val);
+        emit_rex(ctx, w, to_h >> 3, 0, s1_h >> 3);
+        emit1(ctx, 0x0F);
+        emit1(ctx, cmovnc);
+        emit1(ctx, (uint8_t)(0xC0 | ((to_h & 7) << 3) | (s1_h & 7)));
+      }
+      break;
+    }
+  }
+}
+
+/* -----------------------------------------------------------------------
+ * Public API
+ * --------------------------------------------------------------------- */
+PECOFFCtx* pecoff_new(void) {
+  PECOFFCtx* ctx = emalloc(sizeof *ctx);
+  memset(ctx, 0, sizeof *ctx);
+  ctx->strtab = emalloc(64);
+  ctx->strtabsz = 0;
+  ctx->strtabcap = 64;
+  ctx->dleadzero = -1;
+  return ctx;
+}
+
+void pecoff_free(PECOFFCtx* ctx) {
+  qbe_free(ctx->text);
+  qbe_free(ctx->data);
+  qbe_free(ctx->rdata);
+  qbe_free(ctx->treloc);
+  qbe_free(ctx->dreloc);
+  qbe_free(ctx->rreloc);
+  qbe_free(ctx->syms);
+  qbe_free(ctx->strtab);
+  qbe_free(ctx);
+}
+
+/* -----------------------------------------------------------------------
+ * Data section helpers
+ * --------------------------------------------------------------------- */
+
+static void drelocadd(PECOFFCtx* ctx, uint32_t vaddr, uint32_t symidx, uint16_t type) {
+  PEReloc rel;
+  rel.vaddr = vaddr;
+  rel.symidx = symidx;
+  rel.type = type;
+  if (ctx->ndreloc == ctx->drelocap) {
+    uint32_t oldcap = ctx->drelocap;
+    ctx->drelocap = ctx->drelocap ? ctx->drelocap * 2 : 8;
+    ctx->dreloc =
+        pe_realloc(ctx->dreloc, oldcap * sizeof(PEReloc), ctx->drelocap * sizeof(PEReloc));
+  }
+  ctx->dreloc[ctx->ndreloc++] = rel;
+}
+
+static void rrelocadd(PECOFFCtx* ctx, uint32_t vaddr, uint32_t symidx, uint16_t type) {
+  if (ctx->dry_run) {
+    return;
+  }
+  PEReloc rel;
+  rel.vaddr = vaddr;
+  rel.symidx = symidx;
+  rel.type = type;
+  if (ctx->nrreloc == ctx->rrelocap) {
+    uint32_t oldcap = ctx->rrelocap;
+    ctx->rrelocap = ctx->rrelocap ? ctx->rrelocap * 2 : 8;
+    ctx->rreloc =
+        pe_realloc(ctx->rreloc, oldcap * sizeof(PEReloc), ctx->rrelocap * sizeof(PEReloc));
+  }
+  ctx->rreloc[ctx->nrreloc++] = rel;
+}
+
+/* Find existing symbol by name, or add new undefined external. */
+static uint32_t pe_findorsym(PECOFFCtx* ctx, const char* name) {
+  uint32_t i;
+  for (i = 0; i < ctx->nsyms; i++) {
+    if (strcmp(ctx->strtab + ctx->syms[i].strx, name) == 0) {
+      return i;
+    }
+  }
+  if (ctx->dry_run) {
+    return 0;
+  }
+  return pe_symadd(ctx, name, PE_IMAGE_SYM_UNDEFINED, 0, 0, PE_IMAGE_SYM_CLASS_EXTERNAL);
+}
+
+/* -----------------------------------------------------------------------
+ * pecoff_emitdat -- handle one Dat record, building .data/.bss sections
+ * --------------------------------------------------------------------- */
+void pecoff_emitdat(Dat* d, PECOFFCtx* ctx) {
+  static const int64_t masks[] = {
+      [DB] = 0xFFL,
+      [DH] = 0xFFFFL,
+      [DW] = 0xFFFFFFFFL,
+      [DL] = -1L,
+  };
+  static const uint8_t zeros[8] = {0};
+  uint64_t v;
+  uint32_t refidx;
+  char dname[NString];
+  const char* p;
+  int n;
+
+  switch (d->type) {
+    case DStart:
+      strncpy(ctx->datname, d->name, NString - 1);
+      ctx->datname[NString - 1] = '\0';
+      ctx->datlnk = d->lnk;
+      ctx->dleadzero = 0;
+      if (d->lnk->thread) {
+        die("pecoff: thread-local data not supported");
+      }
+      /* alignment padding in .data before this object */
+      if (d->lnk->align) {
+        uint32_t aln = (uint32_t)(unsigned char)d->lnk->align;
+        while (ctx->datasz % aln != 0) {
+          pe_buf_append(&ctx->data, &ctx->datasz, &ctx->datacap, zeros, 1);
+        }
+      }
+      ctx->datstart = ctx->datasz;
+      break;
+
+    case DZ:
+      if (ctx->dleadzero >= 0) {
+        ctx->dleadzero += d->u.num;
+      } else {
+        uint64_t rem = (uint64_t)d->u.num;
+        while (rem > 0) {
+          uint32_t chunk = rem > 8 ? 8 : (uint32_t)rem;
+          pe_buf_append(&ctx->data, &ctx->datasz, &ctx->datacap, zeros, chunk);
+          rem -= chunk;
+        }
+      }
+      break;
+
+    case DEnd:
+      if (ctx->datlnk->common) {
+        die("pecoff: common data not supported");
+      }
+      pe_symname(dname, ctx->datname);
+      if (ctx->dleadzero >= 0) {
+        /* all-zero object -> .bss */
+        symdefine(ctx, dname, PESECT_BSS, ctx->bsssz, 0,
+                  ctx->datlnk->export ? PE_IMAGE_SYM_CLASS_EXTERNAL : PE_IMAGE_SYM_CLASS_STATIC);
+        ctx->bsssz += (uint32_t)ctx->dleadzero;
+      } else {
+        /* initialized data -> .data */
+        symdefine(ctx, dname, PESECT_DATA, ctx->datstart, 0,
+                  ctx->datlnk->export ? PE_IMAGE_SYM_CLASS_EXTERNAL : PE_IMAGE_SYM_CLASS_STATIC);
+      }
+      ctx->dleadzero = -1;
+      break;
+
+    default: /* DB, DH, DW, DL */
+      /* flush any accumulated leading zeros into .data */
+      if (ctx->dleadzero >= 0) {
+        uint64_t rem = (uint64_t)ctx->dleadzero;
+        while (rem > 0) {
+          uint32_t chunk = rem > 8 ? 8 : (uint32_t)rem;
+          pe_buf_append(&ctx->data, &ctx->datasz, &ctx->datacap, zeros, chunk);
+          rem -= chunk;
+        }
+        ctx->dleadzero = -1;
+      }
+      if (d->isstr) {
+        if (d->type != DB) {
+          die("pecoff: strings only supported for 'b'");
+        }
+        p = d->u.str;
+        SQ_ASSERT(p[0] == '"');
+        p++;
+        while (*p && *p != '"') {
+          uint8_t c;
+          if (*p == '\\') {
+            p++;
+            switch (*p) {
+              case 'n':
+                c = '\n';
+                break;
+              case 't':
+                c = '\t';
+                break;
+              case 'r':
+                c = '\r';
+                break;
+              case '\\':
+                c = '\\';
+                break;
+              case '"':
+                c = '"';
+                break;
+              case '0':
+                c = '\0';
+                break;
+              default:
+                c = (uint8_t)*p;
+                break;
+            }
+          } else {
+            c = (uint8_t)*p;
+          }
+          pe_buf_append(&ctx->data, &ctx->datasz, &ctx->datacap, &c, 1);
+          p++;
+        }
+      } else if (d->isref) {
+        if (d->type != DL) {
+          die("pecoff: pointer ref only supported in .quad");
+        }
+        pe_symname(dname, d->u.ref.name);
+        refidx = pe_findorsym(ctx, dname);
+        /* ADDR64: addend is stored inline in the 8-byte slot;
+         * linker computes: symbol_va + slot_value */
+        drelocadd(ctx, ctx->datasz, refidx, PE_IMAGE_REL_AMD64_ADDR64);
+        v = (uint64_t)d->u.ref.off;
+        pe_buf_append(&ctx->data, &ctx->datasz, &ctx->datacap, &v, 8);
+      } else {
+        /* plain integer, little-endian */
+        n = (d->type == DB) ? 1 : (d->type == DH) ? 2 : (d->type == DW) ? 4 : 8;
+        v = (uint64_t)(d->u.num & masks[d->type]);
+        pe_buf_append(&ctx->data, &ctx->datasz, &ctx->datacap, &v, (uint32_t)n);
+      }
+      break;
+  }
+}
+
+/* -----------------------------------------------------------------------
+ * pecoff_emitfn -- encode one function into .text (step 3+)
+ * --------------------------------------------------------------------- */
+void pecoff_emitfn(Fn* fn, PECOFFCtx* ctx) {
+  /* jump fixup table -- fields used differ by pass (see below) */
+  struct {
+    uint32_t patch_off;
+    uint blkid;
+    uint from_blkid;  /* pass 0: which block owns this fixup */
+    uint8_t is_jcc;   /* pass 0: 1=jcc fixup, 0=jmp fixup */
+    uint8_t is_short; /* pass 1: 1=rel8, 0=rel32 */
+  } fixups[256];
+  uint32_t blk_off[8192];      /* blk_off[b->id] = text offset at block start */
+  uint8_t can_short_jcc[8192]; /* b->id -> can use rel8 for jcc */
+  uint8_t can_short_jmp[8192]; /* b->id -> can use rel8 for jmp */
+  uint32_t fn_start, body_start;
+  uint nfixups = 0;
+  int pass;
+  Blk* b;
+  Ins* i;
+  int *r, c;
+  uint p;
+  PE pe;
+
+  SQ_ASSERT(fn->nblk <= 8192);
+  fn_start = ctx->textsz;
+
+  /* ---- prologue ---- */
+  emit_endbr64(ctx);
+
+  if (fn->vararg) {
+    /* Spill all 4 int arg regs to shadow space before push rbp.
+     * vastart uses rbp+16 + (num_named_args * 8) to find first vararg.
+     * [rsp+8..32] are the home slots for rcx/rdx/r8/r9. */
+    emit_home_spill(ctx, QBE_AMD64_RCX, 0x08);
+    emit_home_spill(ctx, QBE_AMD64_RDX, 0x10);
+    emit_home_spill(ctx, QBE_AMD64_R8, 0x18);
+    emit_home_spill(ctx, QBE_AMD64_R9, 0x20);
+  }
+
+  pe.ctx = ctx;
+  pe.fn = fn;
+  pe.nclob = 0;
+  pe_framesz(fn, &pe.fp, &pe.fsz);
+
+  if (pe.fp == QBE_AMD64_RBP) {
+    emit_push64(ctx, QBE_AMD64_RBP); /* push rbp */
+    emit_mov_rbp_rsp(ctx); /* mov rbp, rsp */
+  }
+  if (pe.fsz) {
+    emit_sub_rsp_imm(ctx, pe.fsz);
+  }
+
+  for (r = pe_rclob; *r != -1; r++) {
+    if (fn->reg & BIT(*r)) {
+      emit_push64(ctx, *r);
+      pe.nclob++;
+    }
+  }
+
+  /* ---- blocks (two-pass jump relaxation) ----
+   * Pass 0: dry-run (no bytes written, no relocs added) to measure block
+   *         offsets and decide which jumps fit in rel8.
+   * Pass 1: real emission using rel8 or rel32 as determined. */
+  SQ_ASSERT(fn->nblk <= 8192);
+  memset(can_short_jcc, 0, fn->nblk);
+  memset(can_short_jmp, 0, fn->nblk);
+  body_start = ctx->textsz;
+
+/* Helpers to record a forward-jump fixup (local to the pass loop below). */
+#define REC_FWD(blkid_, from_, isjcc_, isshort_) \
+  do {                                           \
+    SQ_ASSERT(nfixups < 256);                       \
+    fixups[nfixups].patch_off = ctx->textsz;     \
+    fixups[nfixups].blkid = (blkid_);            \
+    fixups[nfixups].from_blkid = (from_);        \
+    fixups[nfixups].is_jcc = (isjcc_);           \
+    fixups[nfixups].is_short = (isshort_);       \
+    nfixups++;                                   \
+  } while (0)
+
+/* Emit an unconditional jmp to target block jt from block b. */
+#define EMIT_JMP(jt_)                                                          \
+  do {                                                                         \
+    Blk* _jt = (jt_);                                                          \
+    if (_jt != b->link) {                                                      \
+      int _us = (pass == 1) && can_short_jmp[b->id];                           \
+      int _bw = (_jt->id < b->id);                                             \
+      if (_us) {                                                               \
+        emit1(ctx, 0xEB);                                                      \
+        if (_bw) {                                                             \
+          int32_t _r = (int32_t)blk_off[_jt->id] - (int32_t)(ctx->textsz + 1); \
+          emit1(ctx, (uint8_t)(int8_t)_r);                                     \
+        } else {                                                               \
+          REC_FWD(_jt->id, b->id, 0, 1);                                       \
+          emit1(ctx, 0);                                                       \
+        }                                                                      \
+      } else {                                                                 \
+        emit1(ctx, 0xE9);                                                      \
+        if (_bw) {                                                             \
+          int32_t _r = (int32_t)blk_off[_jt->id] - (int32_t)(ctx->textsz + 4); \
+          emit4le(ctx, (uint32_t)_r);                                          \
+          if (pass == 0 && _r >= -128 && _r <= 127)                            \
+            can_short_jmp[b->id] = 1;                                          \
+        } else {                                                               \
+          REC_FWD(_jt->id, b->id, 0, 0);                                       \
+          emit4le(ctx, 0);                                                     \
+        }                                                                      \
+      }                                                                        \
+    }                                                                          \
+  } while (0)
+
+/* Emit a conditional jmp (opcode jcc_opc[cv_]) to target block jt from b. */
+#define EMIT_JCC(cv_, jt_)                                                   \
+  do {                                                                       \
+    Blk* _jt = (jt_);                                                        \
+    int _cv = (cv_);                                                         \
+    int _us = (pass == 1) && can_short_jcc[b->id];                           \
+    int _bw = (_jt->id < b->id);                                             \
+    if (_us) {                                                               \
+      emit1(ctx, (uint8_t)(0x70 | (jcc_opc[_cv] & 0x0F)));                   \
+      if (_bw) {                                                             \
+        int32_t _r = (int32_t)blk_off[_jt->id] - (int32_t)(ctx->textsz + 1); \
+        emit1(ctx, (uint8_t)(int8_t)_r);                                     \
+      } else {                                                               \
+        REC_FWD(_jt->id, b->id, 1, 1);                                       \
+        emit1(ctx, 0);                                                       \
+      }                                                                      \
+    } else {                                                                 \
+      emit1(ctx, 0x0F);                                                      \
+      emit1(ctx, jcc_opc[_cv]);                                              \
+      if (_bw) {                                                             \
+        int32_t _r = (int32_t)blk_off[_jt->id] - (int32_t)(ctx->textsz + 4); \
+        emit4le(ctx, (uint32_t)_r);                                          \
+        if (pass == 0 && _r >= -128 && _r <= 127)                            \
+          can_short_jcc[b->id] = 1;                                          \
+      } else {                                                               \
+        REC_FWD(_jt->id, b->id, 1, 0);                                       \
+        emit4le(ctx, 0);                                                     \
+      }                                                                      \
+    }                                                                        \
+  } while (0)
+
+  for (pass = 0; pass <= 1; pass++) {
+    ctx->textsz = body_start;
+    ctx->dry_run = (pass == 0);
+    nfixups = 0;
+
+    for (b = fn->start; b; b = b->link) {
+      Blk *jcc_tgt, *jmp_tgt;
+      int jcc_cv;
+
+      blk_off[b->id] = ctx->textsz;
+
+      /* instructions */
+      for (i = b->ins; i != &b->ins[b->nins]; i++) {
+        pe_emitins(*i, &pe);
+      }
+
+      /* jump */
+      switch (b->jmp.type) {
+        case Jhlt:
+          emit1(ctx, 0x0F);
+          emit1(ctx, 0x0B); /* ud2 */
+          break;
+
+        case Jret0:
+          if (fn->dynalloc) {
+            emit_mov_rsp_rbp(ctx);
+            emit_sub_rsp_imm(ctx, pe.fsz + (uint64_t)pe.nclob * 8);
+          }
+          for (r = &pe_rclob[NCLR_PE]; r > pe_rclob;) {
+            if (fn->reg & BIT(*--r)) {
+              emit_pop64(ctx, *r);
+            }
+          }
+          if (pe.fp == QBE_AMD64_RBP) {
+            emit1(ctx, 0xC9); /* leave */
+          } else if (pe.fsz) {
+            emit_add_rsp_imm(ctx, pe.fsz);
+          }
+          emit1(ctx, 0xC3); /* ret */
+          break;
+
+        case Jjmp:
+          EMIT_JMP(b->s1);
+          break;
+
+        default:
+          /* Conditional jump -- compute targets without mutating block.
+           * QBE: s1 = taken (condition true), s2 = not-taken (fall).
+           * Prefer fall-through on s2 (matches original emitter logic):
+           *   b->link == b->s2: s2 falls through -> jcc c to s1 (taken)
+           *   b->link != b->s2: negate -> jcc cmpneg(c) to s2; jmp to s1 */
+          c = b->jmp.type - Jjf;
+          if (c < 0 || c >= NCmp) {
+            die("pecoff: unhandled jump %d", b->jmp.type);
+          }
+          if (b->link == b->s2) {
+            jcc_cv = c;
+            jcc_tgt = b->s1;
+            jmp_tgt = NULL;
+          } else {
+            jcc_cv = cmpneg(c);
+            jcc_tgt = b->s2;
+            jmp_tgt = (b->s1 != b->link) ? b->s1 : NULL;
+          }
+          EMIT_JCC(jcc_cv, jcc_tgt);
+          if (jmp_tgt) {
+            EMIT_JMP(jmp_tgt);
+          }
+          break;
+
+      } /* end switch */
+    }   /* end block loop */
+
+    if (pass == 0) {
+      /* process forward fixups to determine can_short */
+      for (p = 0; p < nfixups; p++) {
+        int32_t rel = (int32_t)blk_off[fixups[p].blkid] - (int32_t)(fixups[p].patch_off + 4);
+        if (rel >= -128 && rel <= 127) {
+          if (fixups[p].is_jcc) {
+            can_short_jcc[fixups[p].from_blkid] = 1;
+          } else {
+            can_short_jmp[fixups[p].from_blkid] = 1;
+          }
+        }
+      }
+    }
+  } /* end pass loop */
+  ctx->dry_run = 0;
+#undef REC_FWD
+#undef EMIT_JMP
+#undef EMIT_JCC
+
+  /* ---- patch pass-1 forward fixups ---- */
+  for (p = 0; p < nfixups; p++) {
+    uint32_t poff = fixups[p].patch_off;
+    if (fixups[p].is_short) {
+      int32_t rel = (int32_t)blk_off[fixups[p].blkid] - (int32_t)(poff + 1);
+      ctx->text[poff] = (uint8_t)(int8_t)rel;
+    } else {
+      int32_t rel = (int32_t)blk_off[fixups[p].blkid] - (int32_t)(poff + 4);
+      uint8_t* ptr = ctx->text + poff;
+      ptr[0] = (uint8_t)(rel);
+      ptr[1] = (uint8_t)(rel >> 8);
+      ptr[2] = (uint8_t)(rel >> 16);
+      ptr[3] = (uint8_t)(rel >> 24);
+    }
+  }
+
+  /* ---- align function end to 16 bytes (matches GAS .balign 16) ---- */
+  while (ctx->textsz & 15) {
+    emit1(ctx, 0x90);
+  }
+
+  /* ---- add function symbol ---- */
+  {
+    char sname[NString];
+    uint16_t stype = PE_IMAGE_SYM_TYPE_FUNCTION;
+    uint8_t sclass = fn->lnk.export ? PE_IMAGE_SYM_CLASS_EXTERNAL : PE_IMAGE_SYM_CLASS_STATIC;
+    pe_symname(sname, fn->name);
+    symdefine(ctx, sname, PESECT_TEXT, fn_start, stype, sclass);
+  }
+}
+
+void pecoff_emitfin_obj(PECOFFCtx* ctx) {
+#define PE_STASH global_context.emit__stash
+  Asmbits* b;
+  int lg, i;
+  static const uint8_t z8[8] = {0};
+  char sname[NString];
+  uint32_t off;
+  uint8_t buf[8];
+
+  if (!PE_STASH) {
+    return;
+  }
+
+  /* Emit by size (16 bytes first, then 8, then 4) -- same order as emitfin.
+   * Index 'i' is the linear insertion order (not per-size), matching Lfp%d. */
+  for (lg = 4; lg >= 2; lg--) {
+    int sz = 1 << lg;
+    for (b = PE_STASH, i = 0; b; b = b->link, i++) {
+      if (b->size != sz) {
+        continue;
+      }
+      /* align .rdata to 'sz' bytes */
+      while (ctx->rdatasz % (uint32_t)sz != 0) {
+        pe_buf_append(&ctx->rdata, &ctx->rdatasz, &ctx->rdatacap, z8, 1);
+      }
+      off = ctx->rdatasz;
+      snprintf(sname, NString, "Lfp%d", i);
+      symdefine(ctx, sname, PESECT_RDATA, off, 0, PE_IMAGE_SYM_CLASS_STATIC);
+      /* write little-endian bytes */
+      buf[0] = (uint8_t)(b->n);
+      buf[1] = (uint8_t)(b->n >> 8);
+      buf[2] = (uint8_t)(b->n >> 16);
+      buf[3] = (uint8_t)(b->n >> 24);
+      if (sz >= 8) {
+        buf[4] = (uint8_t)(b->n >> 32);
+        buf[5] = (uint8_t)(b->n >> 40);
+        buf[6] = (uint8_t)(b->n >> 48);
+        buf[7] = (uint8_t)(b->n >> 56);
+        pe_buf_append(&ctx->rdata, &ctx->rdatasz, &ctx->rdatacap, buf, 8);
+      } else {
+        pe_buf_append(&ctx->rdata, &ctx->rdatasz, &ctx->rdatacap, buf, 4);
+      }
+      if (sz == 16) { /* second half is zero */
+        pe_buf_append(&ctx->rdata, &ctx->rdatasz, &ctx->rdatacap, z8, 8);
+      }
+    }
+  }
+
+  /* free the stash (mirrors emitfin) */
+  while ((b = PE_STASH)) {
+    PE_STASH = b->link;
+    qbe_free(b);
+  }
+  (void)rrelocadd; /* available for future use */
+#undef PE_STASH
+}
+
+/* -----------------------------------------------------------------------
+ * pecoff_write -- emit a valid PE/COFF .obj
+ *
+ * File layout:
+ *   [COFF File Header: 20 bytes]
+ *   [Section Headers: nsecs * 40 bytes]
+ *   [.text raw data + .text relocs]
+ *   [.data raw data + .data relocs]
+ *   [.rdata raw data + .rdata relocs]
+ *   (.bss: no raw data; SizeOfRawData is set but PointerToRawData = 0)
+ *   [Symbol table: nsyms * 18 bytes]
+ *   [String table: uint32 total_size + strings]
+ * --------------------------------------------------------------------- */
+void pecoff_write(PECOFFCtx* ctx, FILE* f) {
+  uint32_t i, nsecs;
+  int16_t textsect, datasect, bsssect, rdatasect;
+  uint32_t rawstart, cur;
+  uint32_t text_rawoff, text_relocoff;
+  uint32_t data_rawoff, data_relocoff;
+  uint32_t rdata_rawoff, rdata_relocoff;
+  uint32_t symtab_off;
+  char name8[8];
+  PESym* sym;
+  PEReloc* rel;
+
+  /* suppress unused warnings for helpers not yet called (step 6+) */
+  (void)wzeros;
+
+  /* ------------------------------------------------------------------
+   * Step 1: determine which sections exist and assign 1-based numbers
+   * ---------------------------------------------------------------- */
+  nsecs = textsect = datasect = bsssect = rdatasect = 0;
+  if (ctx->textsz > 0 || ctx->ntreloc > 0) {
+    textsect = (int16_t)++nsecs;
+  }
+  if (ctx->datasz > 0 || ctx->ndreloc > 0) {
+    datasect = (int16_t)++nsecs;
+  }
+  if (ctx->bsssz > 0) {
+    bsssect = (int16_t)++nsecs;
+  }
+  if (ctx->rdatasz > 0 || ctx->nrreloc > 0) {
+    rdatasect = (int16_t)++nsecs;
+  }
+
+  /* ------------------------------------------------------------------
+   * Step 2: patch symbol section sentinels -> actual section numbers
+   * ---------------------------------------------------------------- */
+  for (i = 0; i < ctx->nsyms; i++) {
+    sym = &ctx->syms[i];
+    switch (sym->section) {
+      case PESECT_TEXT:
+        sym->section = textsect;
+        break;
+      case PESECT_DATA:
+        sym->section = datasect;
+        break;
+      case PESECT_BSS:
+        sym->section = bsssect;
+        break;
+      case PESECT_RDATA:
+        sym->section = rdatasect;
+        break;
+      default:
+        break;
+    }
+  }
+
+  /* ------------------------------------------------------------------
+   * Step 3: compute file offsets
+   * ---------------------------------------------------------------- */
+  rawstart = 20 + nsecs * 40;
+  cur = rawstart;
+
+  text_rawoff = (ctx->textsz > 0) ? cur : 0;
+  cur += ctx->textsz;
+  text_relocoff = (ctx->ntreloc > 0) ? cur : 0;
+  cur += ctx->ntreloc * 10;
+
+  data_rawoff = (ctx->datasz > 0) ? cur : 0;
+  cur += ctx->datasz;
+  data_relocoff = (ctx->ndreloc > 0) ? cur : 0;
+  cur += ctx->ndreloc * 10;
+
+  rdata_rawoff = (ctx->rdatasz > 0) ? cur : 0;
+  cur += ctx->rdatasz;
+  rdata_relocoff = (ctx->nrreloc > 0) ? cur : 0;
+  cur += ctx->nrreloc * 10;
+
+  symtab_off = cur;
+
+  /* ------------------------------------------------------------------
+   * Step 4: COFF file header (20 bytes)
+   * ---------------------------------------------------------------- */
+  w16(f, (uint16_t)PE_IMAGE_FILE_MACHINE_AMD64);
+  w16(f, (uint16_t)nsecs);
+  w32(f, 0);                                 /* TimeDateStamp */
+  w32(f, (ctx->nsyms > 0) ? symtab_off : 0); /* PointerToSymbolTable */
+  w32(f, ctx->nsyms);
+  w16(f, 0); /* SizeOfOptionalHeader */
+  w16(f, 0); /* Characteristics */
+
+  /* ------------------------------------------------------------------
+   * Step 5: section headers (40 bytes each)
+   * ---------------------------------------------------------------- */
+#define SECHDR(sname, rawsz, rawoff, reloff, nreloc, charac)       \
+  do {                                                             \
+    memset(name8, 0, 8);                                           \
+    memcpy(name8, (sname), strlen(sname) < 8 ? strlen(sname) : 8); \
+    wbytes(f, name8, 8);        /* Name */                         \
+    w32(f, 0);                  /* VirtualSize */                  \
+    w32(f, 0);                  /* VirtualAddress */               \
+    w32(f, (rawsz));            /* SizeOfRawData */                \
+    w32(f, (rawoff));           /* PointerToRawData */             \
+    w32(f, (reloff));           /* PointerToRelocations */         \
+    w32(f, 0);                  /* PointerToLinenumbers */         \
+    w16(f, (uint16_t)(nreloc)); /* NumberOfRelocations */          \
+    w16(f, 0);                  /* NumberOfLinenumbers */          \
+    w32(f, (charac));           /* Characteristics */              \
+  } while (0)
+
+  if (textsect) {
+    SECHDR(".text", ctx->textsz, text_rawoff, text_relocoff, ctx->ntreloc,
+           PE_IMAGE_SCN_CNT_CODE | PE_IMAGE_SCN_MEM_EXECUTE | PE_IMAGE_SCN_MEM_READ |
+               PE_IMAGE_SCN_ALIGN_16BYTES);
+  }
+  if (datasect) {
+    SECHDR(".data", ctx->datasz, data_rawoff, data_relocoff, ctx->ndreloc,
+           PE_IMAGE_SCN_CNT_INITIALIZED_DATA | PE_IMAGE_SCN_MEM_READ | PE_IMAGE_SCN_MEM_WRITE |
+               PE_IMAGE_SCN_ALIGN_8BYTES);
+  }
+  if (bsssect) {
+    /* .bss: SizeOfRawData=bsssz but no file data (PointerToRawData=0) */
+    SECHDR(".bss", ctx->bsssz, 0, 0, 0,
+           PE_IMAGE_SCN_CNT_UNINITIALIZED_DATA | PE_IMAGE_SCN_MEM_READ | PE_IMAGE_SCN_MEM_WRITE |
+               PE_IMAGE_SCN_ALIGN_8BYTES);
+  }
+  if (rdatasect) {
+    SECHDR(".rdata", ctx->rdatasz, rdata_rawoff, rdata_relocoff, ctx->nrreloc,
+           PE_IMAGE_SCN_CNT_INITIALIZED_DATA | PE_IMAGE_SCN_MEM_READ | PE_IMAGE_SCN_ALIGN_8BYTES);
+  }
+#undef SECHDR
+
+  /* ------------------------------------------------------------------
+   * Step 6: raw section data and relocation records
+   * ---------------------------------------------------------------- */
+  if (ctx->textsz > 0) {
+    wbytes(f, ctx->text, ctx->textsz);
+  }
+  for (i = 0; i < ctx->ntreloc; i++) {
+    rel = &ctx->treloc[i];
+    w32(f, rel->vaddr);
+    w32(f, rel->symidx);
+    w16(f, rel->type);
+  }
+  if (ctx->datasz > 0) {
+    wbytes(f, ctx->data, ctx->datasz);
+  }
+  for (i = 0; i < ctx->ndreloc; i++) {
+    rel = &ctx->dreloc[i];
+    w32(f, rel->vaddr);
+    w32(f, rel->symidx);
+    w16(f, rel->type);
+  }
+  if (ctx->rdatasz > 0) {
+    wbytes(f, ctx->rdata, ctx->rdatasz);
+  }
+  for (i = 0; i < ctx->nrreloc; i++) {
+    rel = &ctx->rreloc[i];
+    w32(f, rel->vaddr);
+    w32(f, rel->symidx);
+    w16(f, rel->type);
+  }
+
+  SQ_ASSERT((uint32_t)ftell(f) == symtab_off);
+
+  /* ------------------------------------------------------------------
+   * Step 7: symbol table (18 bytes per entry)
+   * ---------------------------------------------------------------- */
+  for (i = 0; i < ctx->nsyms; i++) {
+    const char* s;
+    size_t slen;
+
+    sym = &ctx->syms[i];
+    s = ctx->strtab + sym->strx;
+    slen = strlen(s);
+    if (slen <= 8) {
+      memset(name8, 0, 8);
+      memcpy(name8, s, slen);
+      wbytes(f, name8, 8);
+    } else {
+      /* long name: zeros + offset (COFF spec: offset from start
+       * of string table, which already accounts for the 4-byte
+       * size field at the front, so strx+4) */
+      w32(f, 0);
+      w32(f, sym->strx + 4);
+    }
+    w32(f, sym->value);
+    w16(f, (uint16_t)(int16_t)sym->section);
+    w16(f, sym->type);
+    w8(f, sym->storage);
+    w8(f, 0); /* NumberOfAuxSymbols */
+  }
+
+  /* ------------------------------------------------------------------
+   * Step 8: string table
+   * ---------------------------------------------------------------- */
+  w32(f, ctx->strtabsz + 4); /* total size including this 4-byte field */
+  if (ctx->strtabsz > 0) {
+    wbytes(f, ctx->strtab, ctx->strtabsz);
+  }
+}
+#undef G
+/*** END FILE: amd64/emitpecoff.c ***/
 /*** START FILE: arm64/abi.c ***/
 /* skipping all.h */
 
@@ -13319,6 +15887,48 @@ apple_extsb(Fn *fn)
 }
 #undef G
 /*** END FILE: arm64/abi.c ***/
+/*** START FILE: arm64/apple_shared.c ***/
+/* skipping all.h */
+
+// Mirror arm64/emit.c slot() for RSlot -> x29-relative byte offset.
+// s == -1: frame-start marker used by apple_selvastart (Oaddr SLOT(-1)).
+// s < 0:   above-frame caller argument at byte offset -(s+2) above frame.
+// s >= 0:  local / callee-save slot.
+uint32_t arm64_slot_off(int s, int padding, int framesz) {
+  if (s == -1) {
+    return (uint32_t)(16 + framesz);
+  }
+  if (s < 0) {
+    return (uint32_t)(16 + framesz - (s + 2));
+  }
+  return (uint32_t)(16 + padding + 4 * s);
+}
+
+// ARM64 condition codes indexed by CmpI
+static uint8_t arm64cond[NCmp] = {
+    // integer comparisons
+    [Cieq] = 0x0,
+    [Cine] = 0x1,
+    [Cisge] = 0xA,
+    [Cisgt] = 0xC,
+    [Cisle] = 0xD,
+    [Cislt] = 0xB,
+    [Ciuge] = 0x2,
+    [Ciugt] = 0x8,
+    [Ciule] = 0x9,
+    [Ciult] = 0x3,
+    // float comparisons (after FCMPE, ARM64 QBE_ARM64_FP flags = integer flags)
+    [NCmpI + Cfeq] = 0x0,
+    [NCmpI + Cfge] = 0xA,
+    [NCmpI + Cfgt] = 0xC,
+    [NCmpI + Cfle] = 0x9,
+    [NCmpI + Cflt] = 0x4,
+    [NCmpI + Cfne] = 0x1,
+    [NCmpI + Cfo] = 0x7,
+    [NCmpI + Cfuo] = 0x6,
+};
+#undef G
+/*** END FILE: arm64/apple_shared.c ***/
 /*** START FILE: arm64/emit.c ***/
 /* skipping all.h */
 
@@ -14034,10 +16644,1590 @@ arm64_emitfn(Fn *fn, FILE *out)
 #undef CMP
 #undef G
 /*** END FILE: arm64/emit.c ***/
+/*** START FILE: arm64/emitjit.c ***/
+/* skipping all.h */
+/* skipping emitjit.h */
+/* skipping apple_shared.h */
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+#if defined(__APPLE__) && defined(__arm64__)
+
+#include <sys/mman.h>
+#include <pthread.h>
+#include <libkern/OSCacheControl.h>
+#include <dlfcn.h>
+
+typedef struct JitFnEntry JitFnEntry;
+struct JitFnEntry {
+    char     name[NString];
+    uint32_t off;
+};
+
+// JitDataSym: a data or BSS symbol defined in jit_emitdat.
+typedef struct JitDataSym JitDataSym;
+struct JitDataSym {
+    char     name[NString];
+    uint32_t off;   // byte offset within datexec (data) or bssexec (BSS)
+    int      isbss;
+};
+
+// JitDataFix: an 8-byte pointer slot in the data section that needs resolving.
+typedef struct JitDataFix JitDataFix;
+struct JitDataFix {
+    uint32_t off;           // byte offset in datbuf where the slot lives
+    char     name[NString]; // mangled target symbol name
+    int64_t  addend;
+};
+
+// JitTlsSym: a thread-local descriptor (32 bytes) emitted in the data section.
+typedef struct JitTlsSym JitTlsSym;
+struct JitTlsSym {
+    uint32_t descoff;  /* byte offset of 32-byte descriptor in datbuf */
+};
+
+// JitAddrFixup: a direct symbol reference emitted as MOVZ/MOVK/MOVK placeholders,
+// resolved to an absolute 48-bit address in jit_finalize().
+typedef struct JitAddrFixup JitAddrFixup;
+struct JitAddrFixup {
+    uint32_t off;           // offset of the MOVZ in ctx->code
+    int      rd;            // destination register index (0..30)
+    int64_t  addend;        // constant added to the resolved address
+    char     name[NString]; // mangled symbol name (e.g. "_printf")
+};
+
+struct JitCtx {
+    uint8_t*      code;
+    uint32_t      codesz, codecap;
+    JitFnEntry*   fns;
+    uint32_t      nfns, fnscap;
+    JitAddrFixup* adrfix;
+    uint32_t      nadrfix, adrfixcap;
+    // data section build buffer
+    uint8_t*      datbuf;
+    uint32_t      datsz, datcap;
+    uint32_t      bsssz;
+    JitDataSym*   datasym;
+    uint32_t      ndatasym, datasymcap;
+    JitDataFix*   datafix;
+    uint32_t      ndatafix, datafixcap;
+    // per-symbol emitdat state
+    char          datcurname[NString];
+    Lnk*          datcurlnk;
+    int64_t       datleadzero; // >=0: accumulating leading zeros; -1: data started
+    uint32_t      datcurstart; // datsz at DStart
+    // TLS descriptors
+    JitTlsSym*   tlssyms;
+    uint32_t     ntlssyms, tlssymscap;
+    int          datcurthread;   /* set at DStart: 1 if current symbol has thread linkage */
+    // set after jit_finalize():
+    uint8_t*      exec;
+    uint32_t      execsz;
+    uint8_t*      datexec;
+    uint32_t      datexecsz;
+    uint8_t*      bssexec;
+    uint32_t      bssexecsz;
+};
+
+// Grow the code buffer and append a 32-bit instruction.
+static void jit_emit_u32(JitCtx* ctx, uint32_t insn) {
+    if (ctx->codesz + 4 > ctx->codecap) {
+        uint32_t oldcap = ctx->codecap;
+        uint32_t newcap = oldcap ? oldcap * 2 : 256;
+        uint8_t* newbuf = emalloc(newcap);
+        if (ctx->code) {
+            memcpy(newbuf, ctx->code, ctx->codesz);
+            qbe_free(ctx->code);
+        }
+        ctx->code = newbuf;
+        ctx->codecap = newcap;
+    }
+    memcpy(ctx->code + ctx->codesz, &insn, 4);
+    ctx->codesz += 4;
+}
+
+// Append bytes to the data section build buffer.
+static void
+qbe_arm64_emitjit_dat_append(JitCtx* ctx, const void* src, uint32_t n) {
+    if (ctx->datsz + n > ctx->datcap) {
+        uint32_t newcap = ctx->datcap ? ctx->datcap * 2 : 64;
+        while (newcap < ctx->datsz + n)
+            newcap *= 2;
+        uint8_t* nb = emalloc(newcap);
+        if (ctx->datbuf) {
+            memcpy(nb, ctx->datbuf, ctx->datsz);
+            qbe_free(ctx->datbuf);
+        }
+        ctx->datbuf = nb;
+        ctx->datcap = newcap;
+    }
+    memcpy(ctx->datbuf + ctx->datsz, src, n);
+    ctx->datsz += n;
+}
+
+// Mangle a QBE symbol name to its linker form (prepend _ or strip quotes).
+// Mirrors symname() in emitmacho.c.
+static void
+qbe_arm64_emitjit_jit_symname(char out[NString], const char* n) {
+    if (n[0] == '"') {
+        size_t len   = strlen(n);
+        int    inner = len >= 2 ? (int)(len - 2) : 0;
+        snprintf(out, NString, "%.*s", inner, n + 1);
+    } else {
+        snprintf(out, NString, "_%s", n);
+    }
+}
+
+// Append an address fixup record to ctx->adrfix.
+static void
+qbe_arm64_emitjit_jit_push_adrfix(JitCtx* ctx, uint32_t off, int rd, const char* name, int64_t addend) {
+    if (ctx->nadrfix == ctx->adrfixcap) {
+        uint32_t      oldcap = ctx->adrfixcap;
+        uint32_t      newcap = oldcap ? oldcap * 2 : 8;
+        JitAddrFixup* nf     = emalloc(newcap * sizeof(JitAddrFixup));
+        if (ctx->adrfix) {
+            memcpy(nf, ctx->adrfix, ctx->nadrfix * sizeof(JitAddrFixup));
+            qbe_free(ctx->adrfix);
+        }
+        ctx->adrfix    = nf;
+        ctx->adrfixcap = newcap;
+    }
+    ctx->adrfix[ctx->nadrfix].off    = off;
+    ctx->adrfix[ctx->nadrfix].rd     = rd;
+    ctx->adrfix[ctx->nadrfix].addend = addend;
+    strncpy(ctx->adrfix[ctx->nadrfix].name, name, NString - 1);
+    ctx->adrfix[ctx->nadrfix].name[NString - 1] = '\0';
+    ctx->nadrfix++;
+}
+
+// Emit three placeholder instructions (MOVZ Xd,#0 / MOVK lsl16 / MOVK lsl32)
+// and record a fixup to patch them with the resolved symbol address at finalize.
+static void
+qbe_arm64_emitjit_jit_emit_adrfix(JitCtx* ctx, int rd, const char* name, int64_t addend) {
+    uint32_t off = ctx->codesz;
+    jit_emit_u32(ctx, 0xD2800000u | (uint32_t)rd);  // MOVZ Xd, #0
+    jit_emit_u32(ctx, 0xF2A00000u | (uint32_t)rd);  // MOVK Xd, #0, lsl #16
+    jit_emit_u32(ctx, 0xF2C00000u | (uint32_t)rd);  // MOVK Xd, #0, lsl #32
+    qbe_arm64_emitjit_jit_push_adrfix(ctx, off, rd, name, addend);
+}
+
+// Load a CBits constant into integer register rd (cls = Kw or Kl).
+// Mirrors emit_movcon() in emitmacho.c.
+static void
+qbe_arm64_emitjit_jit_movcon(JitCtx* ctx, int rd, int cls, Con* c) {
+    int64_t  n;
+    int      wide, sh;
+    uint32_t movz, movn, movk;
+
+    if (c->type == CAddr) {
+        char sname[NString];
+        /* SThr: load descriptor address; isel already emits the TLS call sequence */
+        qbe_arm64_emitjit_jit_symname(sname, str(c->sym.id));
+        qbe_arm64_emitjit_jit_emit_adrfix(ctx, rd, sname, c->bits.i);
+        return;
+    }
+    SQ_ASSERT(c->type == CBits);
+
+    wide = (cls == Kl);
+    n    = c->bits.i;
+    if (!wide)
+        n = (int64_t)(int32_t)n;
+
+    movz = wide ? 0xD2800000u : 0x52800000u;
+    movn = wide ? 0x92800000u : 0x12800000u;
+    movk = wide ? 0xF2800000u : 0x72800000u;
+
+    {
+        uint64_t un  = wide ? (uint64_t)n : (uint64_t)(uint32_t)n;
+        uint64_t cn  = wide ? ~un : (~un & 0xFFFFFFFFu);
+        int      nhw = wide ? 4 : 2;
+        int      hw;
+        uint64_t mask;
+        uint32_t imm16;
+
+        // Single MOVZ?
+        for (hw = 0; hw < nhw; hw++) {
+            mask  = (uint64_t)0xFFFF << (hw * 16);
+            if ((un & ~mask) == 0) {
+                imm16 = (uint32_t)((un >> (hw * 16)) & 0xFFFF);
+                jit_emit_u32(ctx,
+                    movz | ((uint32_t)hw << 21) | (imm16 << 5) | (uint32_t)rd);
+                return;
+            }
+        }
+        // Single MOVN?
+        for (hw = 0; hw < nhw; hw++) {
+            mask  = (uint64_t)0xFFFF << (hw * 16);
+            if ((cn & ~mask) == 0) {
+                imm16 = (uint32_t)((cn >> (hw * 16)) & 0xFFFF);
+                jit_emit_u32(ctx,
+                    movn | ((uint32_t)hw << 21) | (imm16 << 5) | (uint32_t)rd);
+                return;
+            }
+        }
+    }
+
+    // MOVZ + MOVKs.
+    jit_emit_u32(ctx, movz | (((uint32_t)(n & 0xffff)) << 5) | (uint32_t)rd);
+    for (sh = 16; (n >>= 16) != 0; sh += 16) {
+        if ((!wide && sh == 32) || sh == 64)
+            break;
+        jit_emit_u32(ctx,
+            movk | ((uint32_t)(sh / 16) << 21) |
+            (((uint32_t)(n & 0xffff)) << 5) | (uint32_t)rd);
+    }
+}
+
+/* TLS bootstrap: called by the isel-generated TLS stub on first per-thread access.
+ * desc layout: [0]=this fn, [1]=pthread_key_t, [2]=init-data ptr (or NULL), [3]=size */
+static void *
+qbe_arm64_emitjit_jit_tlv_bootstrap(void **desc)
+{
+    pthread_key_t key = (pthread_key_t)(uintptr_t)desc[1];
+    void *val = pthread_getspecific(key);
+    if (val == NULL) {
+        size_t sz = (size_t)(uintptr_t)desc[3];
+        val = desc[2] ? malloc(sz) : calloc(1, sz);
+        if (!val) die("jit: TLS alloc failed");
+        if (desc[2]) memcpy(val, desc[2], sz);
+        pthread_setspecific(key, val);
+    }
+    return val;
+}
+
+void
+jit_emitdat(Dat* d, JitCtx* ctx) {
+    static const int64_t masks[] = {
+        [DB] = 0xFFL,
+        [DH] = 0xFFFFL,
+        [DW] = 0xFFFFFFFFL,
+        [DL] = -1L,
+    };
+    static const uint8_t zeros[8] = {0};
+    uint64_t    v;
+    int         n;
+    const char* p;
+
+    switch (d->type) {
+    case DStart:
+        strncpy(ctx->datcurname, d->name, NString - 1);
+        ctx->datcurname[NString - 1] = '\0';
+        ctx->datcurlnk    = d->lnk;
+        ctx->datleadzero  = 0;
+        ctx->datcurthread = d->lnk->thread;
+        if (d->lnk->align) {
+            uint32_t aln = (uint32_t)(unsigned char)d->lnk->align;
+            while (ctx->datsz % aln != 0)
+                qbe_arm64_emitjit_dat_append(ctx, zeros, 1);
+        }
+        ctx->datcurstart = ctx->datsz;
+        break;
+
+    case DZ:
+        if (ctx->datleadzero >= 0)
+            ctx->datleadzero += d->u.num;
+        else {
+            uint64_t rem = (uint64_t)d->u.num;
+            while (rem > 0) {
+                uint32_t chunk = (rem > 8) ? 8 : (uint32_t)rem;
+                qbe_arm64_emitjit_dat_append(ctx, zeros, chunk);
+                rem -= chunk;
+            }
+        }
+        break;
+
+    case DEnd: {
+        char mname[NString];
+        qbe_arm64_emitjit_jit_symname(mname, ctx->datcurname);
+
+        if (ctx->datcurthread) {
+            /* TLS path: emit a 32-byte descriptor and register it as the symbol */
+            static const uint8_t z8[8] = {0};
+            int      allzero = (ctx->datleadzero >= 0);
+            uint32_t initsz;
+            uint32_t descoff;
+
+            initsz = allzero ? (uint32_t)ctx->datleadzero
+                             : (ctx->datsz - ctx->datcurstart);
+
+            /* Register init-data symbol (non-zero init only) */
+            if (!allzero) {
+                char iname[NString];
+                snprintf(iname, NString, "%s$tlv$init", mname);
+                if (ctx->ndatasym == ctx->datasymcap) {
+                    uint32_t    oc = ctx->datasymcap;
+                    uint32_t    nc = oc ? oc * 2 : 8;
+                    JitDataSym* ns = emalloc(nc * sizeof(JitDataSym));
+                    if (ctx->datasym) {
+                        memcpy(ns, ctx->datasym, ctx->ndatasym * sizeof(JitDataSym));
+                        qbe_free(ctx->datasym);
+                    }
+                    ctx->datasym    = ns;
+                    ctx->datasymcap = nc;
+                }
+                {
+                    JitDataSym* si = &ctx->datasym[ctx->ndatasym++];
+                    strncpy(si->name, iname, NString - 1);
+                    si->name[NString - 1] = '\0';
+                    si->off   = ctx->datcurstart;
+                    si->isbss = 0;
+                }
+            }
+
+            /* Align datbuf to 8 for the descriptor */
+            while (ctx->datsz % 8 != 0)
+                qbe_arm64_emitjit_dat_append(ctx, z8, 1);
+            descoff = ctx->datsz;
+
+            /* Emit 32-byte descriptor: [0]=bootstrap [1]=key [2]=init-ptr [3]=size */
+            qbe_arm64_emitjit_dat_append(ctx, z8, 8);  /* [0] bootstrap ptr -- filled at finalize */
+            qbe_arm64_emitjit_dat_append(ctx, z8, 8);  /* [1] pthread key   -- filled at finalize */
+            qbe_arm64_emitjit_dat_append(ctx, z8, 8);  /* [2] init data ptr -- JitDataFix or NULL */
+            {
+                uint64_t isz64 = (uint64_t)initsz;
+                qbe_arm64_emitjit_dat_append(ctx, &isz64, 8);  /* [3] size */
+            }
+
+            /* JitDataFix for desc[2] pointing to init data (non-zero init only) */
+            if (!allzero) {
+                char iname[NString];
+                snprintf(iname, NString, "%s$tlv$init", mname);
+                if (ctx->ndatafix == ctx->datafixcap) {
+                    uint32_t    oc = ctx->datafixcap;
+                    uint32_t    nc = oc ? oc * 2 : 8;
+                    JitDataFix* nf = emalloc(nc * sizeof(JitDataFix));
+                    if (ctx->datafix) {
+                        memcpy(nf, ctx->datafix, ctx->ndatafix * sizeof(JitDataFix));
+                        qbe_free(ctx->datafix);
+                    }
+                    ctx->datafix    = nf;
+                    ctx->datafixcap = nc;
+                }
+                {
+                    JitDataFix* fx = &ctx->datafix[ctx->ndatafix++];
+                    fx->off    = descoff + 16;
+                    fx->addend = 0;
+                    strncpy(fx->name, iname, NString - 1);
+                    fx->name[NString - 1] = '\0';
+                }
+            }
+
+            /* Record descriptor offset for finalize */
+            if (ctx->ntlssyms == ctx->tlssymscap) {
+                uint32_t   oc = ctx->tlssymscap;
+                uint32_t   nc = oc ? oc * 2 : 4;
+                JitTlsSym* ns = emalloc(nc * sizeof(JitTlsSym));
+                if (ctx->tlssyms) {
+                    memcpy(ns, ctx->tlssyms, ctx->ntlssyms * sizeof(JitTlsSym));
+                    qbe_free(ctx->tlssyms);
+                }
+                ctx->tlssyms    = ns;
+                ctx->tlssymscap = nc;
+            }
+            ctx->tlssyms[ctx->ntlssyms++].descoff = descoff;
+
+            /* Register descriptor as the main (user-visible) symbol */
+            if (ctx->ndatasym == ctx->datasymcap) {
+                uint32_t    oc = ctx->datasymcap;
+                uint32_t    nc = oc ? oc * 2 : 8;
+                JitDataSym* ns = emalloc(nc * sizeof(JitDataSym));
+                if (ctx->datasym) {
+                    memcpy(ns, ctx->datasym, ctx->ndatasym * sizeof(JitDataSym));
+                    qbe_free(ctx->datasym);
+                }
+                ctx->datasym    = ns;
+                ctx->datasymcap = nc;
+            }
+            {
+                JitDataSym* sd = &ctx->datasym[ctx->ndatasym++];
+                strncpy(sd->name, mname, NString - 1);
+                sd->name[NString - 1] = '\0';
+                sd->off   = descoff;
+                sd->isbss = 0;
+            }
+
+        } else {
+            /* Normal (non-TLS) path -- existing logic unchanged */
+            if (ctx->ndatasym == ctx->datasymcap) {
+                uint32_t    oldcap = ctx->datasymcap;
+                uint32_t    newcap = oldcap ? oldcap * 2 : 8;
+                JitDataSym* ns     = emalloc(newcap * sizeof(JitDataSym));
+                if (ctx->datasym) {
+                    memcpy(ns, ctx->datasym, ctx->ndatasym * sizeof(JitDataSym));
+                    qbe_free(ctx->datasym);
+                }
+                ctx->datasym    = ns;
+                ctx->datasymcap = newcap;
+            }
+            {
+                JitDataSym* s = &ctx->datasym[ctx->ndatasym++];
+                strncpy(s->name, mname, NString - 1);
+                s->name[NString - 1] = '\0';
+                if (ctx->datleadzero >= 0) {
+                    // all-zero -> BSS
+                    s->off   = ctx->bsssz;
+                    s->isbss = 1;
+                    ctx->bsssz += (uint32_t)ctx->datleadzero;
+                } else {
+                    s->off   = ctx->datcurstart;
+                    s->isbss = 0;
+                }
+            }
+        }
+        break;
+    }
+
+    default:  // DB, DH, DW, DL
+        // Flush accumulated leading zeros before real data.
+        if (ctx->datleadzero >= 0) {
+            uint64_t rem = (uint64_t)ctx->datleadzero;
+            while (rem > 0) {
+                uint32_t chunk = (rem > 8) ? 8 : (uint32_t)rem;
+                qbe_arm64_emitjit_dat_append(ctx, zeros, chunk);
+                rem -= chunk;
+            }
+            ctx->datleadzero = -1;
+        }
+        if (d->isstr) {
+            if (d->type != DB)
+                die("jit: strings only supported for 'b'");
+            p = d->u.str;
+            SQ_ASSERT(p[0] == '"');
+            p++;
+            while (*p && *p != '"') {
+                uint8_t c;
+                if (*p == '\\') {
+                    p++;
+                    switch (*p) {
+                    case 'n':  c = '\n'; break;
+                    case 't':  c = '\t'; break;
+                    case 'r':  c = '\r'; break;
+                    case '\\': c = '\\'; break;
+                    case '"':  c = '"';  break;
+                    case '0':  c = '\0'; break;
+                    default:   c = (uint8_t)*p; break;
+                    }
+                } else {
+                    c = (uint8_t)*p;
+                }
+                qbe_arm64_emitjit_dat_append(ctx, &c, 1);
+                p++;
+            }
+        } else if (d->isref) {
+            char    rname[NString];
+            uint8_t slot[8] = {0};
+            if (d->type != DL)
+                die("jit: pointer ref only supported in .quad");
+            qbe_arm64_emitjit_jit_symname(rname, d->u.ref.name);
+            // Record fixup; emit 8 zero bytes as placeholder.
+            if (ctx->ndatafix == ctx->datafixcap) {
+                uint32_t    oldcap = ctx->datafixcap;
+                uint32_t    newcap = oldcap ? oldcap * 2 : 8;
+                JitDataFix* nf     = emalloc(newcap * sizeof(JitDataFix));
+                if (ctx->datafix) {
+                    memcpy(nf, ctx->datafix, ctx->ndatafix * sizeof(JitDataFix));
+                    qbe_free(ctx->datafix);
+                }
+                ctx->datafix    = nf;
+                ctx->datafixcap = newcap;
+            }
+            {
+                JitDataFix* fx = &ctx->datafix[ctx->ndatafix++];
+                fx->off    = ctx->datsz;
+                fx->addend = d->u.ref.off;
+                strncpy(fx->name, rname, NString - 1);
+                fx->name[NString - 1] = '\0';
+            }
+            qbe_arm64_emitjit_dat_append(ctx, slot, 8);
+        } else {
+            n = (d->type == DB) ? 1 : (d->type == DH) ? 2 : (d->type == DW) ? 4 : 8;
+            v = (uint64_t)(d->u.num & masks[d->type]);
+            qbe_arm64_emitjit_dat_append(ctx, &v, (uint32_t)n);
+        }
+        break;
+    }
+}
+
+// Process the QBE_ARM64_FP literal pool stash (GC(emit__stash)) accumulated during isel.
+// Must be called before jit_finalize() so the constants are in ctx->datbuf
+// and registered as datasym entries accessible to the adrfix lookup.
+// Mirrors fp_const_cb() + macho_emitfin_obj() in emitmacho.c.
+void
+jit_emitfin_fp(JitCtx* ctx) {
+    static const uint8_t zeros[8] = {0};
+    Asmbits* b;
+    int      idx;
+
+    for (b = GC(emit__stash), idx = 0; b; b = b->link, idx++) {
+        char     sname[NString];
+        uint32_t sym_off;
+        uint64_t v;
+
+        // Align datbuf to the constant's natural size.
+        while (ctx->datsz % (uint32_t)b->size != 0)
+            qbe_arm64_emitjit_dat_append(ctx, zeros, 1);
+        sym_off = ctx->datsz;
+
+        // Emit the constant bytes (little-endian, native).
+        v = (uint64_t)b->n;
+        qbe_arm64_emitjit_dat_append(ctx, &v, (uint32_t)b->size);
+
+        // Symbol name matches isel.c: "{asloc}fp{idx}" (e.g. "Lfp0").
+        snprintf(sname, NString, "%sfp%d", GC(T).asloc, idx);
+
+        // Grow datasym array if needed.
+        if (ctx->ndatasym == ctx->datasymcap) {
+            uint32_t    oldcap = ctx->datasymcap;
+            uint32_t    newcap = oldcap ? oldcap * 2 : 8;
+            JitDataSym* ns     = emalloc(newcap * sizeof(JitDataSym));
+            if (ctx->datasym) {
+                memcpy(ns, ctx->datasym, ctx->ndatasym * sizeof(JitDataSym));
+                qbe_free(ctx->datasym);
+            }
+            ctx->datasym    = ns;
+            ctx->datasymcap = newcap;
+        }
+        {
+            JitDataSym* s = &ctx->datasym[ctx->ndatasym++];
+            strncpy(s->name, sname, NString - 1);
+            s->name[NString - 1] = '\0';
+            s->off   = sym_off;
+            s->isbss = 0;
+        }
+    }
+
+    // Consume the stash (mirrors macho_emitfin_obj).
+    while ((b = GC(emit__stash))) {
+        GC(emit__stash) = b->link;
+        qbe_free(b);
+    }
+}
+
+JitCtx*
+jit_new(void) {
+    // emalloc uses calloc, so fields are zeroed.
+    return emalloc(sizeof(JitCtx));
+}
+
+void
+jit_free(JitCtx* ctx) {
+    if (ctx->exec)
+        munmap(ctx->exec, ctx->execsz);
+    if (ctx->datexec)
+        munmap(ctx->datexec, ctx->datexecsz);
+    if (ctx->bssexec)
+        munmap(ctx->bssexec, ctx->bssexecsz);
+    qbe_free(ctx->code);
+    qbe_free(ctx->fns);
+    qbe_free(ctx->adrfix);
+    qbe_free(ctx->datbuf);
+    qbe_free(ctx->datasym);
+    qbe_free(ctx->datafix);
+    qbe_free(ctx->tlssyms);
+    qbe_free(ctx);
+}
+
+void
+jit_emitfn(Fn* fn, JitCtx* ctx) {
+    Blk*     b;
+    Ins*     i;
+    int      rd, rn, rm, wide;
+    int      ncallee, framesz, total, padding;
+    uint32_t enc;
+    uint32_t* blkoff;
+    uint32_t  nfix, fixcap;
+    BrFix*    fixes;
+
+    // Record function entry in the function table.
+    if (ctx->nfns == ctx->fnscap) {
+        uint32_t    oldcap = ctx->fnscap;
+        uint32_t    newcap = oldcap ? oldcap * 2 : 8;
+        JitFnEntry* newfns = emalloc(newcap * sizeof(JitFnEntry));
+        if (ctx->fns) {
+            memcpy(newfns, ctx->fns, ctx->nfns * sizeof(JitFnEntry));
+            qbe_free(ctx->fns);
+        }
+        ctx->fns    = newfns;
+        ctx->fnscap = newcap;
+    }
+    {
+        const char* n = fn->name;
+        if (n[0] == '"') {
+            size_t len   = strlen(n);
+            int    inner = len >= 2 ? (int)(len - 2) : 0;
+            snprintf(ctx->fns[ctx->nfns].name, NString, "%.*s", inner, n + 1);
+        } else {
+            snprintf(ctx->fns[ctx->nfns].name, NString, "_%s", n);
+        }
+    }
+    ctx->fns[ctx->nfns].off = ctx->codesz;
+    ctx->nfns++;
+
+    // Frame layout (mirrors macho_emitfn).
+    {
+        int* r;
+        ncallee = 0;
+        for (r = arm64_rclob; *r >= 0; r++)
+            if (fn->reg & BIT(*r))
+                ncallee++;
+        if (ncallee & 1)
+            ncallee++;  // keep callee-save area 16-byte aligned
+    }
+    {
+        int slotbytes = ((fn->slot + 3) & -4) * 4;
+        padding  = slotbytes - fn->slot * 4;
+        framesz  = ncallee * 8 + slotbytes;
+    }
+    total = framesz + 16;  // + x29/x30 pair
+
+    blkoff = emalloc(fn->nblk * sizeof blkoff[0]);
+    nfix   = 0;
+    fixcap = 8;
+    fixes  = emalloc(fixcap * sizeof fixes[0]);
+
+    // Prologue.
+    {
+        int* r;
+        int  k;
+        jit_emit_u32(ctx, 0xD503245Fu);  // hint #34 (BTI jc)
+        if (total <= 512) {
+            // stp x29,x30,[sp,-total]!
+            int imm7 = -(total / 8);
+            jit_emit_u32(ctx,
+                0xA9800000u | ((uint32_t)(imm7 & 0x7F) << 15) |
+                (30u << 10) | (31u << 5) | 29u);
+        } else {
+            SQ_ASSERT(framesz <= 4095);
+            // sub sp,sp,#framesz
+            jit_emit_u32(ctx,
+                0xD1000000u | ((uint32_t)framesz << 10) | (31u << 5) | 31u);
+            jit_emit_u32(ctx, 0xA9BF7BFDu);  // stp x29,x30,[sp,-16]!
+        }
+        jit_emit_u32(ctx, 0x910003FDu);  // mov x29, sp
+        k = 0;
+        for (r = arm64_rclob; *r >= 0; r++) {
+            if (fn->reg & BIT(*r)) {
+                k++;
+                uint32_t off   = (uint32_t)(16 + framesz - 8 * k);
+                uint32_t imm12 = off / 8;
+                if (*r >= QBE_ARM64_V0)
+                    jit_emit_u32(ctx,
+                        0xFD000000u | (imm12 << 10) | (29u << 5) |
+                        (uint32_t)(*r - QBE_ARM64_V0));
+                else
+                    jit_emit_u32(ctx,
+                        0xF9000000u | (imm12 << 10) | (29u << 5) |
+                        (uint32_t)(*r - QBE_ARM64_R0));
+            }
+        }
+    }
+
+    // Instruction and jump emission.
+    for (b = fn->start; b; b = b->link) {
+        blkoff[b->id] = ctx->codesz;
+        for (i = b->ins; i < &b->ins[b->nins]; i++) {
+            switch (i->op) {
+            case Onop:
+                break;
+
+            case Ocopy:
+                if (req(i->to, i->arg[0]))
+                    break;
+                SQ_ASSERT(isreg(i->to));
+                if (i->cls == Ks || i->cls == Kd) {
+                    // FMOV Sd/Dd, Sn/Dn
+                    SQ_ASSERT(isreg(i->arg[0]));
+                    rd  = i->to.val   - QBE_ARM64_V0;
+                    rm  = i->arg[0].val - QBE_ARM64_V0;
+                    enc = (i->cls == Kd) ? 0x1E604000u : 0x1E204000u;
+                    jit_emit_u32(ctx, enc | ((uint32_t)rm << 5) | (uint32_t)rd);
+                    break;
+                }
+                rd   = i->to.val - QBE_ARM64_R0;
+                wide = (i->cls == Kl);
+                if (rtype(i->arg[0]) == RCon) {
+                    qbe_arm64_emitjit_jit_movcon(ctx, rd, i->cls, &fn->con[i->arg[0].val]);
+                    break;
+                }
+                SQ_ASSERT(isreg(i->arg[0]));
+                rm  = i->arg[0].val - QBE_ARM64_R0;
+                // MOV Wd,Wm = ORR Wd,WZR,Wm
+                enc = wide ? 0xAA0003E0u : 0x2A0003E0u;
+                jit_emit_u32(ctx, enc | ((uint32_t)rm << 16) | (uint32_t)rd);
+                break;
+
+            case Oadd:
+            case Osub:
+                SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]));
+                if (rtype(i->arg[1]) == RCon) {
+                    Con*    cc  = &fn->con[i->arg[1].val];
+                    int64_t imm;
+                    SQ_ASSERT(cc->type == CBits);
+                    imm  = cc->bits.i;
+                    rd   = i->to.val   - QBE_ARM64_R0;
+                    rn   = i->arg[0].val - QBE_ARM64_R0;
+                    wide = (i->cls == Kl);
+                    SQ_ASSERT(imm >= 0 && imm < 4096);
+                    enc  = (i->op == Oadd) ? (wide ? 0x91000000u : 0x11000000u)
+                                           : (wide ? 0xD1000000u : 0x51000000u);
+                    jit_emit_u32(ctx,
+                        enc | ((uint32_t)imm << 10) |
+                        ((uint32_t)rn << 5) | (uint32_t)rd);
+                    break;
+                }
+                SQ_ASSERT(isreg(i->arg[1]));
+                if (i->cls == Ks || i->cls == Kd) {
+                    // FADD/FSUB Sd/Dd, Sn/Dn, Sm/Dm
+                    rd  = i->to.val   - QBE_ARM64_V0;
+                    rn  = i->arg[0].val - QBE_ARM64_V0;
+                    rm  = i->arg[1].val - QBE_ARM64_V0;
+                    enc = (i->op == Oadd)
+                        ? ((i->cls == Kd) ? 0x1E602800u : 0x1E202800u)
+                        : ((i->cls == Kd) ? 0x1E603800u : 0x1E203800u);
+                    jit_emit_u32(ctx,
+                        enc | ((uint32_t)rm << 16) |
+                        ((uint32_t)rn << 5) | (uint32_t)rd);
+                    break;
+                }
+                rd   = i->to.val   - QBE_ARM64_R0;
+                rn   = i->arg[0].val - QBE_ARM64_R0;
+                rm   = i->arg[1].val - QBE_ARM64_R0;
+                wide = (i->cls == Kl);
+                enc  = (i->op == Oadd) ? (wide ? 0x8B000000u : 0x0B000000u)
+                                       : (wide ? 0xCB000000u : 0x4B000000u);
+                if (wide && (rd == 31 || rn == 31))
+                    enc |= 0x00200000u | (3u << 13);  // extended-register QBE_ARM64_SP form
+                jit_emit_u32(ctx,
+                    enc | ((uint32_t)rm << 16) |
+                    ((uint32_t)rn << 5) | (uint32_t)rd);
+                break;
+
+            case Omul:
+                SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]) && isreg(i->arg[1]));
+                if (i->cls == Ks || i->cls == Kd) {
+                    rd  = i->to.val   - QBE_ARM64_V0;
+                    rn  = i->arg[0].val - QBE_ARM64_V0;
+                    rm  = i->arg[1].val - QBE_ARM64_V0;
+                    enc = (i->cls == Kd) ? 0x1E600800u : 0x1E200800u;
+                    jit_emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5) | (uint32_t)rd);
+                    break;
+                }
+                rd   = i->to.val   - QBE_ARM64_R0;
+                rn   = i->arg[0].val - QBE_ARM64_R0;
+                rm   = i->arg[1].val - QBE_ARM64_R0;
+                wide = (i->cls == Kl);
+                enc  = wide ? 0x9B007C00u : 0x1B007C00u;  // MUL = MADD Ra=XZR
+                jit_emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5) | (uint32_t)rd);
+                break;
+
+            case Oswap: {
+                int sc = QBE_ARM64_IP1 - QBE_ARM64_R0;  // x17 scratch
+                SQ_ASSERT(i->cls == Kw || i->cls == Kl);
+                SQ_ASSERT(isreg(i->arg[0]) && isreg(i->arg[1]));
+                rn   = i->arg[0].val - QBE_ARM64_R0;
+                rm   = i->arg[1].val - QBE_ARM64_R0;
+                wide = (i->cls == Kl);
+                enc  = wide ? 0xAA0003E0u : 0x2A0003E0u;
+                jit_emit_u32(ctx, enc | ((uint32_t)rn << 16) | (uint32_t)sc);  // mov QBE_ARM64_IP1, rn
+                jit_emit_u32(ctx, enc | ((uint32_t)rm << 16) | (uint32_t)rn);  // mov rn, rm
+                jit_emit_u32(ctx, enc | ((uint32_t)sc << 16) | (uint32_t)rm);  // mov rm, QBE_ARM64_IP1
+                break;
+            }
+
+            case Odiv:
+            case Oudiv:
+                SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]) && isreg(i->arg[1]));
+                if (i->cls == Ks || i->cls == Kd) {
+                    rd  = i->to.val   - QBE_ARM64_V0;
+                    rn  = i->arg[0].val - QBE_ARM64_V0;
+                    rm  = i->arg[1].val - QBE_ARM64_V0;
+                    enc = (i->cls == Kd) ? 0x1E601800u : 0x1E201800u;
+                    jit_emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5) | (uint32_t)rd);
+                    break;
+                }
+                rd   = i->to.val   - QBE_ARM64_R0;
+                rn   = i->arg[0].val - QBE_ARM64_R0;
+                rm   = i->arg[1].val - QBE_ARM64_R0;
+                wide = (i->cls == Kl);
+                enc  = (i->op == Odiv) ? (wide ? 0x9AC00C00u : 0x1AC00C00u)
+                                       : (wide ? 0x9AC00800u : 0x1AC00800u);
+                jit_emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5) | (uint32_t)rd);
+                break;
+
+            case Orem:
+            case Ourem: {
+                int sc = QBE_ARM64_IP1 - QBE_ARM64_R0;  // x17 scratch
+                SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]) && isreg(i->arg[1]));
+                rd   = i->to.val   - QBE_ARM64_R0;
+                rn   = i->arg[0].val - QBE_ARM64_R0;
+                rm   = i->arg[1].val - QBE_ARM64_R0;
+                wide = (i->cls == Kl);
+                // step 1: scratch = dividend / divisor
+                enc  = (i->op == Orem) ? (wide ? 0x9AC00C00u : 0x1AC00C00u)
+                                       : (wide ? 0x9AC00800u : 0x1AC00800u);
+                jit_emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5) | (uint32_t)sc);
+                // step 2: rd = rn - sc*rm  (MSUB)
+                enc  = wide ? 0x9B008000u : 0x1B008000u;
+                jit_emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 10) |
+                                        ((uint32_t)sc << 5) | (uint32_t)rd);
+                break;
+            }
+
+            case Oand:
+            case Oor:
+            case Oxor:
+                SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]) && isreg(i->arg[1]));
+                rd   = i->to.val   - QBE_ARM64_R0;
+                rn   = i->arg[0].val - QBE_ARM64_R0;
+                rm   = i->arg[1].val - QBE_ARM64_R0;
+                wide = (i->cls == Kl);
+                if (i->op == Oand)
+                    enc = wide ? 0x8A000000u : 0x0A000000u;
+                else if (i->op == Oor)
+                    enc = wide ? 0xAA000000u : 0x2A000000u;
+                else
+                    enc = wide ? 0xCA000000u : 0x4A000000u;
+                jit_emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5) | (uint32_t)rd);
+                break;
+
+            case Oneg:
+                SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]));
+                if (i->cls == Ks || i->cls == Kd) {
+                    rd  = i->to.val   - QBE_ARM64_V0;
+                    rm  = i->arg[0].val - QBE_ARM64_V0;
+                    enc = (i->cls == Kd) ? 0x1E614000u : 0x1E214000u;
+                    jit_emit_u32(ctx, enc | ((uint32_t)rm << 5) | (uint32_t)rd);
+                    break;
+                }
+                rd   = i->to.val   - QBE_ARM64_R0;
+                rm   = i->arg[0].val - QBE_ARM64_R0;
+                wide = (i->cls == Kl);
+                enc  = wide ? 0xCB0003E0u : 0x4B0003E0u;  // NEG = SUB Rd,XZR,Rm
+                jit_emit_u32(ctx, enc | ((uint32_t)rm << 16) | (uint32_t)rd);
+                break;
+
+            case Osar:
+            case Oshr:
+            case Oshl:
+                SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]) && isreg(i->arg[1]));
+                rd   = i->to.val   - QBE_ARM64_R0;
+                rn   = i->arg[0].val - QBE_ARM64_R0;
+                rm   = i->arg[1].val - QBE_ARM64_R0;
+                wide = (i->cls == Kl);
+                if (i->op == Osar)
+                    enc = wide ? 0x9AC02800u : 0x1AC02800u;
+                else if (i->op == Oshr)
+                    enc = wide ? 0x9AC02400u : 0x1AC02400u;
+                else
+                    enc = wide ? 0x9AC02000u : 0x1AC02000u;
+                jit_emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5) | (uint32_t)rd);
+                break;
+
+            case Oextsb:
+            case Oextub:
+            case Oextsh:
+            case Oextuh:
+            case Oextsw:
+            case Oextuw:
+                SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]));
+                rd   = i->to.val   - QBE_ARM64_R0;
+                rn   = i->arg[0].val - QBE_ARM64_R0;
+                wide = (i->cls == Kl);
+                switch (i->op) {
+                case Oextsb:
+                    enc = wide ? 0x93401C00u : 0x13001C00u;
+                    jit_emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+                    break;
+                case Oextub:
+                    jit_emit_u32(ctx, 0x53001C00u | ((uint32_t)rn << 5) | (uint32_t)rd);
+                    break;
+                case Oextsh:
+                    enc = wide ? 0x93403C00u : 0x13003C00u;
+                    jit_emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+                    break;
+                case Oextuh:
+                    jit_emit_u32(ctx, 0x53003C00u | ((uint32_t)rn << 5) | (uint32_t)rd);
+                    break;
+                case Oextsw:
+                    jit_emit_u32(ctx, 0x93407C00u | ((uint32_t)rn << 5) | (uint32_t)rd);
+                    break;
+                default:  // Oextuw: MOV Wd,Wm (zero-extends to 64 bits)
+                    jit_emit_u32(ctx, 0x2A0003E0u | ((uint32_t)rn << 16) | (uint32_t)rd);
+                    break;
+                }
+                break;
+
+            case Oacmp:
+            case Oacmn:
+                SQ_ASSERT(isreg(i->arg[0]));
+                rn   = i->arg[0].val - QBE_ARM64_R0;
+                wide = (i->cls == Kl);
+                if (rtype(i->arg[1]) == RCon) {
+                    Con*    cc  = &fn->con[i->arg[1].val];
+                    int64_t imm = cc->bits.i;
+                    SQ_ASSERT(imm >= 0 && imm < 4096);
+                    enc = (i->op == Oacmp) ? (wide ? 0xF100001Fu : 0x7100001Fu)
+                                           : (wide ? 0xB100001Fu : 0x3100001Fu);
+                    jit_emit_u32(ctx, enc | ((uint32_t)imm << 10) | ((uint32_t)rn << 5));
+                } else {
+                    SQ_ASSERT(isreg(i->arg[1]));
+                    rm  = i->arg[1].val - QBE_ARM64_R0;
+                    enc = (i->op == Oacmp) ? (wide ? 0xEB00001Fu : 0x6B00001Fu)
+                                           : (wide ? 0xAB00001Fu : 0x2B00001Fu);
+                    jit_emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5));
+                }
+                break;
+
+            case Oaddr: {
+                uint32_t off;
+                SQ_ASSERT(isreg(i->to));
+                SQ_ASSERT(rtype(i->arg[0]) == RSlot);
+                rd  = i->to.val - QBE_ARM64_R0;
+                off = arm64_slot_off(rsval(i->arg[0]), padding, framesz);
+                SQ_ASSERT(off <= 4095);
+                // ADD Xd, X29, #off
+                jit_emit_u32(ctx,
+                    0x91000000u | (off << 10) | (29u << 5) | (uint32_t)rd);
+                break;
+            }
+
+            case Oloaduw:
+            case Oloadsw: {
+                Ref addr;
+                SQ_ASSERT(isreg(i->to));
+                rd   = i->to.val - QBE_ARM64_R0;
+                addr = i->arg[0];
+                // LDRSW Xt for Kl, else LDR Wt
+                enc  = (i->op == Oloadsw && i->cls == Kl) ? 0xB9800000u
+                                                           : 0xB9400000u;
+                if (isreg(addr)) {
+                    rn = addr.val - QBE_ARM64_R0;
+                    jit_emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+                } else {
+                    uint32_t off;
+                    SQ_ASSERT(rtype(addr) == RSlot);
+                    off = arm64_slot_off(rsval(addr), padding, framesz);
+                    jit_emit_u32(ctx,
+                        enc | ((off / 4u) << 10) | (29u << 5) | (uint32_t)rd);
+                }
+                break;
+            }
+
+            case Oloadsb:
+            case Oloadub:
+            case Oloadsh:
+            case Oloaduh:
+            case Oload: {
+                int  scale;
+                Ref  addr;
+                SQ_ASSERT(isreg(i->to));
+                rd   = i->to.val - QBE_ARM64_R0;
+                addr = i->arg[0];
+                wide = (i->cls == Kl);
+                switch (i->op) {
+                case Oloadsb:
+                    enc   = wide ? 0x39800000u : 0x39C00000u;
+                    scale = 1;
+                    break;
+                case Oloadub:
+                    enc   = 0x39400000u;
+                    scale = 1;
+                    break;
+                case Oloadsh:
+                    enc   = wide ? 0x79800000u : 0x79C00000u;
+                    scale = 2;
+                    break;
+                case Oloaduh:
+                    enc   = 0x79400000u;
+                    scale = 2;
+                    break;
+                default: // Oload
+                    if (i->cls == Ks) {
+                        rd    = i->to.val - QBE_ARM64_V0;
+                        enc   = 0xBD400000u;
+                        scale = 4;
+                    } else if (i->cls == Kd) {
+                        rd    = i->to.val - QBE_ARM64_V0;
+                        enc   = 0xFD400000u;
+                        scale = 8;
+                    } else {
+                        enc   = wide ? 0xF9400000u : 0xB9400000u;
+                        scale = wide ? 8 : 4;
+                    }
+                    break;
+                }
+                if (isreg(addr)) {
+                    rn = addr.val - QBE_ARM64_R0;
+                    jit_emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+                } else {
+                    uint32_t off;
+                    SQ_ASSERT(rtype(addr) == RSlot);
+                    off = arm64_slot_off(rsval(addr), padding, framesz);
+                    jit_emit_u32(ctx,
+                        enc | ((off / (uint32_t)scale) << 10) |
+                        (29u << 5) | (uint32_t)rd);
+                }
+                break;
+            }
+
+            case Ostoreb:
+            case Ostoreh:
+            case Ostorew:
+            case Ostorel: {
+                int  scale;
+                Ref  addr;
+                SQ_ASSERT(isreg(i->arg[0]));
+                addr = i->arg[1];
+                // float store: Ostorew Ks / Ostorel Kd
+                if (i->arg[0].val >= QBE_ARM64_V0) {
+                    rd    = i->arg[0].val - QBE_ARM64_V0;
+                    enc   = (i->op == Ostorel) ? 0xFD000000u : 0xBD000000u;
+                    scale = (i->op == Ostorel) ? 8 : 4;
+                    if (isreg(addr)) {
+                        rn = addr.val - QBE_ARM64_R0;
+                        jit_emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+                    } else {
+                        uint32_t off;
+                        SQ_ASSERT(rtype(addr) == RSlot);
+                        off = arm64_slot_off(rsval(addr), padding, framesz);
+                        jit_emit_u32(ctx,
+                            enc | ((off / (uint32_t)scale) << 10) |
+                            (29u << 5) | (uint32_t)rd);
+                    }
+                    break;
+                }
+                rd = i->arg[0].val - QBE_ARM64_R0;
+                switch (i->op) {
+                case Ostoreb: enc = 0x39000000u; scale = 1; break;
+                case Ostoreh: enc = 0x79000000u; scale = 2; break;
+                case Ostorew: enc = 0xB9000000u; scale = 4; break;
+                default:      enc = 0xF9000000u; scale = 8; break; // Ostorel
+                }
+                if (isreg(addr)) {
+                    rn = addr.val - QBE_ARM64_R0;
+                    jit_emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+                } else {
+                    uint32_t off;
+                    SQ_ASSERT(rtype(addr) == RSlot);
+                    off = arm64_slot_off(rsval(addr), padding, framesz);
+                    jit_emit_u32(ctx,
+                        enc | ((off / (uint32_t)scale) << 10) |
+                        (29u << 5) | (uint32_t)rd);
+                }
+                break;
+            }
+
+            case Ostores:
+            case Ostored: {
+                int  fscale = (i->op == Ostored) ? 8 : 4;
+                Ref  faddr  = i->arg[1];
+                SQ_ASSERT(isreg(i->arg[0]));
+                rd  = i->arg[0].val - QBE_ARM64_V0;
+                enc = (i->op == Ostored) ? 0xFD000000u : 0xBD000000u;
+                if (isreg(faddr)) {
+                    rn = faddr.val - QBE_ARM64_R0;
+                    jit_emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+                } else {
+                    uint32_t off;
+                    SQ_ASSERT(rtype(faddr) == RSlot);
+                    off = arm64_slot_off(rsval(faddr), padding, framesz);
+                    jit_emit_u32(ctx,
+                        enc | ((off / (uint32_t)fscale) << 10) |
+                        (29u << 5) | (uint32_t)rd);
+                }
+                break;
+            }
+
+            case Ocast:
+                SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]));
+                switch (i->cls) {
+                case Kw: // FMOV Wd, Sn
+                    rd = i->to.val   - QBE_ARM64_R0;
+                    rn = i->arg[0].val - QBE_ARM64_V0;
+                    jit_emit_u32(ctx, 0x1E260000u | ((uint32_t)rn << 5) | (uint32_t)rd);
+                    break;
+                case Kl: // FMOV Xd, Dn
+                    rd = i->to.val   - QBE_ARM64_R0;
+                    rn = i->arg[0].val - QBE_ARM64_V0;
+                    jit_emit_u32(ctx, 0x9E660000u | ((uint32_t)rn << 5) | (uint32_t)rd);
+                    break;
+                case Ks: // FMOV Sd, Wn
+                    rd = i->to.val   - QBE_ARM64_V0;
+                    rn = i->arg[0].val - QBE_ARM64_R0;
+                    jit_emit_u32(ctx, 0x1E270000u | ((uint32_t)rn << 5) | (uint32_t)rd);
+                    break;
+                default: // Kd: FMOV Dd, Xn
+                    rd = i->to.val   - QBE_ARM64_V0;
+                    rn = i->arg[0].val - QBE_ARM64_R0;
+                    jit_emit_u32(ctx, 0x9E670000u | ((uint32_t)rn << 5) | (uint32_t)rd);
+                    break;
+                }
+                break;
+
+            case Ostosi:
+            case Ostoui:
+            case Odtosi:
+            case Odtoui: {
+                // FCVTZS / FCVTZU: QBE_ARM64_FP -> integer
+                int sfp = (i->op == Odtosi || i->op == Odtoui);
+                int uns = (i->op == Ostoui || i->op == Odtoui);
+                int wx  = (i->cls == Kl);
+                rd  = i->to.val   - QBE_ARM64_R0;
+                rn  = i->arg[0].val - QBE_ARM64_V0;
+                if (sfp)
+                    enc = uns ? (wx ? 0x9E790000u : 0x1E790000u)
+                              : (wx ? 0x9E780000u : 0x1E780000u);
+                else
+                    enc = uns ? (wx ? 0x9E390000u : 0x1E390000u)
+                              : (wx ? 0x9E380000u : 0x1E380000u);
+                jit_emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+                break;
+            }
+
+            case Oswtof:
+            case Ouwtof:
+            case Osltof:
+            case Oultof: {
+                // SCVTF / UCVTF: integer -> QBE_ARM64_FP
+                int xl  = (i->op == Osltof || i->op == Oultof);
+                int uns = (i->op == Ouwtof || i->op == Oultof);
+                int dbl = (i->cls == Kd);
+                rd  = i->to.val   - QBE_ARM64_V0;
+                rn  = i->arg[0].val - QBE_ARM64_R0;
+                if (xl)
+                    enc = uns ? (dbl ? 0x9E630000u : 0x9E230000u)
+                              : (dbl ? 0x9E620000u : 0x9E220000u);
+                else
+                    enc = uns ? (dbl ? 0x1E630000u : 0x1E230000u)
+                              : (dbl ? 0x1E620000u : 0x1E220000u);
+                jit_emit_u32(ctx, enc | ((uint32_t)rn << 5) | (uint32_t)rd);
+                break;
+            }
+
+            case Oexts:
+                // FCVT Dd, Sn: widen single to double
+                SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]));
+                rd  = i->to.val   - QBE_ARM64_V0;
+                rn  = i->arg[0].val - QBE_ARM64_V0;
+                jit_emit_u32(ctx, 0x1E22C000u | ((uint32_t)rn << 5) | (uint32_t)rd);
+                break;
+
+            case Otruncd:
+                // FCVT Sd, Dn: narrow double to single
+                SQ_ASSERT(isreg(i->to) && isreg(i->arg[0]));
+                rd  = i->to.val   - QBE_ARM64_V0;
+                rn  = i->arg[0].val - QBE_ARM64_V0;
+                jit_emit_u32(ctx, 0x1E624000u | ((uint32_t)rn << 5) | (uint32_t)rd);
+                break;
+
+            case Oafcmp:
+                // FCMPE Sn, Sm / FCMPE Dn, Dm
+                SQ_ASSERT(isreg(i->arg[0]) && isreg(i->arg[1]));
+                rn  = i->arg[0].val - QBE_ARM64_V0;
+                rm  = i->arg[1].val - QBE_ARM64_V0;
+                enc = (i->cls == Kd) ? 0x1E602010u : 0x1E202010u;
+                jit_emit_u32(ctx, enc | ((uint32_t)rm << 16) | ((uint32_t)rn << 5));
+                break;
+
+            case Ocall:
+                if (rtype(i->arg[0]) == RTmp) {
+                    // BLR Xn -- indirect call through register
+                    SQ_ASSERT(isreg(i->arg[0]));
+                    rn = i->arg[0].val - QBE_ARM64_R0;
+                    jit_emit_u32(ctx, 0xD63F0000u | ((uint32_t)rn << 5));
+                } else {
+                    // BL sym via MOVZ/MOVK/MOVK into X17 + BLR X17
+                    Con*  c  = &fn->con[i->arg[0].val];
+                    char  cname[NString];
+                    int   sc = QBE_ARM64_IP1 - QBE_ARM64_R0;  // X17
+                    SQ_ASSERT(rtype(i->arg[0]) == RCon && c->type == CAddr);
+                    qbe_arm64_emitjit_jit_symname(cname, str(c->sym.id));
+                    qbe_arm64_emitjit_jit_emit_adrfix(ctx, sc, cname, 0);
+                    jit_emit_u32(ctx, 0xD63F0000u | ((uint32_t)sc << 5));  // BLR X17
+                }
+                break;
+
+            case Osalloc:
+                SQ_ASSERT(isreg(i->arg[0]));
+                rm  = i->arg[0].val - QBE_ARM64_R0;
+                // sub sp, sp, Xm (extended-register form)
+                jit_emit_u32(ctx, 0xCB206000u | ((uint32_t)rm << 16) | (31u << 5) | 31u);
+                if (!req(i->to, NULL_R)) {
+                    SQ_ASSERT(isreg(i->to));
+                    rd  = i->to.val - QBE_ARM64_R0;
+                    // mov Xd, sp = add Xd, sp, #0
+                    jit_emit_u32(ctx, 0x91000000u | (31u << 5) | (uint32_t)rd);
+                }
+                break;
+
+            default:
+                // Oflag* range: CSET Wd, cond = CSINC Wd, WZR, WZR, invert(cond)
+                if (i->op >= Oflag && i->op <= Oflag1) {
+                    int c = i->op - Oflag;
+                    SQ_ASSERT(isreg(i->to));
+                    rd  = i->to.val - QBE_ARM64_R0;
+                    jit_emit_u32(ctx,
+                        0x1A9F07E0u | ((uint32_t)(arm64cond[c] ^ 1u) << 12) | (uint32_t)rd);
+                    break;
+                }
+                die("jit: %s: unhandled op %s", fn->name, optab[i->op].name);
+            }
+        }
+
+        // Jump emission.
+        switch (b->jmp.type) {
+        case Jret0: {
+            int* r;
+            int  k;
+            k = 0;
+            for (r = arm64_rclob; *r >= 0; r++) {
+                if (fn->reg & BIT(*r)) {
+                    k++;
+                    uint32_t off   = (uint32_t)(16 + framesz - 8 * k);
+                    uint32_t imm12 = off / 8;
+                    if (*r >= QBE_ARM64_V0)
+                        jit_emit_u32(ctx,
+                            0xFD400000u | (imm12 << 10) | (29u << 5) |
+                            (uint32_t)(*r - QBE_ARM64_V0));
+                    else
+                        jit_emit_u32(ctx,
+                            0xF9400000u | (imm12 << 10) | (29u << 5) |
+                            (uint32_t)(*r - QBE_ARM64_R0));
+                }
+            }
+            if (fn->dynalloc)
+                jit_emit_u32(ctx, 0x910003BFu);  // mov sp, x29
+            if (total <= 512) {
+                jit_emit_u32(ctx,
+                    0xA8C00000u | ((uint32_t)(total / 8) << 15) |
+                    (30u << 10) | (31u << 5) | 29u);
+            } else {
+                jit_emit_u32(ctx, 0xA8C17BFDu);  // ldp x29,x30,[sp],16
+                // add sp, sp, #framesz
+                jit_emit_u32(ctx,
+                    0x91000000u | ((uint32_t)framesz << 10) |
+                    (31u << 5) | 31u);
+            }
+            jit_emit_u32(ctx, 0xD65F03C0u);  // ret
+            break;
+        }
+        case Jhlt:
+            jit_emit_u32(ctx, 0xD4207D00u);  // brk #1000
+            break;
+        case Jjmp:
+            if (b->s1 != b->link) {
+                uint32_t boff = ctx->codesz;
+                jit_emit_u32(ctx, 0x14000000u);  // B placeholder
+                if (nfix == fixcap) {
+                    uint32_t oldcap = fixcap;
+                    fixcap *= 2;
+                    BrFix* nf = emalloc(fixcap * sizeof(BrFix));
+                    memcpy(nf, fixes, oldcap * sizeof(BrFix));
+                    qbe_free(fixes);
+                    fixes = nf;
+                }
+                fixes[nfix++] = (BrFix){boff, b->s1, -1};
+            }
+            break;
+        default: {
+            // Conditional branches: Jjf + [0, NCmp)
+            int  c = b->jmp.type - Jjf;
+            Blk* brtgt;
+            if (c < 0 || c >= NCmp)
+                die("jit: %s: unhandled jump type %d", fn->name, b->jmp.type);
+            if (b->link == b->s2) {
+                brtgt = b->s1;  // s2 falls through; branch to s1 if cond
+            } else {
+                c = cmpneg(c);  // s1 falls through; branch to s2 if !cond
+                brtgt = b->s2;
+                // remap ordered-float negations to NaN-inclusive conditions
+                switch (c) {
+                case NCmpI+Cfge: c = Ciuge; break;
+                case NCmpI+Cfgt: c = Ciugt; break;
+                case NCmpI+Cfle: c = Cisle; break;
+                case NCmpI+Cflt: c = Cislt; break;
+                default: break;
+                }
+            }
+            {
+                uint32_t boff = ctx->codesz;
+                jit_emit_u32(ctx, 0x54000000u | (uint32_t)arm64cond[c]);
+                if (nfix == fixcap) {
+                    uint32_t oldcap = fixcap;
+                    fixcap *= 2;
+                    BrFix* nf = emalloc(fixcap * sizeof(BrFix));
+                    memcpy(nf, fixes, oldcap * sizeof(BrFix));
+                    qbe_free(fixes);
+                    fixes = nf;
+                }
+                fixes[nfix++] = (BrFix){boff, brtgt, arm64cond[c]};
+            }
+            // if neither successor falls through, also branch to s1
+            if (b->link != b->s1 && b->link != b->s2) {
+                uint32_t boff = ctx->codesz;
+                jit_emit_u32(ctx, 0x14000000u);
+                if (nfix == fixcap) {
+                    uint32_t oldcap = fixcap;
+                    fixcap *= 2;
+                    BrFix* nf = emalloc(fixcap * sizeof(BrFix));
+                    memcpy(nf, fixes, oldcap * sizeof(BrFix));
+                    qbe_free(fixes);
+                    fixes = nf;
+                }
+                fixes[nfix++] = (BrFix){boff, b->s1, -1};
+            }
+            break;
+        }
+        }
+    }
+
+    // Apply branch fixups directly into ctx->code.
+    {
+        uint32_t f;
+        for (f = 0; f < nfix; f++) {
+            uint32_t  toff  = blkoff[fixes[f].tgt->id];
+            int32_t   delta = ((int32_t)toff - (int32_t)fixes[f].off) / 4;
+            uint32_t* p     = (uint32_t*)&ctx->code[fixes[f].off];
+            if (fixes[f].cond >= 0)
+                *p |= (uint32_t)(delta & 0x7FFFFu) << 5;   // B.cond imm19
+            else
+                *p |= (uint32_t)(delta & 0x3FFFFFFu);      // B imm26
+        }
+    }
+
+    qbe_free(blkoff);
+    qbe_free(fixes);
+}
+
+void
+jit_finalize(JitCtx* ctx) {
+    uint32_t sz;
+    uint8_t* exec;
+
+    // Set up data region (RW, not executable).
+    if (ctx->datsz > 0) {
+        uint32_t dsz = (ctx->datsz + 4095u) & ~4095u;
+        uint8_t* dexec = mmap(NULL, dsz, PROT_READ | PROT_WRITE,
+                              MAP_PRIVATE | MAP_ANON, -1, 0);
+        if (dexec == MAP_FAILED)
+            die("jit: mmap data failed");
+        memcpy(dexec, ctx->datbuf, ctx->datsz);
+        ctx->datexec   = dexec;
+        ctx->datexecsz = dsz;
+    }
+
+    /* Initialize TLS descriptors: install bootstrap fn and pre-create pthread keys */
+    {
+        uint32_t ti;
+        for (ti = 0; ti < ctx->ntlssyms; ti++) {
+            void **desc = (void **)(ctx->datexec + ctx->tlssyms[ti].descoff);
+            pthread_key_t key;
+            desc[0] = (void *)qbe_arm64_emitjit_jit_tlv_bootstrap;
+            pthread_key_create(&key, free);
+            desc[1] = (void *)(uintptr_t)key;
+            /* desc[2] filled by JitDataFix; desc[3] written at emit time */
+        }
+    }
+
+    // Set up BSS region (zero-initialized via MAP_ANON).
+    if (ctx->bsssz > 0) {
+        uint32_t bsz = (ctx->bsssz + 4095u) & ~4095u;
+        uint8_t* bexec = mmap(NULL, bsz, PROT_READ | PROT_WRITE,
+                              MAP_PRIVATE | MAP_ANON, -1, 0);
+        if (bexec == MAP_FAILED)
+            die("jit: mmap bss failed");
+        ctx->bssexec   = bexec;
+        ctx->bssexecsz = bsz;
+    }
+
+    if (ctx->codesz == 0)
+        goto resolve_data;
+
+    // Round up to page size.
+    sz = (ctx->codesz + 4095u) & ~4095u;
+    exec = mmap(NULL, sz, PROT_READ|PROT_WRITE|PROT_EXEC,
+                MAP_PRIVATE|MAP_ANON|MAP_JIT, -1, 0);
+    if (exec == MAP_FAILED)
+        die("jit: mmap failed");
+    pthread_jit_write_protect_np(0);
+    memcpy(exec, ctx->code, ctx->codesz);
+
+    // Resolve address fixups (code -> fn or data symbol or external).
+    {
+        uint32_t f;
+        for (f = 0; f < ctx->nadrfix; f++) {
+            JitAddrFixup* fx = &ctx->adrfix[f];
+            uint64_t      addr = 0;
+            uint32_t      fi;
+            uint32_t*     p = (uint32_t*)(exec + fx->off);
+
+            // Try JIT function table first.
+            for (fi = 0; fi < ctx->nfns; fi++) {
+                if (strcmp(ctx->fns[fi].name, fx->name) == 0) {
+                    addr = (uint64_t)(uintptr_t)(exec + ctx->fns[fi].off);
+                    break;
+                }
+            }
+            // Try JIT data symbols.
+            if (addr == 0) {
+                for (fi = 0; fi < ctx->ndatasym; fi++) {
+                    if (strcmp(ctx->datasym[fi].name, fx->name) == 0) {
+                        addr = ctx->datasym[fi].isbss
+                            ? (uint64_t)(uintptr_t)(ctx->bssexec + ctx->datasym[fi].off)
+                            : (uint64_t)(uintptr_t)(ctx->datexec + ctx->datasym[fi].off);
+                        break;
+                    }
+                }
+            }
+            // Try dlsym; strip leading '_' for macOS convention.
+            if (addr == 0) {
+                const char* dname = (fx->name[0] == '_') ? fx->name + 1 : fx->name;
+                void*       sym   = dlsym(RTLD_DEFAULT, dname);
+                if (!sym)
+                    die("jit: unresolved symbol: %s", fx->name);
+                addr = (uint64_t)(uintptr_t)sym;
+            }
+            addr += (uint64_t)fx->addend;
+
+            // Patch the MOVZ/MOVK/MOVK triple.
+            p[0] = 0xD2800000u | (((uint32_t)(addr        & 0xFFFF)) << 5) | (uint32_t)fx->rd;
+            p[1] = 0xF2A00000u | (((uint32_t)((addr >> 16) & 0xFFFF)) << 5) | (uint32_t)fx->rd;
+            p[2] = 0xF2C00000u | (((uint32_t)((addr >> 32) & 0xFFFF)) << 5) | (uint32_t)fx->rd;
+        }
+    }
+
+    sys_icache_invalidate(exec, sz);
+    pthread_jit_write_protect_np(1);
+    ctx->exec   = exec;
+    ctx->execsz = sz;
+
+resolve_data:
+    // Resolve data pointer fixups (pointer slots in the data section).
+    {
+        uint32_t f;
+        for (f = 0; f < ctx->ndatafix; f++) {
+            JitDataFix* fx = &ctx->datafix[f];
+            uint64_t    addr = 0;
+            uint32_t    fi;
+            uint64_t*   slot = (uint64_t*)(ctx->datexec + fx->off);
+
+            // Try JIT function table.
+            for (fi = 0; fi < ctx->nfns; fi++) {
+                if (strcmp(ctx->fns[fi].name, fx->name) == 0) {
+                    addr = (uint64_t)(uintptr_t)(ctx->exec + ctx->fns[fi].off);
+                    break;
+                }
+            }
+            // Try JIT data symbols.
+            if (addr == 0) {
+                for (fi = 0; fi < ctx->ndatasym; fi++) {
+                    if (strcmp(ctx->datasym[fi].name, fx->name) == 0) {
+                        addr = ctx->datasym[fi].isbss
+                            ? (uint64_t)(uintptr_t)(ctx->bssexec + ctx->datasym[fi].off)
+                            : (uint64_t)(uintptr_t)(ctx->datexec + ctx->datasym[fi].off);
+                        break;
+                    }
+                }
+            }
+            // Try dlsym.
+            if (addr == 0) {
+                const char* dname = (fx->name[0] == '_') ? fx->name + 1 : fx->name;
+                void*       sym   = dlsym(RTLD_DEFAULT, dname);
+                if (!sym)
+                    die("jit: unresolved data ref: %s", fx->name);
+                addr = (uint64_t)(uintptr_t)sym;
+            }
+            addr += (uint64_t)fx->addend;
+            *slot = addr;
+        }
+    }
+}
+
+void*
+jit_lookup(JitCtx* ctx, const char* name) {
+    uint32_t i;
+    for (i = 0; i < ctx->nfns; i++)
+        if (strcmp(ctx->fns[i].name, name) == 0)
+            return ctx->exec + ctx->fns[i].off;
+    for (i = 0; i < ctx->ndatasym; i++)
+        if (strcmp(ctx->datasym[i].name, name) == 0)
+            return ctx->datasym[i].isbss
+                ? (void*)(ctx->bssexec + ctx->datasym[i].off)
+                : (void*)(ctx->datexec + ctx->datasym[i].off);
+    return NULL;
+}
+
+void
+jit_populate_ptrs(JitCtx *ctx)
+{
+    uint32_t i;
+    char pname[NString + 10];
+    for (i = 0; i < ctx->nfns; i++) {
+        const char *fn = ctx->fns[i].name;  /* e.g. "_f" */
+        if (fn[0] == '_') fn++;             /* strip leading _: "f" */
+        snprintf(pname, sizeof(pname), "jit_%s_ptr", fn);
+        void **pp = dlsym(RTLD_DEFAULT, pname);
+        if (pp)
+            *pp = (char*)ctx->exec + ctx->fns[i].off;
+    }
+}
+
+#else   // !(__APPLE__ && __arm64__)
+
+JitCtx*
+jit_new(void) {
+  return NULL;
+}
+
+void
+jit_free(JitCtx* ctx) {
+  (void)ctx;
+}
+
+void
+jit_emitfn(Fn* fn, JitCtx* ctx) {
+  (void)fn;
+  (void)ctx;
+}
+
+void
+jit_emitdat(Dat* dat, JitCtx* ctx) {
+  (void)dat;
+  (void)ctx;
+}
+
+void
+jit_emitfin_fp(JitCtx* ctx) {
+  (void)ctx;
+}
+
+void
+jit_finalize(JitCtx* ctx) {
+  (void)ctx;
+}
+
+void*
+jit_lookup(JitCtx* ctx, const char* name) {
+  (void)ctx;
+  (void)name;
+  return NULL;
+}
+
+void
+jit_populate_ptrs(JitCtx* ctx) {
+  (void)ctx;
+}
+
+#endif
+#undef G
+/*** END FILE: arm64/emitjit.c ***/
 /*** START FILE: arm64/emitmacho.c ***/
 /* skipping all.h */
 
 /* skipping emitmacho.h */
+/* skipping apple_shared.h */
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14323,37 +18513,6 @@ static void emit_u32(MachoCtx* ctx, uint32_t insn) {
   buf_append(&ctx->text, &ctx->textsz, &ctx->textcap, &insn, 4);
 }
 
-// ARM64 condition codes indexed by CmpI
-static const uint8_t arm64cond[NCmp] = {
-    // integer comparisons
-    [Cieq] = 0x0,
-    [Cine] = 0x1,
-    [Cisge] = 0xA,
-    [Cisgt] = 0xC,
-    [Cisle] = 0xD,
-    [Cislt] = 0xB,
-    [Ciuge] = 0x2,
-    [Ciugt] = 0x8,
-    [Ciule] = 0x9,
-    [Ciult] = 0x3,
-    // float comparisons (after FCMPE, ARM64 QBE_ARM64_FP flags = integer flags)
-    [NCmpI + Cfeq] = 0x0,
-    [NCmpI + Cfge] = 0xA,
-    [NCmpI + Cfgt] = 0xC,
-    [NCmpI + Cfle] = 0x9,
-    [NCmpI + Cflt] = 0x4,
-    [NCmpI + Cfne] = 0x1,
-    [NCmpI + Cfo] = 0x7,
-    [NCmpI + Cfuo] = 0x6,
-};
-
-// Branch fixup: records a branch instruction to patch after all blocks emitted
-typedef struct {
-  uint32_t off;
-  Blk* tgt;
-  int cond;
-} BrFix;
-
 static void grow_fixes(BrFix** fixes, uint32_t* fixcap) {
   uint32_t oldcap = *fixcap;
   *fixcap *= 2;
@@ -14484,20 +18643,6 @@ static void emit_movcon(MachoCtx* ctx, int rd, int cls, Con* c) {
     emit_u32(ctx,
              movk | ((uint32_t)(sh / 16) << 21) | (((uint32_t)(n & 0xffff)) << 5) | (uint32_t)rd);
   }
-}
-
-// Mirror arm64/emit.c slot() for RSlot -> x29-relative byte offset.
-// s == -1: frame-start marker used by apple_selvastart (Oaddr SLOT(-1)).
-// s < 0:   above-frame caller argument at byte offset -(s+2) above frame.
-// s >= 0:  local / callee-save slot.
-static uint32_t slot_off(int s, int padding, int framesz) {
-  if (s == -1) {
-    return (uint32_t)(16 + framesz);
-  }
-  if (s < 0) {
-    return (uint32_t)(16 + framesz - (s + 2));
-  }
-  return (uint32_t)(16 + padding + 4 * s);
 }
 
 void
@@ -14755,7 +18900,7 @@ macho_emitfn(Fn* fn, MachoCtx* ctx) {
             } else {
               uint32_t off;
               SQ_ASSERT(rtype(addr) == RSlot);
-              off = slot_off(rsval(addr), padding, framesz);
+              off = arm64_slot_off(rsval(addr), padding, framesz);
               emit_u32(ctx, enc | ((off / (uint32_t)scale) << 10) | (29u << 5) | (uint32_t)rd);
             }
             break;
@@ -14785,7 +18930,7 @@ macho_emitfn(Fn* fn, MachoCtx* ctx) {
           } else {
             uint32_t off;
             SQ_ASSERT(rtype(addr) == RSlot);
-            off = slot_off(rsval(addr), padding, framesz);
+            off = arm64_slot_off(rsval(addr), padding, framesz);
             emit_u32(ctx, enc | ((off / (uint32_t)scale) << 10) | (29u << 5) | (uint32_t)rd);
           }
           break;
@@ -14805,7 +18950,7 @@ macho_emitfn(Fn* fn, MachoCtx* ctx) {
           } else {
             uint32_t off;
             SQ_ASSERT(rtype(addr) == RSlot);
-            off = slot_off(rsval(addr), padding, framesz);
+            off = arm64_slot_off(rsval(addr), padding, framesz);
             emit_u32(ctx, enc | ((off / 4u) << 10) | (29u << 5) | (uint32_t)rd);
           }
           break;
@@ -14859,7 +19004,7 @@ macho_emitfn(Fn* fn, MachoCtx* ctx) {
           } else {
             uint32_t off;
             SQ_ASSERT(rtype(addr) == RSlot);
-            off = slot_off(rsval(addr), padding, framesz);
+            off = arm64_slot_off(rsval(addr), padding, framesz);
             emit_u32(ctx, enc | ((off / (uint32_t)scale) << 10) | (29u << 5) | (uint32_t)rd);
           }
           break;
@@ -15035,7 +19180,7 @@ macho_emitfn(Fn* fn, MachoCtx* ctx) {
           SQ_ASSERT(isreg(i->to));
           SQ_ASSERT(rtype(i->arg[0]) == RSlot);
           rd = i->to.val - QBE_ARM64_R0;
-          off = slot_off(rsval(i->arg[0]), padding, framesz);
+          off = arm64_slot_off(rsval(i->arg[0]), padding, framesz);
           SQ_ASSERT(off <= 4095);
           // ADD Xd, X29, #off
           emit_u32(ctx, 0x91000000u | (off << 10) | (29u << 5) | (uint32_t)rd);
@@ -15140,7 +19285,7 @@ macho_emitfn(Fn* fn, MachoCtx* ctx) {
           } else {
             uint32_t off;
             SQ_ASSERT(rtype(faddr) == RSlot);
-            off = slot_off(rsval(faddr), padding, framesz);
+            off = arm64_slot_off(rsval(faddr), padding, framesz);
             emit_u32(ctx, enc | ((off / (uint32_t)fscale) << 10) | (29u << 5) | (uint32_t)rd);
           }
           break;
@@ -18532,6 +22677,12 @@ void sq_init(SqConfiguration* config) {
   if (config->format == SQ_FORMAT_OBJ_MACHO && GC(T).apple) {
     global_context.main__objmode = 1;
     global_context.main__macho_ctx = macho_new();
+  } else if (config->format == SQ_FORMAT_OBJ_PECOFF && GC(T).windows) {
+    global_context.main__pecoffmode = 1;
+    global_context.main__pecoff_ctx = pecoff_new();
+  } else if (config->format == SQ_FORMAT_JIT && GC(T).apple) {
+    global_context.main__jitmode = 1;
+    global_context.main__jit_ctx = jit_new();
   }
 
   global_context.main__outf = config->output;
@@ -18560,6 +22711,23 @@ bool sq_shutdown(void) {
       macho_emitfin_obj(global_context.main__macho_ctx);
       macho_write(global_context.main__macho_ctx, global_context.main__outf);
       macho_free(global_context.main__macho_ctx);
+    } else if (global_context.main__pecoffmode) {
+      pecoff_emitfin_obj(global_context.main__pecoff_ctx);
+      pecoff_write(global_context.main__pecoff_ctx, global_context.main__outf);
+      pecoff_free(global_context.main__pecoff_ctx);
+    } else if (global_context.main__jitmode) {
+      int (*entry)(int, char**);
+      int ec;
+      jit_emitfin_fp(global_context.main__jit_ctx);
+      jit_finalize(global_context.main__jit_ctx);
+      jit_populate_ptrs(global_context.main__jit_ctx);
+      *(void**)&entry = jit_lookup(global_context.main__jit_ctx, "_main");
+      if (!entry) {
+        die("jit: no _main function");
+      }
+      ec = entry(0, NULL); // jit_argc, jit_argv);  TODO XXX
+      jit_free(global_context.main__jit_ctx);
+      exit(ec);
     } else {
       GC(T).emitfin(global_context.main__outf);
     }
@@ -18743,7 +22911,7 @@ SqSymbol sq_func_end(void) {
   G(curf)->mem = vnew(0, sizeof G(curf)->mem[0], PFn);
   G(curf)->nmem = 0;
   G(curf)->nblk = SQC(pfs.num_blocks);
-	G(curf)->rpo = vnew(G(nblk), sizeof G(curf)->rpo[0], PFn);
+  G(curf)->rpo = vnew(G(nblk), sizeof G(curf)->rpo[0], PFn);
   for (Blk* b = G(curf)->start; b; b = b->link) {
     SQ_ASSERT(b->dlink == 0);
   }
@@ -18792,6 +22960,16 @@ SqRef sq_ref_extern(const char* name) {
   return _internal_ref_to_sqref(ret);
 }
 
+SqRef sq_ref_extern_tls(const char* name) {
+  SQ_ERR_CHECK((SqRef){0});
+  Con c = {0};
+  c.sym.type = SThr;
+  c.type = CAddr;
+  c.sym.id = intern((char*)name);
+  Ref ret = newcon(&c, G(curf));
+  return _internal_ref_to_sqref(ret);
+}
+
 SqBlock sq_block_declare_named(const char* name) {
   SQ_ERR_CHECK((SqBlock){0});
   SQ_ASSERT(SQC(pfs.num_blocks) < SQC(pfs.max_blocks));
@@ -18799,8 +22977,8 @@ SqBlock sq_block_declare_named(const char* name) {
   Blk* blk = _sqblock_to_internal_blk(ret);
   memset(blk, 0, sizeof(Blk));
   blk->id = ret.u;
-	blk->ins = vnew(0, sizeof blk->ins[0], PFn);
-	blk->pred = vnew(0, sizeof blk->pred[0], PFn);
+  blk->ins = vnew(0, sizeof blk->ins[0], PFn);
+  blk->pred = vnew(0, sizeof blk->pred[0], PFn);
   SQ_NAMED_IF_DEBUG(blk->name, name);
   return ret;
 }
@@ -19015,31 +23193,46 @@ void sq_i_jnz(SqRef cond, SqBlock if_true, SqBlock if_false) {
   qbe_parse_closeblk();
 }
 
-SqRef sq_i_phi(SqType size_class, SqBlock block0, SqRef val0, SqBlock block1, SqRef val1) {
-  SQ_ERR_CHECK((SqRef){0});
+void sq_i_phia_into(SqRef into, SqType size_class, int narg, SqBlock* blocks, SqRef* vals) {
+  SQ_ERR_CHECK_VOID();
   if (SQC(pfs.ps) != PPhi || G(curb) == G(curf)->start) {
     err_("unexpected phi instruction");
-    return (SqRef){0};
+    return;
   }
 
-  Ref tmp = newtmp(NULL, Kx, G(curf));
-  SQ_NAMED_IF_DEBUG(G(curf)->tmp[tmp.val].name, NULL);
+  Ref tmp = _sqref_to_internal_ref(into);
 
   Phi* phi = alloc(sizeof *phi);
   phi->to = tmp;
   phi->cls = size_class.u;
-  int i = 2;  // TODO: variable if necessary
-  phi->arg = vnew(i, sizeof(Ref), PFn);
-  phi->arg[0] = _sqref_to_internal_ref(val0);
-  phi->arg[1] = _sqref_to_internal_ref(val1);
-  phi->blk = vnew(i, sizeof(Blk*), PFn);
-  phi->blk[0] = _sqblock_to_internal_blk(block0);
-  phi->blk[1] = _sqblock_to_internal_blk(block1);
-  phi->narg = i;
+  phi->arg = vnew(narg, sizeof(Ref), PFn);
+  for (int i = 0; i < narg; ++i) {
+    phi->arg[i] = _sqref_to_internal_ref(vals[i]);
+  }
+  phi->blk = vnew(narg, sizeof(Blk*), PFn);
+  for (int i = 0; i < narg; ++i) {
+    phi->blk[i] = _sqblock_to_internal_blk(blocks[i]);
+  }
+  phi->narg = narg;
   *G(plink) = phi;
   G(plink) = &phi->link;
   SQC(pfs.ps) = PPhi;
-  return _internal_ref_to_sqref(tmp);
+}
+
+SqRef sq_i_phia(SqType size_class, int narg, SqBlock* blocks, SqRef* vals) {
+  SQ_ERR_CHECK((SqRef){0});
+  Ref tmp = newtmp(NULL, Kx, G(curf));
+  SQ_NAMED_IF_DEBUG(G(curf)->tmp[tmp.val].name, NULL);
+  SqRef sqtmp = _internal_ref_to_sqref(tmp);
+  sq_i_phia_into(sqtmp, size_class, narg, blocks, vals);
+  SQ_ERR_CHECK((SqRef){0});
+  return sqtmp;
+}
+
+SqRef sq_i_phi(SqType size_class, SqBlock block0, SqRef val0, SqBlock block1, SqRef val1) {
+  SqBlock blocks[2] = { block0, block1 };
+  SqRef vals[2] = { val0, val1 };
+  return sq_i_phia(size_class, 2, blocks, vals);
 }
 
 void sq_i_blit(SqRef from, SqRef to, int num_bytes) {
@@ -19423,6 +23616,33 @@ SqType sq_type_struct_end(void) {
   SQC(curty_build_n) = 0;
   SQC(curty_build_sz) = 0;
   SQC(curty_build_al) = 0;
+  return ret;
+}
+
+SqType sq_type_opaque(const char* name, int align, uint64_t size) {
+  SQ_ERR_CHECK((SqType){0});
+  vgrow(&GC(typ), SQC(ntyp) + 1);
+  SQC(curty) = &GC(typ)[SQC(ntyp)++];
+  SQC(curty)->isdark = 1;
+  SQC(curty)->isunion = 0;
+  SQC(curty)->size = size;
+  SQC(curty)->nunion = 1;
+  strncpy(SQC(curty)->name, name, NString - 1);
+  SQC(curty)->fields = vnew(1, sizeof SQC(curty)->fields[0], PHeap);
+  SQC(curty)->fields[0][0].type = FEnd;
+  int al = 0;
+  if (align > 0) {
+    for (al = 0; align /= 2; al++) {
+      // Nothing.
+    }
+  }
+  SQC(curty)->align = al;
+  if (GC(debug)['T']) {
+    fprintf(stderr, "\n> Parsed type:\n");
+    printtyp(SQC(curty), stderr);
+  }
+  SqType ret = {SQC(curty) - GC(typ)};
+  SQC(curty) = NULL;
   return ret;
 }
 #undef G
@@ -19870,7 +24090,7 @@ DEALINGS IN THE SOFTWARE.
 ---
 
 All other sqbe code under the same license,
-Â© 2026 Scott Graham <scott.sqbe@h4ck3r.net>
+© 2026 Scott Graham <scott.sqbe@h4ck3r.net>
 
 */
 

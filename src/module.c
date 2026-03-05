@@ -152,11 +152,18 @@ Module module_add(StrView basename) {
     return alloc_module_error(full_path);
   }
 
-  // 1 for slash, 3 for ".s\0" or ".o\0"
-  size_t output_full_path_len = strlen(output_dir_) + 1 + basename.size + 2 + 1;
+  // 1 for slash, up to 5 for for ".obj\0", ".s\0", or ".o\0"
+  size_t output_full_path_len = strlen(output_dir_) + 1 + basename.size + 4 + 1;
   char* output_path = arena_push(arena_, output_full_path_len, 1);
-  sprintf(output_path, "%s/%.*s%s", output_dir_, (int)basename.size, basename.data,
-          obj_output_ ? ".o" : ".s");  // Note: careful when switching to .obj
+  const char* ext = ".s";
+  if (obj_output_) {
+#if OS_WINDOWS
+    ext = ".obj";
+#else
+    ext = ".o";
+#endif
+  }
+  sprintf(output_path, "%s/%.*s%s", output_dir_, (int)basename.size, basename.data, ext);
 
   // TODO: import as
   const char* unused_dir;
