@@ -15,7 +15,7 @@ On Windows x64 (requires `python` in PATH):
 > m d test
 ```
 
-On macOS aarch64 (requires `python3` in PATH):
+On macOS aarch64 or Linux x64 (requires `python3` in PATH):
 ```
 $ ./m d test
 ```

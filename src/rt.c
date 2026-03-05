@@ -126,12 +126,12 @@ Str str$__plus__(Str* self, Str* other) {
   return (Str){new, self->size + other->size};
 }
 
-Str str$join(Str* str, List* strings) {
+Str str$join(Str* str, List strings) {
   List string_buffer = {0};
-  for (size_t i = 0; i < strings->size; ++i) {
-    Str* item = (Str*)&strings->data[i * sizeof(Str)];
+  for (size_t i = 0; i < strings.size; ++i) {
+    Str* item = (Str*)&strings.data[i * sizeof(Str)];
     AppendToStringBufferList(&string_buffer, item);
-    if (i < strings->size - 1) {
+    if (i < strings.size - 1) {
       AppendToStringBufferList(&string_buffer, str);
     }
   }
