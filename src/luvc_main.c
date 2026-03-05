@@ -20,10 +20,14 @@ static void parse_commandline(int argc,
                               char** output_dir,
                               int* verbose,
                               bool* syntax_only,
+                              bool* generate_s,
+                              bool* jit,
                               CstrVec* with_c) {
   int i = 1;
   *verbose = 0;
   *syntax_only = false;
+  *generate_s = false;
+  *jit = false;
   *input = NULL;
   *output_dir = NULL;
   while (i < argc) {
@@ -39,6 +43,10 @@ static void parse_commandline(int argc,
     } else if (strcmp(argv[i], "--syntax-only") == 0) {
       *syntax_only = true;
       ++i;
+    } else if (strcmp(argv[i], "-s") == 0) {
+      *generate_s = true;
+    } else if (strcmp(argv[i], "-j") == 0) {
+      *jit = true;
     } else if (strcmp(argv[i], "--with-c") == 0) {
       cstrv_append(with_c, argv[i + 1]);
       i += 2;
@@ -57,6 +65,11 @@ static void parse_commandline(int argc,
       *input = argv[i];
       ++i;
     }
+  }
+
+  if (*generate_s && *jit) {
+    base_writef_stderr("Generate .s and jitting are incompatible.\n");
+    base_exit(1);
   }
 
   if (!*input) {
@@ -137,11 +150,14 @@ int main(int argc, char** argv) {
   char* output_dir;
   int verbose;
   bool syntax_only;
+  bool generate_s;
+  bool jit;
   CstrVec with_c;
   cstrv_init(&with_c, main_arena);
   cstrv_append(&with_c, "src/rt.c");  // TODO
 
-  parse_commandline(argc, argv, &input, &output_dir, &verbose, &syntax_only, &with_c);
+  parse_commandline(argc, argv, &input, &output_dir, &verbose, &syntax_only, &generate_s, &jit,
+                    &with_c);
 
   str_intern_pool_init(str_arena);
 
@@ -158,6 +174,10 @@ int main(int argc, char** argv) {
   obj_output = true;
 #endif
 
+  if (generate_s) {
+    obj_output = false;
+  }
+
   module_init(main_arena, parse_temp_arena, source_dir, output_dir, verbose, syntax_only,
               obj_output);
   Module main = module_add((StrView){filename, strlen(filename)});
@@ -170,6 +190,9 @@ int main(int argc, char** argv) {
   if (verbose > 1) {
     base_writef_stderr("Not assembling and linking, no .s generated.\n");
   } else {
-    return assemble_and_link(main_arena, main, output_dir, filename, &with_c, verbose);
+    if (jit) {
+    } else {
+      return assemble_and_link(main_arena, main, output_dir, filename, &with_c, verbose);
+    }
   }
 }

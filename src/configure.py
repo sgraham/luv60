@@ -313,7 +313,7 @@ def generate(plat, config, settings, cmdlines, tests):
                 continue
             elif sys.platform != "linux" and "_linux." in src:
                 continue
-            elif sys.platform != "linux" and sys.platform != "mac" and "_posix." in src:
+            elif sys.platform != "linux" and sys.platform != "darwin" and "_posix." in src:
                 continue
             obj = getobj(src)
             common_objs.append(obj)
