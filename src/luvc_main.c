@@ -43,8 +43,9 @@ static void parse_commandline(int argc,
     } else if (strcmp(argv[i], "--syntax-only") == 0) {
       *syntax_only = true;
       ++i;
-    } else if (strcmp(argv[i], "-s") == 0) {
+    } else if (strcmp(argv[i], "-S") == 0) {
       *generate_s = true;
+      ++i;
     } else if (strcmp(argv[i], "-j") == 0) {
       *jit = true;
     } else if (strcmp(argv[i], "--with-c") == 0) {

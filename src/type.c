@@ -213,6 +213,7 @@ Type type_function(Type* params, size_t num_params, Type return_type, TypeFuncFl
   TypeData* td = type_td(func);
   td->FUNC.num_params = num_params;
   td->FUNC.return_type = return_type;
+  td->FUNC.unused0 = 0;
   if (type_is_aggregate(return_type) || contains_aggregate(num_params, params)) {
     flags |= TFF_HAS_AGGREGATE_ARGS;
   }
@@ -381,6 +382,7 @@ Type type_list(Type subtype) {
   td->LIST.size = 24;
   td->LIST.align = 8;
   td->LIST.subtype = subtype;
+  td->LIST.unused0 = 0;
 
   // The dict is only a set of intern'd Type, but we know they're all TYPE_LIST.
   DictInsert res = dict_deferred_insert(&cached_list_types, &list, plaintype_hash_func,

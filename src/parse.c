@@ -222,6 +222,7 @@ typedef struct CompilerGlobals {
   Str static_str___contains__;
   Str static_str___enter__;
   Str static_str___eq__;
+  Str static_str___lt__;
   Str static_str___plus__;
   Str static_str___hash__;
   Str static_str___exit__;
@@ -1099,6 +1100,41 @@ static Sym* gen_list_append(Type type) {
   return funcsym;
 }
 
+// on []T def sort(self):
+//     List$sort(self, sizeof(T), &T::__lt__)
+static Sym* gen_list_sort(Type type) {
+  Type subtype = type_list_subtype(type);
+  Str full_name = memfn_name_from_type_name(str_internf("List_%s", type_as_str(subtype)),
+                                            str_intern_len("sort", 4));
+
+  sq_func_start(sq_linkage_default, sq_type_void, cstr_copy(glob.arena, full_name));
+
+  SqRef self = sq_func_param(sq_type_long);
+
+  uint64_t subtype_size = type_size(subtype);
+  Sym* sub_lt_func = lookup_memfn(subtype, glob.static_str___lt__);
+  if (!sub_lt_func) {
+    errorf("No __lt__ defined for type %s, cannot be sorted.", type_as_str(subtype));
+  }
+
+  sq_i_call3(sq_type_void, sq_ref_extern("List$sort"), (SqCallArg){sq_type_long, self},
+             (SqCallArg){sq_type_long, sq_const_int(subtype_size)},
+             (SqCallArg){sq_type_long, sqref_for_sym(sub_lt_func)});
+  sq_i_ret_void();
+  SqSymbol sort_func = sq_func_end();
+
+  Type param_types[] = { type_ptr(type_list(subtype)) };
+  Type functype = type_function(param_types, COUNTOF(param_types), type_void, TFF_MEMFN);
+
+  Sym* funcsym = sym_new(SYM_FUNC, full_name, functype);
+  funcsym->global = sort_func;
+  funcsym->scope_decl = SSD_DECLARED_GLOBAL;
+
+  sq_itemctx_activate(tu.cur_scope->func_item_ctx);
+
+  return funcsym;
+}
+
 // on []T def __contains__(self, T item):
 //     tmp = item
 //     List$__contains__(self, &tmp, sizeof(T), &T::__eq__)
@@ -1231,6 +1267,7 @@ static GenericThunkCreators generic_list_functions[] = {
     {"__contains__", gen_list___contains__},
     {"__str__", gen_list___str__},
     {"append", gen_list_append},
+    {"sort", gen_list_sort},
 };
 
 static GenericThunkCreators generic_dict_functions[] = {
@@ -2790,6 +2827,7 @@ static Operand parse_binary(Operand left, bool can_assign, Type* expected) {
     BinOpFunc sign;
     BinOpFunc unsign;
   } OpPair;
+  // TODO: __lt__, etc. maybe
   static OpPair tok_to_cmp_op[NUM_TOKEN_KINDS] = {
       [TOK_EQEQ] = {sq_i_ceqw, sq_i_ceqw},
       [TOK_BANGEQ] = {sq_i_cnew, sq_i_cnew},
@@ -5747,6 +5785,16 @@ static void declare_all_rt_foreigns(void) {
   declare_rt_foreign_memfn1(type_u64, type_bool, glob.static_str___eq__, type_ptr(type_u64));
   declare_rt_foreign_memfn1(type_str, type_bool, glob.static_str___eq__, type_ptr(type_str));
 
+  declare_rt_foreign_memfn1(type_i8, type_bool, glob.static_str___lt__, type_ptr(type_i8));
+  declare_rt_foreign_memfn1(type_u8, type_bool, glob.static_str___lt__, type_ptr(type_u8));
+  declare_rt_foreign_memfn1(type_i16, type_bool, glob.static_str___lt__, type_ptr(type_i16));
+  declare_rt_foreign_memfn1(type_u16, type_bool, glob.static_str___lt__, type_ptr(type_u16));
+  declare_rt_foreign_memfn1(type_i32, type_bool, glob.static_str___lt__, type_ptr(type_i32));
+  declare_rt_foreign_memfn1(type_u32, type_bool, glob.static_str___lt__, type_ptr(type_u32));
+  declare_rt_foreign_memfn1(type_i64, type_bool, glob.static_str___lt__, type_ptr(type_i64));
+  declare_rt_foreign_memfn1(type_u64, type_bool, glob.static_str___lt__, type_ptr(type_u64));
+  declare_rt_foreign_memfn1(type_str, type_bool, glob.static_str___lt__, type_ptr(type_str));
+
   declare_rt_foreign_memfn1(type_str, type_str, glob.static_str___plus__, type_ptr(type_str));
 
   declare_rt_foreign_memfn0(type_bool, type_str, glob.static_str___str__);
@@ -5789,6 +5837,7 @@ static void parse_one_time_initialization_impl(Arena* main_arena, int verbose, b
   glob.static_str___contains__ = str_intern_len("__contains__", 12);
   glob.static_str___enter__ = str_intern_len("__enter__", 9);
   glob.static_str___eq__ = str_intern_len("__eq__", 6);
+  glob.static_str___lt__ = str_intern_len("__lt__", 6);
   glob.static_str___plus__ = str_intern_len("__plus__", 8);
   glob.static_str___hash__ = str_intern_len("__hash__", 8);
   glob.static_str___exit__ = str_intern_len("__exit__", 8);

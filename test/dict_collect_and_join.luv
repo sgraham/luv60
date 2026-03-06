@@ -1,0 +1,12 @@
+# This exposed a bug in type unique-ing
+# OUT: key: flim -> value: flam
+# OUT: key: oink -> value: zoink
+# OUT: key: zip -> value: zap
+def int main():
+    {str}str mymap = {"zip": "zap", "flim": "flam", "oink": "zoink"}
+    []str res
+    for a, b in mymap:
+        res.append(fmt("key: {} -> value: {}", a, b))
+    res.sort()
+    print "\n".join(res)
+    return 0

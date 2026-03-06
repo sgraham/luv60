@@ -153,6 +153,48 @@ void List$free(List* list) {
 }
 #endif
 
+bool i8$__lt__(int8_t* self, int8_t* other) {
+  return *self < *other;
+}
+
+bool u8$__lt__(uint8_t* self, uint8_t* other) {
+  return *self < *other;
+}
+
+bool i16$__lt__(int16_t* self, int16_t* other) {
+  return *self < *other;
+}
+
+bool u16$__lt__(uint16_t* self, uint16_t* other) {
+  return *self < *other;
+}
+
+bool i32$__lt__(int32_t* self, int32_t* other) {
+  return *self < *other;
+}
+
+bool u32$__lt__(uint32_t* self, uint32_t* other) {
+  return *self < *other;
+}
+
+bool i64$__lt__(int64_t* self, int64_t* other) {
+  return *self < *other;
+}
+
+bool u64$__lt__(uint64_t* self, uint64_t* other) {
+  return *self < *other;
+}
+
+bool str$__lt__(Str* self, Str* other) {
+  int64_t shorter_size = self->size < other->size ? self->size : other->size;
+  for (int64_t i = 0; i < shorter_size; ++i) {
+    if (self->data[i] != other->data[i]) {
+      return self->data[i] < other->data[i];
+    }
+  }
+  return self->size < other->size;
+}
+
 uint64_t List$len(List* list) {
   return list->size;
 }
@@ -161,6 +203,43 @@ void List$append(List* list, void* item, uint64_t item_size) {
   List$reserve(list, list->size + 1, item_size);
   memcpy(&list->data[list->size * item_size], item, item_size);
   list->size++;
+}
+
+static void merge(List* list,
+                  uint64_t left,
+                  uint64_t mid,
+                  uint64_t right,
+                  uint64_t item_size,
+                  bool (*less)(void* a, void* b)) {
+  void* tmp = alloca(item_size);
+  uint64_t i = left, j = mid + 1;
+
+  while (i <= mid && j <= right) {
+    if (less(&list->data[j * item_size], &list->data[i * item_size])) {
+      /* Save arr[j], shift arr[i..j-1] right, place saved at i */
+      memcpy(tmp, &list->data[j * item_size], item_size);
+      for (uint64_t k = j; k > i; k--) {
+        memcpy(&list->data[k * item_size], &list->data[(k - 1) * item_size], item_size);
+      }
+      memcpy(&list->data[i * item_size], tmp, item_size);
+      mid++;
+      j++;
+    }
+    i++;
+  }
+}
+
+void List$sort(List* list, uint64_t item_size, bool (*subtype___lt__)(void* a, void* b)) {
+  for (uint64_t width = 1; width < list->size; width *= 2) {
+    for (uint64_t left = 0; left < list->size - width; left += 2 * width) {
+      uint64_t mid = left + width - 1;
+      uint64_t right = left + 2 * width - 1;
+      if (!(right < list->size)) {
+        right = list->size - 1;
+      }
+      merge(list, left, mid, right, item_size, subtype___lt__);
+    }
+  }
 }
 
 List List$slice_from_array(void* arr_base, size_t arr_count, uint64_t item_size) {

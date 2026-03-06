@@ -68,6 +68,7 @@ def int main():
         res.append(fmt("key: {} -> value: {}", a, b))
     res.sort()
     print "\n".join(res)
+    return 0
 ```
 Output:
 ```
